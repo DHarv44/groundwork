@@ -66,6 +66,10 @@ export default function Terrain({ build, sky, fogDensity }: Props) {
       uTreeLine: { value: settings.treeLine },
       uAridity: { value: settings.aridity },
       uStrata: { value: settings.strata },
+      uRiparian: { value: settings.riparian },
+      uRiparianReach: { value: settings.riparianReach },
+      uGroundWarmth: { value: settings.groundWarmth },
+      uTextureRange: { value: settings.textureRange },
       uShadows: { value: settings.shadows ? 1 : 0 },
       uAoStrength: { value: settings.aoStrength },
       uDetail: { value: settings.microDetail },
@@ -114,6 +118,10 @@ export default function Terrain({ build, sky, fogDensity }: Props) {
     u.uTreeLine.value = settings.treeLine
     u.uAridity.value = settings.aridity
     u.uStrata.value = settings.strata
+    u.uRiparian.value = settings.riparian
+    u.uRiparianReach.value = settings.riparianReach
+    u.uGroundWarmth.value = settings.groundWarmth
+    u.uTextureRange.value = settings.textureRange
     u.uShadows.value = settings.shadows ? 1 : 0
     u.uAoStrength.value = settings.aoStrength
     u.uDetail.value = settings.microDetail

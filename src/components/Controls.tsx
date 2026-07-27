@@ -470,6 +470,31 @@ export default function Controls() {
                   step={0.01}
                   onChange={setSetting('strata')}
                 />
+                <Slider
+                  label="Ground warmth"
+                  value={settings.groundWarmth}
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  onChange={setSetting('groundWarmth')}
+                />
+                <Slider
+                  label="Riparian growth"
+                  value={settings.riparian}
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  onChange={setSetting('riparian')}
+                />
+                <Slider
+                  label="Corridor reach"
+                  value={settings.riparianReach}
+                  min={0.15}
+                  max={0.6}
+                  step={0.005}
+                  decimals={3}
+                  onChange={setSetting('riparianReach')}
+                />
               </>
             )}
             <Slider
@@ -479,6 +504,16 @@ export default function Controls() {
               max={1}
               step={0.01}
               onChange={setSetting('microDetail')}
+            />
+            <Slider
+              label="Texture range"
+              value={settings.textureRange}
+              min={0.1}
+              max={20}
+              step={0.1}
+              suffix="×"
+              decimals={1}
+              onChange={setSetting('textureRange')}
             />
           </section>
         )}

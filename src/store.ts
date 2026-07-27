@@ -25,6 +25,11 @@ export interface Settings {
   treeLine: number
   aridity: number
   strata: number
+  /** Ground cover. Shader-side, so these respond without re-deriving. */
+  riparian: number
+  riparianReach: number
+  groundWarmth: number
+  textureRange: number
   /** Master opacity for derived water. */
   rivers: number
   /** Minimum drainage area a channel needs before it is drawn, 0..1 log scale. */
@@ -76,6 +81,10 @@ export const DEFAULT_SETTINGS: Settings = {
   treeLine: 1900,
   aridity: 0.25,
   strata: 0.25,
+  riparian: 0.6,
+  riparianReach: 0.34,
+  groundWarmth: 0,
+  textureRange: 1,
   rivers: 1,
   // 0.30 on the log-drainage scale is about 1 km² of catchment — roughly where a
   // channel actually starts in humid country.
@@ -152,6 +161,10 @@ const PERSISTED_SETTINGS = [
   'haze',
   'aridity',
   'strata',
+  'riparian',
+  'riparianReach',
+  'groundWarmth',
+  'textureRange',
   'rivers',
   'riverThreshold',
   'showOcean',

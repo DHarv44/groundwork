@@ -56,6 +56,10 @@ uniform float uSnowLine;
 uniform float uTreeLine;
 uniform float uAridity;
 uniform float uStrata;
+uniform float uRiparian;       // how strongly vegetation follows the drainage
+uniform float uRiparianReach;  // how far up the drainage scale corridors extend
+uniform float uGroundWarmth;   // shift bare ground toward oxidised rust
+uniform float uTextureRange;   // scales how far surface detail survives
 uniform float uShadows;
 uniform float uAoStrength;
 uniform float uDetail;
@@ -203,8 +207,13 @@ void main() {
   // ---- procedural ground cover -------------------------------------------
   // Each octave is faded out once a pixel covers more ground than its wavelength,
   // otherwise the fine detail turns to static on wide, low-relief areas.
-  float rockFade = 1.0 - smoothstep(2500.0, 18000.0, dist);
-  float grainFade = 1.0 - smoothstep(300.0, 3000.0, dist);
+  // Detail fades out once a pixel covers more ground than the feature is wide, which
+  // is what stops it aliasing. On a wide box the camera sits tens of kilometres back
+  // and every term reaches zero, leaving a flat sheet — so the range is scalable
+  // rather than fixed. Pushing it out trades shimmer for texture.
+  float texRange = max(0.05, uTextureRange);
+  float rockFade = 1.0 - smoothstep(2500.0 * texRange, 18000.0 * texRange, dist);
+  float grainFade = 1.0 - smoothstep(300.0 * texRange, 3000.0 * texRange, dist);
   float macro = fbm(wp * 0.0009, 5);
   float meso = fbm(wp * 0.011, 4);
   float rock = ridged(wp * 0.06, 4) * rockFade;
@@ -248,13 +257,47 @@ void main() {
   veg *= smoothstep(-0.30, 0.30, macro * 1.5 + meso * 0.5 + 0.20);
   veg = clamp(veg, 0.0, 1.0);
 
-  albedo = mix(albedo, soil, clamp(veg * 1.3, 0.0, 1.0) * 0.55);
-  albedo = mix(albedo, grassCol, veg * 0.88);
+  // Vegetation follows the water.
+  //
+  // Patchiness from noise alone varies, but it varies at random — uncorrelated with
+  // anything on the ground, so it reads as static rather than landscape. The flow
+  // accumulation already computed for the rivers is the real signal: in dry country
+  // the green threads along the drainage while the uplands stay bare, which is
+  // exactly what satellite imagery of somewhere like West Texas shows.
+  //
+  // Deliberately scaled by aridity — in wet country the hillsides are green too, so
+  // riparian corridors barely stand out. It is dryness that makes them visible.
+  float riparian = 0.0;
+  if (uHasWater > 0.5 && uRiparian > 0.001) {
+    float accum = texture2D(uWaterMap, vUv).b;
+    riparian = smoothstep(uRiparianReach - 0.10, uRiparianReach + 0.14, accum);
+    riparian *= uRiparian * (1.0 - steep) * lowland;
+    riparian *= 0.35 + 0.65 * clamp(uAridity, 0.0, 1.0);
+    veg = clamp(veg + riparian, 0.0, 1.0);
+  }
 
-  // Arid basins get sand in the flats.
+  albedo = mix(albedo, soil, clamp(veg * 1.3, 0.0, 1.0) * 0.55);
+  // Corridor growth is greener and denser than the scrub around it.
+  albedo = mix(albedo, grassCol, veg * 0.88);
+  albedo = mix(albedo, grassCol * 0.72, riparian * 0.5);
+
+  // Arid basins get sand in the flats — but not where the drainage keeps them wet.
   float aridFlat = clamp(uAridity, 0.0, 1.0) * (1.0 - steep) *
                    smoothstep(uTreeLine, uTreeLine - 900.0, vElev);
-  albedo = mix(albedo, sandCol, aridFlat * 0.6);
+  albedo = mix(albedo, sandCol, aridFlat * 0.6 * (1.0 - riparian));
+
+  // Oxidised ground. The base palette runs grey through rock and scree, which suits
+  // alpine terrain but leaves semi-arid rangeland looking like slate instead of the
+  // rust it actually is. Kept off the vegetation so only bare ground shifts.
+  //
+  // Applied as a multiplicative hue shift rather than a mix toward a rust colour.
+  // Ambient here is sky light, which is markedly blue — blending toward a dark warm
+  // tone loses to it and comes back out grey. Scaling the channels shifts hue without
+  // dropping luminance, so it survives the lighting.
+  if (uGroundWarmth > 0.001) {
+    float w = uGroundWarmth * (1.0 - veg);
+    albedo *= vec3(1.0 + 1.10 * w, 1.0 - 0.06 * w, 1.0 - 0.52 * w);
+  }
 
   // Snow: accumulates with altitude, slides off anything steep, and does not linger
   // on sun-baked desert plateaus.
