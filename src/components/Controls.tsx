@@ -657,6 +657,25 @@ export default function Controls() {
                     onChange={setSetting('treeLimit')}
                   />
                   <Slider
+                    label="Prefers broken ground"
+                    value={settings.treeRough}
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    tag={biomeTag('treeRough')}
+                    onChange={setSetting('treeRough')}
+                  />
+                  <Slider
+                    label="Broken at"
+                    value={settings.treeRoughScale}
+                    min={5}
+                    max={400}
+                    step={5}
+                    suffix=" m"
+                    tag={biomeTag('treeRoughScale')}
+                    onChange={setSetting('treeRoughScale')}
+                  />
+                  <Slider
                     label="Fractal spread"
                     value={settings.treeFractal}
                     min={0}

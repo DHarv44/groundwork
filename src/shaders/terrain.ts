@@ -66,6 +66,8 @@ uniform float uTreeNeed;       // catchment a slope must gather before it holds 
 uniform float uTreeLimit;      // catchment past which the channel is too wide for trees, km²
 uniform float uTreeSpread;     // how sharply timber gives way to grass across both edges
 uniform float uTreeFractal;    // how raggedly the timber fingers out of the drainage
+uniform float uTreeRough;      // how strongly timber prefers dissected ground to flat
+uniform float uTreeRoughScale; // local relief, in metres, that counts as fully broken
 uniform float uCorridorLeaf;   // how broadleaf the valley-bottom timber is
 uniform float uShowTrees;      // 0 hides the canopy, leaving grass on the same ground
 uniform float uShowGrass;      // 0 hides the grass, leaving only the timber
@@ -171,6 +173,31 @@ float sunShadow(vec3 origin, vec3 L) {
     if (t > span) break;
   }
   return clamp(shadow, 0.0, 1.0);
+}
+
+/**
+ * Local relief: how far the ground rises and falls within a short distance, in metres.
+ *
+ * This is the difference between flat country and dissected country, and catchment
+ * cannot see it — a ploughed field and an eroded block of breaks can carry identical
+ * drainage. What separates them is that one is smooth and the other is cut to pieces.
+ *
+ * Measured against the true height field rather than the exaggerated one, so a display
+ * setting cannot change where the trees grow.
+ */
+float localRelief(vec2 uvp) {
+  float lo = 1e9;
+  float hi = -1e9;
+  // A ring at roughly half a kilometre — the scale at which breaks read as broken.
+  float radius = 500.0 / max(uWidthM, uDepthM);
+  for (int d = 0; d < 6; d++) {
+    float a = float(d) * 1.0471976;
+    vec2 suv = clamp(uvp + vec2(cos(a), sin(a)) * radius, vec2(0.0), vec2(1.0));
+    float h = terrainY(suv) / max(uExag, 1e-5);
+    lo = min(lo, h);
+    hi = max(hi, h);
+  }
+  return hi - lo;
 }
 
 /** Cheap horizon-based occlusion — valleys and gullies darken, ridges stay bright. */
@@ -410,6 +437,26 @@ void main() {
     if (uTreeFractal > 0.001) {
       need += fbm(wp * 0.0016, 5) * uTreeFractal * 0.16;
     }
+
+    // Dissected ground holds timber; flat ground does not.
+    //
+    // This is the part catchment cannot see. A ploughed field and an eroded block of
+    // breaks can carry identical drainage — what separates them is that one is smooth
+    // and the other is cut to pieces. And the reason is not subtle: broken ground is too
+    // steep and stony to plough, so it keeps its trees, while the flat ground beside it
+    // was cleared. On imagery of farmed country that is the single strongest signal
+    // there is, and it is why the woods sit in blocks rather than tracing every gully.
+    //
+    // It moves the threshold rather than multiplying the result, for the same reason the
+    // fraying does: the timber has to stay anchored to the drainage. Flat ground is asked
+    // for more catchment than it will ever have, so it stays clear; broken ground is
+    // asked for less, so the network fills out across it.
+    if (uTreeRough > 0.001) {
+      float relief = localRelief(vUv);
+      float broken = smoothstep(0.0, max(1.0, uTreeRoughScale), relief);
+      need += uTreeRough * (0.5 - broken) * 0.34;
+    }
+
     float stop = clamp((log(max(uTreeLimit, 1e-4)) / 2.302585 + 3.0) / 10.0, 0.0, 1.0);
     rawTrees = smoothstep(need, need + edge, treeAccum) *
                (1.0 - smoothstep(stop, stop + edge, treeAccum));

@@ -210,6 +210,17 @@ export interface BiomeProfile {
    * between — which is what makes a wood look grown rather than stencilled.
    */
   treeFractal: number
+  /**
+   * How strongly timber prefers dissected ground to flat, 0..1.
+   *
+   * Catchment cannot tell a ploughed field from a block of breaks — both can carry the
+   * same drainage. Local relief can, and it is the physical reason: broken ground is too
+   * steep and stony to clear, so it keeps its trees while the flat ground beside it was
+   * ploughed. Zero disables it entirely.
+   */
+  treeRough: number
+  /** Local relief, in metres, that counts as fully dissected. */
+  treeRoughScale: number
   /** How broadleaf the valley-bottom timber is against the canopy above it. */
   corridorLeaf: number
   /** How strongly bedrock banding shows. Soil and cover bury it in wet country. */
@@ -240,6 +251,12 @@ const BASE: BiomeProfile = {
   treeLimit: 400,
   treeSpread: 0.04,
   treeFractal: 0.45,
+  treeRough: 0.5,
+  // Measured over half a kilometre. On farmed plains the median comes out near 12 m and
+  // the ninetieth percentile near 30, so this sits where the split between ploughed and
+  // unploughable actually falls. Setting it at the very top of the range instead means
+  // nothing qualifies as broken and the term simply deletes the timber.
+  treeRoughScale: 25,
   corridorLeaf: 0.6,
   strata: 0.25,
 }

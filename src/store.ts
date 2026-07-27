@@ -56,6 +56,10 @@ export interface Settings {
   treeSpread: number
   /** How raggedly the timber fingers out of the drainage rather than ending on a contour. */
   treeFractal: number
+  /** How strongly timber prefers dissected ground to flat. */
+  treeRough: number
+  /** Local relief, in metres, that counts as fully dissected. */
+  treeRoughScale: number
   /** How broadleaf the valley-bottom timber is against the conifer above it. */
   corridorLeaf: number
   textureRange: number
@@ -138,6 +142,8 @@ export const DEFAULT_SETTINGS: Settings = {
   // A narrow edge is what makes the ribbons read as ribbons rather than as a gradient.
   treeSpread: 0.04,
   treeFractal: 0.45,
+  treeRough: 0.5,
+  treeRoughScale: 25,
   corridorLeaf: 0.6,
   textureRange: 1,
   rivers: 1,
@@ -192,6 +198,8 @@ export const BIOME_KEYS = [
   'treeLimit',
   'treeSpread',
   'treeFractal',
+  'treeRough',
+  'treeRoughScale',
   'corridorLeaf',
   'strata',
 ] as const
@@ -305,6 +313,8 @@ const PERSISTED_SETTINGS = [
   'treeLimit',
   'treeSpread',
   'treeFractal',
+  'treeRough',
+  'treeRoughScale',
   'corridorLeaf',
   'textureRange',
   'rivers',
