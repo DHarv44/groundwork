@@ -455,21 +455,26 @@ export default function Controls() {
         {tab === 'surface' && (
           <section>
             <h3>Surface</h3>
-            {/* The layer switcher itself lives on the 3D view. */}
-            {settings.textureMode === 'satellite' ? (
+            {/* The layer switcher itself lives on the 3D view.
+                The cover controls stay on screen whatever base is showing: the whole
+                point of the satellite drape is to tune the procedural ground against a
+                photograph of the same place, which you cannot do if switching to the
+                photograph takes the sliders away. */}
+            {settings.textureMode === 'satellite' && (
               <p className="note">
                 {imagery
-                  ? `Esri World Imagery, zoom ${imageryZoom}. Relief lighting still comes from the DEM.`
+                  ? `Esri World Imagery, zoom ${imageryZoom}. Relief lighting still comes from the DEM — the cover settings below keep working, so you can flip between the two and match them.`
                   : 'Loading imagery…'}
               </p>
-            ) : settings.textureMode === 'drainage' ? (
+            )}
+            {settings.textureMode === 'drainage' && (
               <p className="note">
                 Every cell coloured by the catchment area draining through it, over a dim
                 hillshade. Brightness follows stream order, so trunk rivers dominate. Use
                 “smallest stream” below to set where the network fades out.
               </p>
-            ) : (
-              <>
+            )}
+            <>
                 {/* Where this patch of ground sits climatically, and what that set. */}
                 <div className="biome">
                   {biome ? (
@@ -566,6 +571,24 @@ export default function Controls() {
                   onChange={setSetting('forest')}
                 />
                 <Slider
+                  label="Leaf colour"
+                  value={settings.vegTint}
+                  min={-1}
+                  max={1}
+                  step={0.01}
+                  tag={biomeTag('vegTint')}
+                  onChange={setSetting('vegTint')}
+                />
+                <Slider
+                  label="Leaf saturation"
+                  value={settings.vegSat}
+                  min={0}
+                  max={2}
+                  step={0.01}
+                  tag={biomeTag('vegSat')}
+                  onChange={setSetting('vegSat')}
+                />
+                <Slider
                   label="Rock strata"
                   value={settings.strata}
                   min={0}
@@ -601,8 +624,7 @@ export default function Controls() {
                   tag={biomeTag('riparianReach')}
                   onChange={setSetting('riparianReach')}
                 />
-              </>
-            )}
+            </>
             <Slider
               label="Micro relief"
               value={settings.microDetail}

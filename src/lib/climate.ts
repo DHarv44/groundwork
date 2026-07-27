@@ -185,6 +185,17 @@ export interface BiomeProfile {
    * painted as meadow comes out about half as dark as it should be.
    */
   forest: number
+  /**
+   * Which green, from −1 (blue-shifted) to +1 (yellow-shifted).
+   *
+   * Aridity says how parched the cover is. This says what colour it is when it is not.
+   * The two are independent: boreal spruce and lowland rainforest are both thoroughly
+   * watered and nothing like the same green — one is dark and blue, the other vivid and
+   * faintly yellow — and no amount of dryness will turn one into the other.
+   */
+  vegTint: number
+  /** How saturated that green is. Maquis and tundra are grey; rainforest is not. */
+  vegSat: number
 }
 
 function prof(
@@ -195,6 +206,8 @@ function prof(
   snowLineScale: number,
   treeLineScale: number,
   forest: number,
+  vegTint: number,
+  vegSat: number,
 ): BiomeProfile {
   return {
     aridity,
@@ -204,6 +217,8 @@ function prof(
     snowLineScale,
     treeLineScale,
     forest,
+    vegTint,
+    vegSat,
   }
 }
 
@@ -213,47 +228,53 @@ function prof(
  * rainforest the corridor is invisible because everything either side is already green.
  */
 const PROFILES: Record<string, BiomeProfile> = {
-  //         aridity  riparian  reach  warmth  snow×  tree×  forest
-  Af: prof(0.02, 0.20, 0.28, 0.00, 1.05, 1.14, 1.00),
-  Am: prof(0.08, 0.32, 0.30, 0.03, 1.05, 1.12, 0.95),
+  //         aridity  riparian  reach  warmth  snow×  tree×  forest  tint   sat
+  // Rainforest is the most saturated green there is, and faintly cool with it.
+  Af: prof(0.02, 0.20, 0.28, 0.00, 1.05, 1.14, 1.00, -0.10, 1.28),
+  Am: prof(0.08, 0.32, 0.30, 0.03, 1.05, 1.12, 0.95, -0.05, 1.20),
   // Savanna is the definition of scattered: trees over grass, not woodland.
-  Aw: prof(0.44, 0.76, 0.38, 0.24, 1.08, 1.06, 0.35),
+  Aw: prof(0.44, 0.76, 0.38, 0.24, 1.08, 1.06, 0.35, 0.45, 0.85),
   // Arid classes are treeless for moisture, not altitude — aridity does that work, so
   // their tree line stays near the curve rather than being dragged down and stripping
   // the forested range that so often stands beside a dry basin.
-  BWh: prof(0.97, 0.95, 0.44, 0.72, 1.18, 1.00, 0.02),
-  BWk: prof(0.92, 0.88, 0.42, 0.44, 1.14, 1.05, 0.05),
-  BSh: prof(0.80, 0.90, 0.40, 0.52, 1.14, 1.05, 0.07),
-  BSk: prof(0.66, 0.82, 0.38, 0.54, 1.15, 1.12, 0.10),
-  Csa: prof(0.52, 0.72, 0.36, 0.30, 1.04, 0.94, 0.42),
-  Csb: prof(0.38, 0.62, 0.34, 0.18, 1.00, 0.98, 0.55),
-  Csc: prof(0.30, 0.52, 0.32, 0.10, 0.92, 0.90, 0.45),
-  Cwa: prof(0.26, 0.56, 0.34, 0.14, 1.02, 1.04, 0.60),
-  Cwb: prof(0.22, 0.50, 0.33, 0.10, 1.00, 1.02, 0.58),
-  Cwc: prof(0.22, 0.44, 0.32, 0.08, 0.94, 0.92, 0.45),
-  Cfa: prof(0.12, 0.40, 0.32, 0.05, 1.02, 1.05, 0.70),
-  // Oceanic country is as much pasture and moor as it is woodland.
-  Cfb: prof(0.08, 0.34, 0.30, 0.02, 0.88, 1.00, 0.55),
-  Cfc: prof(0.08, 0.30, 0.30, 0.02, 0.80, 0.90, 0.32),
-  Dsa: prof(0.48, 0.68, 0.36, 0.24, 1.20, 1.28, 0.55),
-  Dsb: prof(0.42, 0.62, 0.35, 0.18, 1.18, 1.26, 0.62),
-  Dsc: prof(0.34, 0.52, 0.34, 0.10, 1.10, 1.20, 0.68),
-  Dsd: prof(0.30, 0.46, 0.33, 0.06, 1.00, 1.10, 0.60),
-  Dwa: prof(0.30, 0.54, 0.34, 0.12, 1.18, 1.32, 0.68),
-  Dwb: prof(0.26, 0.48, 0.33, 0.08, 1.15, 1.30, 0.78),
-  Dwc: prof(0.22, 0.42, 0.32, 0.05, 1.10, 1.26, 0.85),
-  Dwd: prof(0.20, 0.38, 0.31, 0.03, 1.00, 1.14, 0.78),
+  BWh: prof(0.97, 0.95, 0.44, 0.72, 1.18, 1.00, 0.02, 0.55, 0.55),
+  BWk: prof(0.92, 0.88, 0.42, 0.44, 1.14, 1.05, 0.05, 0.45, 0.60),
+  BSh: prof(0.80, 0.90, 0.40, 0.52, 1.14, 1.05, 0.07, 0.50, 0.70),
+  BSk: prof(0.66, 0.82, 0.38, 0.54, 1.15, 1.12, 0.10, 0.40, 0.75),
+  // Maquis and garrigue are grey-olive, not green — the leaves are waxed against the
+  // summer drought and reflect far less colour than a temperate leaf.
+  Csa: prof(0.52, 0.72, 0.36, 0.30, 1.04, 0.94, 0.42, 0.20, 0.62),
+  Csb: prof(0.38, 0.62, 0.34, 0.18, 1.00, 0.98, 0.55, 0.12, 0.70),
+  Csc: prof(0.30, 0.52, 0.32, 0.10, 0.92, 0.90, 0.45, 0.05, 0.74),
+  Cwa: prof(0.26, 0.56, 0.34, 0.14, 1.02, 1.04, 0.60, 0.10, 1.05),
+  Cwb: prof(0.22, 0.50, 0.33, 0.10, 1.00, 1.02, 0.58, 0.05, 1.02),
+  Cwc: prof(0.22, 0.44, 0.32, 0.08, 0.94, 0.92, 0.45, 0.00, 0.95),
+  Cfa: prof(0.12, 0.40, 0.32, 0.05, 1.02, 1.05, 0.70, 0.05, 1.12),
+  // Oceanic country is as much pasture and moor as it is woodland — and the pasture is
+  // the greenest thing in the temperate world.
+  Cfb: prof(0.08, 0.34, 0.30, 0.02, 0.88, 1.00, 0.55, -0.02, 1.15),
+  Cfc: prof(0.08, 0.30, 0.30, 0.02, 0.80, 0.90, 0.32, -0.10, 0.92),
+  Dsa: prof(0.48, 0.68, 0.36, 0.24, 1.20, 1.28, 0.55, 0.22, 0.78),
+  Dsb: prof(0.42, 0.62, 0.35, 0.18, 1.18, 1.26, 0.62, 0.15, 0.82),
+  Dsc: prof(0.34, 0.52, 0.34, 0.10, 1.10, 1.20, 0.68, 0.05, 0.85),
+  Dsd: prof(0.30, 0.46, 0.33, 0.06, 1.00, 1.10, 0.60, 0.00, 0.80),
+  Dwa: prof(0.30, 0.54, 0.34, 0.12, 1.18, 1.32, 0.68, 0.08, 0.95),
+  Dwb: prof(0.26, 0.48, 0.33, 0.08, 1.15, 1.30, 0.78, 0.00, 0.95),
+  Dwc: prof(0.22, 0.42, 0.32, 0.05, 1.10, 1.26, 0.85, -0.15, 0.88),
+  Dwd: prof(0.20, 0.38, 0.31, 0.03, 1.00, 1.14, 0.78, -0.20, 0.82),
   // The montane belt is forest broken by park and meadow, not closed canopy, so it
   // keeps enough warm open ground to read brown rather than blue-green.
-  Dfa: prof(0.14, 0.42, 0.32, 0.16, 1.12, 1.30, 0.70),
-  Dfb: prof(0.12, 0.38, 0.31, 0.13, 1.16, 1.35, 0.80),
-  // The boreal and subalpine conifer belt — the darkest ground cover on the planet.
-  Dfc: prof(0.14, 0.34, 0.30, 0.98, 1.20, 1.40, 0.92),
-  Dfd: prof(0.14, 0.30, 0.30, 0.07, 1.05, 1.18, 0.82),
+  Dfa: prof(0.14, 0.42, 0.32, 0.16, 1.12, 1.30, 0.70, 0.02, 1.00),
+  Dfb: prof(0.12, 0.38, 0.31, 0.13, 1.16, 1.35, 0.80, -0.10, 0.95),
+  // The boreal and subalpine conifer belt — the darkest ground cover on the planet, and
+  // decidedly blue: spruce and fir read closer to slate than to leaf green.
+  Dfc: prof(0.14, 0.34, 0.30, 0.98, 1.20, 1.40, 0.92, -0.28, 0.80),
+  Dfd: prof(0.14, 0.30, 0.30, 0.07, 1.05, 1.18, 0.82, -0.32, 0.75),
   // Tundra sits above the tree line by definition, so its own scale is near zero. It
   // never suppresses a neighbour's — the tile takes the highest line any class implies.
-  ET: prof(0.36, 0.26, 0.28, 0.06, 0.95, 0.30, 0.00),
-  EF: prof(0.24, 0.00, 0.25, 0.00, 0.12, 0.00, 0.00),
+  // Its colour is lichen and dwarf birch: olive-brown, barely saturated at all.
+  ET: prof(0.36, 0.26, 0.28, 0.06, 0.95, 0.30, 0.00, 0.18, 0.55),
+  EF: prof(0.24, 0.00, 0.25, 0.00, 0.12, 0.00, 0.00, 0.00, 0.50),
 }
 
 /** Every class the raster can return, in legend order — the panel lists these. */

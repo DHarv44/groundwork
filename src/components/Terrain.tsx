@@ -71,6 +71,8 @@ export default function Terrain({ build, sky, fogDensity }: Props) {
       uRiparianReach: { value: settings.riparianReach },
       uGroundWarmth: { value: settings.groundWarmth },
       uForest: { value: settings.forest },
+      uVegTint: { value: settings.vegTint },
+      uVegSat: { value: settings.vegSat },
       uBiomeMap: { value: WHITE },
       uHasBiomeMap: { value: 0 },
       uTextureRange: { value: settings.textureRange },
@@ -126,6 +128,8 @@ export default function Terrain({ build, sky, fogDensity }: Props) {
     u.uRiparianReach.value = settings.riparianReach
     u.uGroundWarmth.value = settings.groundWarmth
     u.uForest.value = settings.forest
+    u.uVegTint.value = settings.vegTint
+    u.uVegSat.value = settings.vegSat
     u.uBiomeMap.value = biomeMap ?? WHITE
     u.uHasBiomeMap.value = biomeMap ? 1 : 0
     u.uTextureRange.value = settings.textureRange

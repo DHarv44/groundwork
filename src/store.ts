@@ -33,6 +33,10 @@ export interface Settings {
   groundWarmth: number
   /** Share of the ground cover that is trees rather than grass. */
   forest: number
+  /** Which green the vegetation is: −1 blue-shifted, +1 yellow-shifted. */
+  vegTint: number
+  /** How saturated that green is. */
+  vegSat: number
   textureRange: number
   /** Master opacity for derived water. */
   rivers: number
@@ -89,6 +93,8 @@ export const DEFAULT_SETTINGS: Settings = {
   riparianReach: 0.34,
   groundWarmth: 0,
   forest: 0.6,
+  vegTint: 0,
+  vegSat: 1,
   textureRange: 1,
   rivers: 1,
   // 0.30 on the log-drainage scale is about 1 km² of catchment — roughly where a
@@ -124,6 +130,8 @@ export const BIOME_KEYS = [
   'riparianReach',
   'groundWarmth',
   'forest',
+  'vegTint',
+  'vegSat',
 ] as const
 
 export type BiomeKey = (typeof BIOME_KEYS)[number]
@@ -229,6 +237,8 @@ const PERSISTED_SETTINGS = [
   'riparianReach',
   'groundWarmth',
   'forest',
+  'vegTint',
+  'vegSat',
   'textureRange',
   'rivers',
   'riverThreshold',
@@ -404,9 +414,17 @@ export const useStore = create<State>((setState, getState) => {
 
     return {
       // Tile-wide: from the dominant class and the composition, never the selection.
+      //
+      // Vegetation colour is here rather than per-class because it is resolved once for
+      // the whole tile — there are no spare channels in the field to vary it per texel.
+      // A box spanning two very different greens gets one compromise; that is the price
+      // of not carrying a second texture, and it is a rarer case than the elevation
+      // mixing the field already handles properly.
       snowLine: tileMine.snowLine ?? Math.round(climaticSnowLine(midLat) * snowScale),
       treeLine: tileMine.treeLine ?? Math.round(climaticTreeLine(midLat) * treeScale),
       riparianReach: tileMine.riparianReach ?? tile.riparianReach,
+      vegTint: tileMine.vegTint ?? tile.vegTint,
+      vegSat: tileMine.vegSat ?? tile.vegSat,
       // Per-class: whichever class the sliders are pointed at.
       aridity: editMine.aridity ?? p.aridity,
       riparian: editMine.riparian ?? p.riparian,

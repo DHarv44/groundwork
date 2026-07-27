@@ -60,6 +60,8 @@ uniform float uRiparian;       // how strongly vegetation follows the drainage
 uniform float uRiparianReach;  // how far up the drainage scale corridors extend
 uniform float uGroundWarmth;   // shift bare ground toward oxidised rust
 uniform float uForest;         // how much of the cover is trees rather than grass
+uniform float uVegTint;        // which green: -1 blue-shifted, +1 yellow-shifted
+uniform float uVegSat;         // how saturated that green is
 uniform float uTextureRange;   // scales how far surface detail survives
 // Biomes baked over the tile: aridity, riparian, ground warmth and corridor reach, one
 // per channel. Sampling it replaces the four scalars above wherever it is present —
@@ -183,6 +185,22 @@ float terrainAO(vec2 uvp, float y) {
   return clamp(1.0 - (occ / total) * 1.7 * uAoStrength, 0.0, 1.0);
 }
 
+/**
+ * Push a vegetation colour toward the green this biome actually is.
+ *
+ * Green is held fixed and the red and blue ends are swung against each other, which
+ * moves the hue between blue-green and yellow-green without touching how bright the
+ * cover reads — brightness is already the job of tree cover and aridity, and folding it
+ * in here would make the two controls fight.
+ */
+vec3 vegTone(vec3 c, float tint, float sat) {
+  float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
+  c = mix(vec3(l), c, sat);
+  c.r *= 1.0 + 0.55 * tint;
+  c.b *= 1.0 - 0.45 * tint;
+  return max(c, vec3(0.0));
+}
+
 vec3 srgbToLinear(vec3 c) {
   return pow(c, vec3(2.2));
 }
@@ -225,16 +243,56 @@ void main() {
   float rock = ridged(wp * 0.06, 4) * rockFade;
   float grain = fbm(wp * 0.6, 3) * grainFade;
 
+  // Resolve the biome parameters for this point. One tile can span several climates —
+  // a box across a mountain front is steppe on the plains and forest a thousand metres
+  // up — so these are a field over the tile, not four constants. The sliders stand for
+  // the dominant class; editing one rebakes the field for that class alone.
+  //
+  // Resolved before the palette because the palette depends on it: how green the ground
+  // is, not just how much of it is covered, is a function of how dry the place is.
+  float aridity = clamp(uAridity, 0.0, 1.0);
+  float riparianAmt = uRiparian;
+  float groundWarmth = uGroundWarmth;
+  float forest = clamp(uForest, 0.0, 1.0);
+  // Corridor reach stays tile-wide: it barely varies between classes, so it does not
+  // earn one of the four channels.
+  float riparianReach = uRiparianReach;
+  if (uHasBiomeMap > 0.5) {
+    vec4 bio = texture2D(uBiomeMap, vUv);
+    aridity = bio.r;
+    riparianAmt = bio.g;
+    // Warmth runs past 1, so the channel holds it scaled — see GROUND_WARMTH_MAX.
+    groundWarmth = bio.b * 2.0;
+    forest = bio.a;
+  }
+
   // Linear-space albedos in the range real ground actually occupies: rock sits around
   // 0.15–0.30, vegetation lower still, only snow gets close to 0.8.
   vec3 rockDark  = vec3(0.088, 0.079, 0.071);
   vec3 rockLight = vec3(0.255, 0.235, 0.212);
   vec3 scree     = vec3(0.205, 0.192, 0.176);
   vec3 soil      = vec3(0.115, 0.086, 0.055);
-  vec3 grassCol  = mix(vec3(0.055, 0.082, 0.030), vec3(0.130, 0.145, 0.062), clamp(macro + 0.5, 0.0, 1.0));
+  // Grass is not one colour. It is green where there is water and straw where there is
+  // not — a dry grassland is dead for most of the year, so drought is a change of hue,
+  // not merely less cover. Rendering steppe as sparse green is why the plains only read
+  // as dry once ground warmth is cranked up to compensate, which is a hue problem being
+  // papered over by a brightness control.
+  //
+  // Aridity already carries the signal, per texel, so this costs nothing.
+  // Not "patch" — that is a reserved word in GLSL and the whole shader fails to build.
+  float mottle = clamp(macro + 0.5, 0.0, 1.0);
+  float parch = smoothstep(0.18, 0.82, aridity);
+  vec3 grassWet = mix(vec3(0.042, 0.072, 0.024), vec3(0.112, 0.136, 0.054), mottle);
+  vec3 grassDry = mix(vec3(0.126, 0.104, 0.048), vec3(0.212, 0.184, 0.094), mottle);
+  vec3 grassCol = vegTone(mix(grassWet, grassDry, parch), uVegTint, uVegSat);
+
   // Closed conifer canopy. Far darker than grass and barely green — a spruce stand
-  // reflects only a few per cent of what hits it.
-  vec3 conifer   = mix(vec3(0.016, 0.022, 0.015), vec3(0.031, 0.040, 0.024), clamp(macro + 0.5, 0.0, 1.0));
+  // reflects only a few per cent of what hits it. Dry-country woodland is greyer and
+  // more olive than boreal forest, but nothing like as bleached as the grass beneath
+  // it: a tree reaches water the turf cannot, so it stays in leaf through the drought.
+  vec3 coniferWet = mix(vec3(0.016, 0.022, 0.015), vec3(0.031, 0.040, 0.024), mottle);
+  vec3 coniferDry = mix(vec3(0.026, 0.028, 0.018), vec3(0.050, 0.052, 0.032), mottle);
+  vec3 conifer = vegTone(mix(coniferWet, coniferDry, parch), uVegTint, uVegSat);
   vec3 sandCol   = vec3(0.340, 0.288, 0.196);
   vec3 snowCol   = vec3(0.760, 0.795, 0.850);
 
@@ -257,26 +315,6 @@ void main() {
     float seam = abs(fract(bandCoord) - 0.5) * 2.0;
     strataCol *= 0.88 + 0.24 * seam;
     albedo = mix(albedo, strataCol, uStrata * (0.35 + 0.65 * cliff));
-  }
-
-  // Resolve the biome parameters for this point. One tile can span several climates —
-  // a box across a mountain front is steppe on the plains and forest a thousand metres
-  // up — so these are a field over the tile, not four constants. The sliders stand for
-  // the dominant class; editing one rebakes the field for that class alone.
-  float aridity = clamp(uAridity, 0.0, 1.0);
-  float riparianAmt = uRiparian;
-  float groundWarmth = uGroundWarmth;
-  float forest = clamp(uForest, 0.0, 1.0);
-  // Corridor reach stays tile-wide: it barely varies between classes, so it does not
-  // earn one of the four channels.
-  float riparianReach = uRiparianReach;
-  if (uHasBiomeMap > 0.5) {
-    vec4 bio = texture2D(uBiomeMap, vUv);
-    aridity = bio.r;
-    riparianAmt = bio.g;
-    // Warmth runs past 1, so the channel holds it scaled — see GROUND_WARMTH_MAX.
-    groundWarmth = bio.b * 2.0;
-    forest = bio.a;
   }
 
   // Soil and vegetation collect below the tree line.
