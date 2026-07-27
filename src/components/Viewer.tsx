@@ -5,6 +5,7 @@ import { OrbitControls } from '@react-three/drei'
 import { useStore } from '../store'
 import SkyDome from './SkyDome'
 import HeadingTape from './HeadingTape'
+import ViewLayers from './ViewLayers'
 import { computeSky } from '../lib/atmosphere'
 import { rendererRef } from '../lib/capture'
 import Terrain from './Terrain'
@@ -122,7 +123,7 @@ export default function Viewer() {
         {build && (
           <>
             <Terrain build={build} sky={sky} fogDensity={fogDensity} />
-            {settings.water && <Water build={build} sky={sky} fogDensity={fogDensity} />}
+            {settings.showOcean && <Water build={build} sky={sky} fogDensity={fogDensity} />}
           </>
         )}
         <CameraRig size={size} midY={midY} topY={topY} />
@@ -144,6 +145,7 @@ export default function Viewer() {
       )}
 
       <canvas className="heading-tape" ref={tapeRef} />
+      <ViewLayers />
     </div>
   )
 }

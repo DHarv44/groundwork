@@ -47,6 +47,8 @@ export default function Terrain({ build, sky, fogDensity }: Props) {
       uHasWater: { value: 0 },
       uRivers: { value: settings.rivers },
       uRiverThreshold: { value: settings.riverThreshold },
+      uShowRivers: { value: 1 },
+      uShowLakes: { value: 1 },
       uDrainageView: { value: 0 },
       uTime: { value: 0 },
       uMinElev: { value: build.minElevation },
@@ -121,6 +123,8 @@ export default function Terrain({ build, sky, fogDensity }: Props) {
     u.uHasWater.value = waterMask ? 1 : 0
     u.uRivers.value = settings.rivers
     u.uRiverThreshold.value = settings.riverThreshold
+    u.uShowRivers.value = settings.showRivers ? 1 : 0
+    u.uShowLakes.value = settings.showLakes ? 1 : 0
     u.uDrainageView.value = settings.textureMode === 'drainage' && waterMask ? 1 : 0
   })
 

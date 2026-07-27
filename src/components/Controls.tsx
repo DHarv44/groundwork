@@ -79,7 +79,6 @@ export default function Controls() {
     heightField,
     imagery,
     imageryZoom,
-    loadImagery,
     waterStats,
     generateDemo,
   } = useStore()
@@ -257,31 +256,7 @@ export default function Controls() {
 
           <section>
             <h3>4 · Surface</h3>
-            <div className="segmented">
-              <button
-                className={settings.textureMode === 'procedural' ? 'on' : ''}
-                onClick={() => set('textureMode', 'procedural')}
-              >
-                Procedural
-              </button>
-              <button
-                className={settings.textureMode === 'satellite' ? 'on' : ''}
-                onClick={() => {
-                  set('textureMode', 'satellite')
-                  void loadImagery()
-                }}
-              >
-                Satellite
-              </button>
-              <button
-                className={settings.textureMode === 'drainage' ? 'on' : ''}
-                onClick={() => set('textureMode', 'drainage')}
-                disabled={!waterStats}
-                title={waterStats ? 'Catchment network' : 'Still tracing drainage…'}
-              >
-                Drainage
-              </button>
-            </div>
+            {/* The layer switcher itself lives on the 3D view. */}
             {settings.textureMode === 'satellite' ? (
               <p className="note">
                 {imagery
@@ -417,7 +392,7 @@ export default function Controls() {
                 value={settings.shadows}
                 onChange={setSetting('shadows')}
               />
-              <Toggle label="Sea level water" value={settings.water} onChange={setSetting('water')} />
+              {/* Ocean, rivers and lakes toggle from the layer panel on the view. */}
               <Toggle label="Wireframe" value={settings.wireframe} onChange={setSetting('wireframe')} />
             </div>
           </section>

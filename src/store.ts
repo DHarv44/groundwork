@@ -24,14 +24,17 @@ export interface Settings {
   treeLine: number
   aridity: number
   strata: number
-  /** Overall visibility of inland water. */
+  /** Master opacity for derived water. */
   rivers: number
   /** Minimum drainage area a channel needs before it is drawn, 0..1 log scale. */
   riverThreshold: number
+  /** Each derived water class toggles independently. */
+  showOcean: boolean
+  showRivers: boolean
+  showLakes: boolean
   shadows: boolean
   aoStrength: number
   microDetail: number
-  water: boolean
   wireframe: boolean
 }
 
@@ -52,10 +55,12 @@ export const DEFAULT_SETTINGS: Settings = {
   // 0.30 on the log-drainage scale is about 1 km² of catchment — roughly where a
   // channel actually starts in humid country.
   riverThreshold: 0.3,
+  showOcean: true,
+  showRivers: true,
+  showLakes: true,
   shadows: true,
   aoStrength: 0.85,
   microDetail: 0.6,
-  water: true,
   wireframe: false,
 }
 
@@ -71,7 +76,11 @@ interface State {
   imageryZoom: number
   /** RGBA water mask from the hydrology pass: coverage, lake flag, log drainage. */
   waterMask: THREE.DataTexture | null
-  waterStats: { rivers: number; lakes: number; maxDrainageKm2: number } | null
+  waterStats: {
+    rivers: number
+    lakes: number
+    maxDrainageKm2: number
+  } | null
   settings: Settings
   /** Incremented whenever the viewer should re-frame the camera. */
   frameToken: number

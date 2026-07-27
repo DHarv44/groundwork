@@ -29,8 +29,10 @@ uniform sampler2D uSatMap;
 uniform sampler2D uWaterMap;  // R = coverage, G = lake flag, B = log drainage area
 
 uniform float uHasWater;
-uniform float uRivers;        // overall inland-water visibility
+uniform float uRivers;        // master opacity for derived water
 uniform float uRiverThreshold;
+uniform float uShowRivers;
+uniform float uShowLakes;
 uniform float uDrainageView;  // 1 = render the catchment network instead of ground
 uniform float uTime;
 
@@ -286,7 +288,9 @@ void main() {
     vec4 wm = texture2D(uWaterMap, vUv);
     lakeness = wm.g;
     float sizeGate = smoothstep(uRiverThreshold - 0.05, uRiverThreshold + 0.05, wm.b);
-    waterCov = clamp(wm.r * mix(sizeGate, 1.0, lakeness) * uRivers, 0.0, 1.0);
+    // The mask tags each cell as river or lake, so the two classes gate separately.
+    float classGate = mix(uShowRivers, uShowLakes, lakeness);
+    waterCov = clamp(wm.r * mix(sizeGate, 1.0, lakeness) * uRivers * classGate, 0.0, 1.0);
     // Watercourses dry up in arid country — what is left is a wadi, not a river.
     waterCov *= 1.0 - clamp(uAridity, 0.0, 1.0) * 0.55 * (1.0 - lakeness);
     // Water cannot hold a broad flat surface on a steep face. Anything that steep is
@@ -300,6 +304,10 @@ void main() {
     vec3 trueN = normalize(vec3(n.x / ny / uExag, 1.0, n.z / ny / uExag));
     float trueSlope = 1.0 - clamp(trueN.y, 0.0, 1.0);
     waterCov *= mix(1.0 - smoothstep(0.14, 0.40, trueSlope), 1.0, lakeness);
+    // Over imagery the point is to compare the derived water against what is actually
+    // there, so let the picture read through rather than painting over it. The water
+    // visibility slider still scales on top of this.
+    waterCov *= mix(1.0, 0.55, uUseSat);
   }
 
   if (waterCov > 0.002) {
