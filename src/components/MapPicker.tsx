@@ -4,6 +4,7 @@ import { MapContainer, Rectangle, TileLayer, useMap } from 'react-leaflet'
 import 'leaflet/dist/leaflet.css'
 import type { Bounds } from '../lib/geo'
 import { useStore } from '../store'
+import KoppenLayer from './KoppenLayer'
 
 export interface Preset {
   name: string
@@ -152,9 +153,13 @@ function FitTo({ bounds, token }: { bounds: Bounds | null; token: number }) {
   return null
 }
 
+const BIOME_KEY = 'terrain-builder.showBiome'
+
 export default function MapPicker() {
   const bounds = useStore((s) => s.bounds)
   const setBounds = useStore((s) => s.setBounds)
+  const biome = useStore((s) => s.biome)
+  const [showBiome, setShowBiome] = useState(() => localStorage.getItem(BIOME_KEY) === '1')
   const [armed, setArmed] = useState(true)
   const [fitToken, setFitToken] = useState(0)
   // Read once at mount; MapContainer ignores later changes to center/zoom anyway.
@@ -238,6 +243,7 @@ export default function MapPicker() {
               pathOptions={{ color: '#fbbf24', weight: 2, fillOpacity: 0.1 }}
             />
           )}
+          <KoppenLayer show={showBiome} />
           <BoxDrawer
             armed={armed}
             onFinish={(b) => {
@@ -257,6 +263,25 @@ export default function MapPicker() {
           {armed ? '◻ drag to draw' : '✎ draw box'}
         </button>
 
+        <button
+          className={`biome-toggle ${showBiome ? 'on' : ''}`}
+          onClick={() =>
+            setShowBiome((v) => {
+              localStorage.setItem(BIOME_KEY, v ? '0' : '1')
+              return !v
+            })
+          }
+          title="Köppen–Geiger climate classes, Beck et al. (2023)"
+        >
+          ◐ biomes
+        </button>
+
+        {/* What the box currently sits in, named on the map itself. */}
+        {biome && (
+          <div className="biome-badge" title={biome.name}>
+            <b>{biome.code}</b> {biome.name}
+          </div>
+        )}
       </div>
 
       {searchNote && <div className="search-note">{searchNote}</div>}

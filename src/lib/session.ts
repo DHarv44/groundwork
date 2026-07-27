@@ -19,6 +19,8 @@ export interface SessionState {
   demType?: string
   /** Only the display-side settings; anything derived from the DEM is recomputed. */
   settings?: Record<string, unknown>
+  /** Per-Köppen-class surface tuning, keyed by code. */
+  biomeOverrides?: Record<string, Record<string, number>>
   camera?: SessionCamera
 }
 

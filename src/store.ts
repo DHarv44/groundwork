@@ -7,6 +7,7 @@ import { boundsAreaKm2, climaticSnowLine, climaticTreeLine } from './lib/geo'
 import type { HeightField } from './lib/opentopo'
 import { DEM_SOURCES, fetchHeightField, validateRequest } from './lib/opentopo'
 import { fetchImagery } from './lib/imagery'
+import { biomeOf, ensureKoppen, fetchNormals, profileFor, type Biome } from './lib/climate'
 import { makeDemoHeightField } from './lib/demo'
 import { loadSession, saveSession } from './lib/session'
 import { buildTerrain, type TerrainBuild } from './lib/mesh'
@@ -106,6 +107,22 @@ export const DEFAULT_SETTINGS: Settings = {
   wireframe: false,
 }
 
+/**
+ * The surface settings a biome is allowed to set. Deliberately only the ones that are
+ * genuinely climatic — rock strata, micro relief and texture range describe the geology
+ * and the render, not the vegetation, so they stay yours.
+ */
+export const BIOME_KEYS = [
+  'snowLine',
+  'treeLine',
+  'aridity',
+  'riparian',
+  'riparianReach',
+  'groundWarmth',
+] as const
+
+export type BiomeKey = (typeof BIOME_KEYS)[number]
+
 interface State {
   bounds: Bounds | null
   demType: string
@@ -124,6 +141,20 @@ interface State {
     maxDrainageKm2: number
   } | null
   settings: Settings
+  /** Köppen class of the selected area, read from the bundled raster. */
+  biome: Biome | null
+  /**
+   * Your own values for each biome, keyed by Köppen code. Editing a surface slider
+   * while a biome is active records it here, so the next tile in that climate comes up
+   * the way you tuned it. Saved with presets, so a preset carries your whole scheme
+   * rather than a single place's numbers.
+   */
+  biomeOverrides: Record<string, Partial<Record<BiomeKey, number>>>
+  /**
+   * Which surface settings are currently the biome's doing rather than a preset's or a
+   * hand edit made before the biome was known.
+   */
+  biomeKeys: BiomeKey[]
   /** Incremented whenever the viewer should re-frame the camera. */
   frameToken: number
 
@@ -132,6 +163,10 @@ interface State {
   set: <K extends keyof Settings>(key: K, value: Settings[K]) => void
   reset: () => void
   resetSettings: () => void
+  /** Discard your overrides for the current biome and go back to its built-in profile. */
+  resetBiome: () => void
+  /** Classify the current selection. Called on start-up and whenever the box moves. */
+  refreshBiome: () => void
   /** Overwrite the live settings from a saved snapshot. */
   applySettings: (patch: Record<string, unknown>) => void
   /** The persistable slice, for saving as a preset. */
@@ -198,10 +233,12 @@ const PERSISTED_SETTINGS = [
   'riverConvergence',
 ] as const
 
-function persistSettings(settings: Settings): void {
+export type BiomeOverrides = Record<string, Partial<Record<BiomeKey, number>>>
+
+function persistSettings(settings: Settings, biomeOverrides?: BiomeOverrides): void {
   const slice: Record<string, unknown> = {}
   for (const k of PERSISTED_SETTINGS) slice[k] = settings[k]
-  saveSession({ settings: slice })
+  saveSession(biomeOverrides ? { settings: slice, biomeOverrides } : { settings: slice })
 }
 
 /** Release the GPU resources a build owns. Nothing else references them. */
@@ -293,6 +330,72 @@ export const useStore = create<State>((setState, getState) => {
       riverMinWidthScale: s.riverMinWidthScale,
       riverConvergence: s.riverConvergence,
     }
+  }
+
+  /**
+   * Turn a biome into concrete settings: its built-in profile, then whatever you have
+   * tuned for that class on top.
+   *
+   * Snow and tree lines start from the latitude curve and are scaled by the class, so
+   * the biome corrects the altitude rather than replacing it — two places on the same
+   * parallel can be a wet oceanic coast and a high desert, and only the class knows
+   * which. An override, being an absolute height you chose, wins outright.
+   */
+  function biomeSettings(code: string, midLat: number): Record<BiomeKey, number> {
+    const p = profileFor(code)
+    return {
+      snowLine: Math.round(climaticSnowLine(midLat) * p.snowLineScale),
+      treeLine: Math.round(climaticTreeLine(midLat) * p.treeLineScale),
+      aridity: p.aridity,
+      riparian: p.riparian,
+      riparianReach: p.riparianReach,
+      groundWarmth: p.groundWarmth,
+      ...getState().biomeOverrides[code],
+    }
+  }
+
+  function applyBiome(biome: Biome, midLat: number): void {
+    const next: Settings = { ...getState().settings, ...biomeSettings(biome.code, midLat) }
+    setState({ settings: next, biome, biomeKeys: [...BIOME_KEYS] })
+    persistSettings(next)
+  }
+
+  /**
+   * Classify the selected area and dress the surface to match.
+   *
+   * The class comes from the bundled raster, so this is instant and can run on every
+   * change of the box. The temperature and rainfall readout follows behind over the
+   * network; it is only ever shown, never acted on, so it cannot hold anything up.
+   */
+  function deriveBiome(): void {
+    const bounds = getState().bounds
+    if (!bounds) return
+
+    void ensureKoppen().then(() => {
+      // The selection may have moved on while the raster was loading.
+      if (getState().bounds !== bounds) return
+
+      const biome = biomeOf(bounds)
+      if (!biome) {
+        setState({ biome: null, biomeKeys: [] })
+        return
+      }
+
+      const previous = getState().biome
+      applyBiome(biome, (bounds.north + bounds.south) / 2)
+
+      // One readout per class is enough to label the panel; re-fetching it for every
+      // nudge of the box would burn the rate limit for a cosmetic line of text.
+      if (previous?.code === biome.code && previous.normals) {
+        setState({ biome: { ...biome, normals: previous.normals } })
+        return
+      }
+      void fetchNormals(bounds).then((normals) => {
+        if (!normals) return
+        const live = getState().biome
+        if (live?.code === biome.code) setState({ biome: { ...live, normals } })
+      })
+    })
   }
 
   function applyWater(result: HydrologyResult): void {
@@ -397,7 +500,12 @@ export const useStore = create<State>((setState, getState) => {
         if (signal.aborted) return
         applyWater(result)
       })
-      .catch((e) => console.warn('hydrology failed', e))
+      .catch((e) => {
+        console.warn('hydrology failed', e)
+        // Surfaced rather than swallowed: the loading screen waits on the derived
+        // layers, so a silent failure would leave it spinning for ever.
+        if (!signal.aborted) setState({ error: 'Water derivation failed for this area.' })
+      })
   }
 
   return {
@@ -415,11 +523,16 @@ export const useStore = create<State>((setState, getState) => {
   waterMask: null,
   waterStats: null,
   settings: { ...DEFAULT_SETTINGS, ...(restored.settings as Partial<Settings>) },
+  biome: null,
+  biomeOverrides: (restored.biomeOverrides as BiomeOverrides) ?? {},
+  biomeKeys: [],
   frameToken: 0,
 
   setBounds: (bounds) => {
     setState({ bounds, error: null })
     saveSession({ bounds })
+    // Reclassify as the box moves — no request, so this is free on every drag.
+    deriveBiome()
   },
   setDemType: (demType) => {
     setState({ demType, error: null })
@@ -427,10 +540,26 @@ export const useStore = create<State>((setState, getState) => {
   },
 
   set: (key, value) => {
-    const { settings } = getState()
+    const { settings, biomeKeys, biome, biomeOverrides } = getState()
     const next = { ...settings, [key]: value }
-    setState({ settings: next })
-    persistSettings(next)
+
+    // Editing a climatic slider while a biome is known records the value against that
+    // biome, not against this one tile: dial the aridity down in a Cfa valley and every
+    // Cfa tile you open afterwards comes up the same. Presets carry the whole table.
+    const overrides =
+      biome && (BIOME_KEYS as readonly string[]).includes(key)
+        ? {
+            ...biomeOverrides,
+            [biome.code]: { ...biomeOverrides[biome.code], [key]: value as number },
+          }
+        : biomeOverrides
+
+    setState({
+      settings: next,
+      biomeOverrides: overrides,
+      biomeKeys: biomeKeys.filter((k) => k !== (key as BiomeKey)),
+    })
+    persistSettings(next, overrides)
 
     // Geometry-affecting settings need the mesh rebuilt from the cached DEM. Slider
     // drags fire on every pixel of travel, and a rebuild is hundreds of thousands of
@@ -450,24 +579,35 @@ export const useStore = create<State>((setState, getState) => {
    * from the tile's latitude on each build and are not preferences.
    */
   settingsSnapshot: () => {
-    const s = getState().settings
+    const { settings, biomeOverrides } = getState()
     const slice: Record<string, unknown> = {}
-    for (const k of PERSISTED_SETTINGS) slice[k] = s[k]
+    for (const k of PERSISTED_SETTINGS) slice[k] = settings[k]
+    // Your per-biome tuning travels with the preset. That is what makes a preset a way
+    // of working rather than one place's numbers — recall it anywhere and every climate
+    // still comes up dressed the way you set it.
+    slice.biomeOverrides = biomeOverrides
     return slice
   },
 
   applySettings: (patch) => {
-    const { settings } = getState()
+    const { settings, biomeOverrides, biome, bounds } = getState()
+    const { biomeOverrides: incoming, ...rest } = patch as Record<string, unknown> & {
+      biomeOverrides?: BiomeOverrides
+    }
     // Snow and tree lines stay put: they are re-derived from the tile's latitude on
     // every build, so a preset carrying them would just be overwritten.
     const next: Settings = {
       ...settings,
-      ...(patch as Partial<Settings>),
+      ...(rest as Partial<Settings>),
       snowLine: settings.snowLine,
       treeLine: settings.treeLine,
     }
-    setState({ settings: next })
-    persistSettings(next)
+    const overrides = incoming ?? biomeOverrides
+    setState({ settings: next, biomeOverrides: overrides, biomeKeys: [] })
+    persistSettings(next, overrides)
+    // The preset's per-biome table only shows itself once it is applied to the biome
+    // actually on screen.
+    if (biome && bounds) applyBiome(biome, (bounds.north + bounds.south) / 2)
     scheduleWater()
     // A preset can carry geometry settings, which need the mesh rebuilt.
     if (next.exaggeration !== settings.exaggeration || next.detail !== settings.detail) {
@@ -476,15 +616,30 @@ export const useStore = create<State>((setState, getState) => {
   },
 
   resetSettings: () => {
-    const { settings } = getState()
+    const { settings, biome, bounds } = getState()
     const next: Settings = {
       ...DEFAULT_SETTINGS,
       snowLine: settings.snowLine,
       treeLine: settings.treeLine,
     }
-    setState({ settings: next })
-    persistSettings(next)
+    // Defaults means defaults: the per-biome table goes too, otherwise the surface
+    // sliders would spring straight back to your tuning.
+    setState({ settings: next, biomeOverrides: {}, biomeKeys: [] })
+    persistSettings(next, {})
+    if (biome && bounds) applyBiome(biome, (bounds.north + bounds.south) / 2)
     scheduleWater()
+  },
+
+  refreshBiome: () => deriveBiome(),
+
+  resetBiome: () => {
+    const { biome, bounds, biomeOverrides } = getState()
+    if (!biome || !bounds) return
+    const rest = { ...biomeOverrides }
+    delete rest[biome.code]
+    setState({ biomeOverrides: rest })
+    applyBiome(biome, (bounds.north + bounds.south) / 2)
+    persistSettings(getState().settings, rest)
   },
 
   reset: () => {
@@ -590,6 +745,7 @@ export const useStore = create<State>((setState, getState) => {
     await new Promise((r) => setTimeout(r, 16))
     const hf = makeDemoHeightField()
     setState({ bounds: hf.bounds })
+    deriveBiome()
     await finishBuild(hf, signal, false)
   },
 
@@ -608,6 +764,10 @@ export const useStore = create<State>((setState, getState) => {
   },
   }
 })
+
+// Classify whatever area the last session left selected, so the panel and the overlay
+// are right before anything is built.
+useStore.getState().refreshBiome()
 
 // Dev hook: drive the whole pipeline from the console without touching the UI.
 if (import.meta.env.DEV) {

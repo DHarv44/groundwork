@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useStore, type Settings } from '../store'
+import { useStore, type BiomeKey, type Settings } from '../store'
 import { DAILY_QUOTA, cacheClear, cacheStats, quotaUsed } from '../lib/demcache'
 import { deletePreset, loadPresets, savePreset } from '../lib/presets'
 import { DEM_SOURCES } from '../lib/opentopo'
@@ -15,6 +15,7 @@ function Slider({
   step,
   suffix,
   decimals,
+  tag,
   onChange,
 }: {
   label: string
@@ -25,6 +26,8 @@ function Slider({
   suffix?: string
   /** Override the readout precision, for steps finer than two decimal places. */
   decimals?: number
+  /** Small chip after the label, marking where the value came from. */
+  tag?: string
   onChange: (v: number) => void
 }) {
   // Nudge by exactly one step, clamped, and rounded onto the step grid so repeated
@@ -38,7 +41,10 @@ function Slider({
   return (
     <div className="slider">
       <span className="slider-head">
-        <span>{label}</span>
+        <span>
+          {label}
+          {tag && <span className="tag">{tag}</span>}
+        </span>
         <b>
           {decimals !== undefined
             ? value.toFixed(decimals)
@@ -160,7 +166,19 @@ export default function Controls() {
     resetSettings,
     applySettings,
     settingsSnapshot,
+    biome,
+    biomeKeys,
+    biomeOverrides,
+    resetBiome,
   } = useStore()
+
+  const myValues = biome ? biomeOverrides[biome.code] : undefined
+  const tuned = !!myValues && Object.keys(myValues).length > 0
+
+  // Chip every climatic slider with where its value came from: the biome's built-in
+  // profile, or your own saved value for this climate.
+  const biomeTag = (k: BiomeKey) =>
+    myValues && k in myValues ? 'yours' : biomeKeys.includes(k) ? 'biome' : undefined
 
   const [presets, setPresets] = useState(loadPresets)
   const [presetName, setPresetName] = useState('')
@@ -436,6 +454,41 @@ export default function Controls() {
               </p>
             ) : (
               <>
+                {/* Where this patch of ground sits climatically, and what that set. */}
+                <div className="biome">
+                  {biome ? (
+                    <>
+                      <span className="biome-head">
+                        <b>{biome.code}</b> {biome.name}
+                        {tuned && (
+                          <button
+                            className="ghost"
+                            onClick={resetBiome}
+                            title={`Discard your ${biome.code} values and go back to the built-in profile`}
+                          >
+                            Reset {biome.code}
+                          </button>
+                        )}
+                      </span>
+                      <span className="biome-sub">
+                        {biome.normals && (
+                          <>
+                            {biome.normals.meanTemp.toFixed(1)} °C ·{' '}
+                            {Math.round(biome.normals.annualPrecip).toLocaleString()} mm/yr ·{' '}
+                          </>
+                        )}
+                        Köppen–Geiger, Beck et al. (2023).{' '}
+                        {tuned
+                          ? `Chips marked YOURS are saved against ${biome.code} and travel with presets.`
+                          : 'Move any chipped slider and the value is kept for this climate.'}
+                      </span>
+                    </>
+                  ) : (
+                    <span className="biome-sub">
+                      No land in the selected box — surface settings left as they are.
+                    </span>
+                  )}
+                </div>
                 <Slider
                   label="Snow line"
                   value={settings.snowLine}
@@ -443,6 +496,7 @@ export default function Controls() {
                   max={lineMax}
                   step={10}
                   suffix=" m"
+                  tag={biomeTag('snowLine')}
                   onChange={setSetting('snowLine')}
                 />
                 <Slider
@@ -452,6 +506,7 @@ export default function Controls() {
                   max={lineMax}
                   step={10}
                   suffix=" m"
+                  tag={biomeTag('treeLine')}
                   onChange={setSetting('treeLine')}
                 />
                 <Slider
@@ -460,6 +515,7 @@ export default function Controls() {
                   min={0}
                   max={1}
                   step={0.01}
+                  tag={biomeTag('aridity')}
                   onChange={setSetting('aridity')}
                 />
                 <Slider
@@ -476,6 +532,7 @@ export default function Controls() {
                   min={0}
                   max={1}
                   step={0.01}
+                  tag={biomeTag('groundWarmth')}
                   onChange={setSetting('groundWarmth')}
                 />
                 <Slider
@@ -484,6 +541,7 @@ export default function Controls() {
                   min={0}
                   max={1}
                   step={0.01}
+                  tag={biomeTag('riparian')}
                   onChange={setSetting('riparian')}
                 />
                 <Slider
@@ -493,6 +551,7 @@ export default function Controls() {
                   max={0.6}
                   step={0.005}
                   decimals={3}
+                  tag={biomeTag('riparianReach')}
                   onChange={setSetting('riparianReach')}
                 />
               </>

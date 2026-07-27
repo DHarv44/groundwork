@@ -166,6 +166,52 @@ body {
   color: var(--accent-2);
 }
 
+/* Climate overlay switch, sitting under the draw button. */
+.biome-toggle {
+  position: absolute;
+  right: 8px;
+  top: 36px;
+  z-index: 450;
+  padding: 5px 9px;
+  font-size: 11px;
+  border-radius: 5px;
+  background: rgba(12, 16, 22, 0.88);
+  border: 1px solid var(--line);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.biome-toggle.on {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* Names the class the selection box is sitting in, on the map where the box is. */
+.biome-badge {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  z-index: 450;
+  max-width: calc(100% - 16px);
+  padding: 4px 8px;
+  border-radius: 5px;
+  font-size: 10.5px;
+  line-height: 1.4;
+  color: var(--muted);
+  background: rgba(12, 16, 22, 0.88);
+  border: 1px solid var(--line);
+  pointer-events: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.biome-badge b {
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  color: var(--accent);
+  font-weight: 600;
+}
+
 .search-note {
   margin-top: 6px;
   font-size: 11px;
@@ -397,6 +443,75 @@ button.primary:hover:not(:disabled) {
   color: var(--text);
   font-weight: 500;
   font-variant-numeric: tabular-nums;
+}
+
+/* Where a value came from: BIOME is the class's built-in profile, YOURS is what you
+   saved against that climate. */
+.tag {
+  margin-left: 6px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 32%, transparent);
+  vertical-align: 1px;
+}
+
+.tag.yours {
+  color: #fbbf24;
+  background: rgba(251, 191, 36, 0.14);
+  border-color: rgba(251, 191, 36, 0.35);
+}
+
+.biome {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 12px;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel-2);
+}
+
+.biome-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.biome-head b {
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.biome-head .ghost {
+  margin-left: auto;
+  padding: 2px 8px;
+  font-size: 10.5px;
+  line-height: 1.5;
+  border-radius: 4px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.biome-head .ghost:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.biome-sub {
+  font-size: 10.5px;
+  line-height: 1.45;
+  color: var(--muted);
 }
 
 .slider-row {
@@ -708,6 +823,12 @@ main {
   padding: 32px;
   pointer-events: none;
   background: radial-gradient(ellipse at center, rgba(11, 14, 19, 0.35), rgba(11, 14, 19, 0.85));
+}
+
+/* Layers still streaming in over a terrain that is already drawn — thin scrim, so the
+   mesh stays visible behind the spinner instead of being blanked out again. */
+.empty.veil {
+  background: radial-gradient(ellipse at center, rgba(11, 14, 19, 0), rgba(11, 14, 19, 0.45));
 }
 
 .empty h2 {
