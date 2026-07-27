@@ -1,7 +1,15 @@
 import { fromArrayBuffer } from 'geotiff'
 import type { Bounds } from './geo'
 import { boundsAreaKm2 } from './geo'
-import { DAILY_QUOTA, cacheGet, cachePut, noteRequest, quotaResetsAt } from './demcache'
+import {
+  DAILY_QUOTA,
+  cacheGet,
+  cachePut,
+  noteRequest,
+  quotaResetsAt,
+  quotaUsed,
+} from './demcache'
+import { fetchTerrariumHeightField } from './terrarium'
 
 export interface DemSource {
   id: string
@@ -15,8 +23,19 @@ export interface DemSource {
   note: string
 }
 
-/** OpenTopography global raster catalogue (portal.opentopography.org/apidocs). */
+/** Sources that need no key and have no request cap. */
+export const KEYLESS_SOURCES = new Set(['AWS_TERRARIUM'])
+
+/** OpenTopography global raster catalogue, plus keyless alternatives. */
 export const DEM_SOURCES: DemSource[] = [
+  {
+    id: 'AWS_TERRARIUM',
+    label: 'AWS Terrain Tiles',
+    resolution: 30,
+    maxAreaKm2: 250_000,
+    latRange: [-85, 85],
+    note: 'No API key and no daily limit. SRTM/NED-derived, served as map tiles — use this when the OpenTopography allowance is spent.',
+  },
   {
     id: 'COP30',
     label: 'Copernicus GLO-30',
@@ -156,6 +175,9 @@ export function validateRequest(bounds: Bounds, source: DemSource): string | nul
   if (bounds.south < lo || bounds.north > hi) {
     return `${source.label} only covers ${lo}° to ${hi}° latitude.`
   }
+  if (!KEYLESS_SOURCES.has(source.id) && quotaUsed() >= DAILY_QUOTA) {
+    return `Daily OpenTopography allowance is spent (${DAILY_QUOTA}/24 h). Switch the source to AWS Terrain Tiles — no key, no limit — or pick an area you have already cached.`
+  }
   return null
 }
 
@@ -168,12 +190,19 @@ export async function fetchHeightField(
   demtype: string,
   signal?: AbortSignal,
   onCacheHit?: () => void,
+  onTileProgress?: (done: number, total: number) => void,
 ): Promise<HeightField> {
   // Never spend an API call on an area we already hold.
   const cached = await cacheGet(bounds, demtype)
   if (cached) {
     onCacheHit?.()
     return cached
+  }
+
+  if (demtype === 'AWS_TERRARIUM') {
+    const result = await fetchTerrariumHeightField(bounds, onTileProgress, signal)
+    void cachePut(result, bounds)
+    return result
   }
 
   const url = endpoint({

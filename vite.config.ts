@@ -26,6 +26,14 @@ export default defineConfig(({ mode }) => {
             return rewritten + (rewritten.includes('?') ? '&' : '?') + 'API_Key=' + key
           },
         },
+        // AWS Terrain Tiles — keyless, unquotaed elevation. Proxied so the canvas we
+        // read pixels back from is never tainted.
+        '/api/terrarium': {
+          target: 'https://s3.amazonaws.com',
+          changeOrigin: true,
+          rewrite: (path) =>
+            path.replace(/^\/api\/terrarium/, '/elevation-tiles-prod/terrarium'),
+        },
         // Esri World Imagery, proxied so the composited canvas is never tainted.
         '/api/imagery': {
           target: 'https://services.arcgisonline.com',

@@ -84,6 +84,9 @@ export default function Controls() {
     generateDemo,
   } = useStore()
 
+  // What is actually loaded, which is not necessarily what the dropdown says.
+  const isDemo = heightField?.demtype === 'DEMO'
+
   const [cache, setCache] = useState({ count: 0, megabytes: 0 })
   const [used, setUsed] = useState(0)
 
@@ -138,12 +141,26 @@ export default function Controls() {
             </option>
           ))}
         </select>
-        <p className="note">{source.note}</p>
+        {/* The dropdown shows what the next build will request, which is not what is
+            on screen while synthetic terrain is loaded. Say so explicitly. */}
+        <p className="note">
+          {isDemo ? 'Not in use — the terrain on screen is synthetic.' : source.note}
+        </p>
       </section>
 
       <section>
         <h3>2 · Area</h3>
-        {bounds ? (
+        {isDemo ? (
+          <div className="synthetic">
+            <b>Synthetic terrain</b>
+            <span>
+              Procedurally generated, not a real place — the coordinates below are only
+              a stand-in so the latitude-driven snow and tree lines behave. Note it has
+              never been eroded, so it has no incised river beds for drainage to follow.
+            </span>
+          </div>
+        ) : null}
+        {bounds && !isDemo ? (
           <>
             <div className="coords">{formatBounds(bounds)}</div>
             {areaInfo && (

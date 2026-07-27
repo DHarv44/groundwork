@@ -74,6 +74,7 @@ function CompassLink({ target }: { target: React.RefObject<HTMLDivElement> }) {
 export default function Viewer() {
   const build = useStore((s) => s.build)
   const settings = useStore((s) => s.settings)
+  const isDemo = useStore((s) => s.heightField?.demtype === 'DEMO')
   const compassRef = useRef<HTMLDivElement>(null)
 
   const sky = useMemo(
@@ -121,6 +122,12 @@ export default function Viewer() {
           maxPolarAngle={Math.PI * 0.495}
         />
       </Canvas>
+
+      {isDemo && (
+        <div className="demo-badge" title="Not real elevation data">
+          synthetic terrain — not a real location
+        </div>
+      )}
 
       <div className="compass" title="North">
         <div className="compass-dial" ref={compassRef}>

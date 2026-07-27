@@ -314,9 +314,15 @@ export const useStore = create<State>((setState, getState) => {
 
     try {
       let fromCache = false
-      const heightField = await fetchHeightField(bounds, demType, signal, () => {
-        fromCache = true
-      })
+      const heightField = await fetchHeightField(
+        bounds,
+        demType,
+        signal,
+        () => {
+          fromCache = true
+        },
+        (done, total) => setState({ message: `Elevation tiles ${done}/${total}…` }),
+      )
       if (signal.aborted) return
       await finishBuild(heightField, signal, fromCache)
     } catch (err) {
