@@ -202,6 +202,14 @@ export interface BiomeProfile {
   treeLimit: number
   /** How sharply timber gives way to grass across both edges of that band. */
   treeSpread: number
+  /**
+   * How raggedly the timber fingers out of the drainage, 0..1.
+   *
+   * Zero draws it to a clean contour. Turning it up lets the woodland run up the side
+   * gullies and spill onto damp shoulders while leaving clearings on the dry spurs
+   * between — which is what makes a wood look grown rather than stencilled.
+   */
+  treeFractal: number
   /** How broadleaf the valley-bottom timber is against the canopy above it. */
   corridorLeaf: number
   /** How strongly bedrock banding shows. Soil and cover bury it in wet country. */
@@ -227,9 +235,11 @@ const BASE: BiomeProfile = {
   forest: 0.6,
   vegTint: 0,
   vegSat: 1,
-  treeNeed: 0.31,
-  treeLimit: 0.55,
+  // Catchment areas in km², directly comparable with minChannelKm2 for the rivers.
+  treeNeed: 1.2,
+  treeLimit: 400,
   treeSpread: 0.04,
+  treeFractal: 0.45,
   corridorLeaf: 0.6,
   strata: 0.25,
 }
@@ -247,54 +257,54 @@ const PROFILES: Record<string, BiomeProfile> = {
   // Rainforest is the most saturated green there is, faintly cool with it, and closed
   // enough that the drainage barely shows — so timber asks almost nothing of catchment.
   // No contrast along the creeks either: the corridor is invisible against the canopy.
-  Af: prof({ aridity: 0.02, riparian: 0.2, riparianReach: 0.28, groundWarmth: 0, snowLineScale: 1.05, treeLineScale: 1.14, forest: 1, vegTint: -0.1, vegSat: 1.28, treeNeed: 0.05, corridorLeaf: 0.1, strata: 0.06 }),
-  Am: prof({ aridity: 0.08, riparian: 0.32, riparianReach: 0.3, groundWarmth: 0.03, snowLineScale: 1.05, treeLineScale: 1.12, forest: 0.95, vegTint: -0.05, vegSat: 1.2, treeNeed: 0.08, corridorLeaf: 0.15, strata: 0.08 }),
+  Af: prof({ aridity: 0.02, riparian: 0.2, riparianReach: 0.28, groundWarmth: 0, snowLineScale: 1.05, treeLineScale: 1.14, forest: 1, vegTint: -0.1, vegSat: 1.28, treeNeed: 0.02, corridorLeaf: 0.1, strata: 0.06 }),
+  Am: prof({ aridity: 0.08, riparian: 0.32, riparianReach: 0.3, groundWarmth: 0.03, snowLineScale: 1.05, treeLineScale: 1.12, forest: 0.95, vegTint: -0.05, vegSat: 1.2, treeNeed: 0.04, corridorLeaf: 0.15, strata: 0.08 }),
   // Savanna is the definition of scattered: trees over grass, not woodland, and the
   // gallery forest along the watercourses is the whole story.
-  Aw: prof({ aridity: 0.44, riparian: 0.76, riparianReach: 0.38, groundWarmth: 0.24, snowLineScale: 1.08, treeLineScale: 1.06, forest: 0.35, vegTint: 0.45, vegSat: 0.85, treeNeed: 0.42, treeSpread: 0.07, corridorLeaf: 0.85, strata: 0.3 }),
+  Aw: prof({ aridity: 0.44, riparian: 0.76, riparianReach: 0.38, groundWarmth: 0.24, snowLineScale: 1.08, treeLineScale: 1.06, forest: 0.35, vegTint: 0.45, vegSat: 0.85, treeNeed: 2, treeSpread: 0.07, corridorLeaf: 0.85, strata: 0.3 }),
   // Arid classes are treeless for moisture, not altitude — aridity does that work, so
   // their tree line stays near the curve rather than being dragged down and stripping
   // the forested range that so often stands beside a dry basin. Bedrock is bare here,
   // so the banding shows more strongly than anywhere else.
-  BWh: prof({ aridity: 0.97, riparian: 0.95, riparianReach: 0.44, groundWarmth: 0.72, snowLineScale: 1.18, forest: 0.02, vegTint: 0.55, vegSat: 0.55, treeNeed: 0.62, corridorLeaf: 0.95, strata: 0.62 }),
-  BWk: prof({ aridity: 0.92, riparian: 0.88, riparianReach: 0.42, groundWarmth: 0.44, snowLineScale: 1.14, treeLineScale: 1.05, forest: 0.05, vegTint: 0.45, vegSat: 0.6, treeNeed: 0.58, corridorLeaf: 0.92, strata: 0.58 }),
-  BSh: prof({ aridity: 0.8, riparian: 0.9, riparianReach: 0.4, groundWarmth: 0.52, snowLineScale: 1.14, treeLineScale: 1.05, forest: 0.07, vegTint: 0.5, vegSat: 0.7, treeNeed: 0.5, corridorLeaf: 0.9, strata: 0.46 }),
-  BSk: prof({ aridity: 0.66, riparian: 0.82, riparianReach: 0.38, groundWarmth: 0.54, snowLineScale: 1.15, treeLineScale: 1.12, forest: 0.1, vegTint: 0.4, vegSat: 0.75, treeNeed: 0.44, corridorLeaf: 0.88, strata: 0.4 }),
+  BWh: prof({ aridity: 0.97, riparian: 0.95, riparianReach: 0.44, groundWarmth: 0.72, snowLineScale: 1.18, forest: 0.02, vegTint: 0.55, vegSat: 0.55, treeNeed: 60, corridorLeaf: 0.95, strata: 0.62 }),
+  BWk: prof({ aridity: 0.92, riparian: 0.88, riparianReach: 0.42, groundWarmth: 0.44, snowLineScale: 1.14, treeLineScale: 1.05, forest: 0.05, vegTint: 0.45, vegSat: 0.6, treeNeed: 40, corridorLeaf: 0.92, strata: 0.58 }),
+  BSh: prof({ aridity: 0.8, riparian: 0.9, riparianReach: 0.4, groundWarmth: 0.52, snowLineScale: 1.14, treeLineScale: 1.05, forest: 0.07, vegTint: 0.5, vegSat: 0.7, treeNeed: 20, corridorLeaf: 0.9, strata: 0.46 }),
+  BSk: prof({ aridity: 0.66, riparian: 0.82, riparianReach: 0.38, groundWarmth: 0.54, snowLineScale: 1.15, treeLineScale: 1.12, forest: 0.1, vegTint: 0.4, vegSat: 0.75, treeNeed: 12, corridorLeaf: 0.88, strata: 0.4 }),
   // Maquis and garrigue are grey-olive, not green — the leaves are waxed against the
   // summer drought and reflect far less colour than a temperate leaf.
-  Csa: prof({ aridity: 0.52, riparian: 0.72, riparianReach: 0.36, groundWarmth: 0.3, snowLineScale: 1.04, treeLineScale: 0.94, forest: 0.42, vegTint: 0.2, vegSat: 0.62, treeNeed: 0.4, corridorLeaf: 0.72, strata: 0.42 }),
-  Csb: prof({ aridity: 0.38, riparian: 0.62, riparianReach: 0.34, groundWarmth: 0.18, treeLineScale: 0.98, forest: 0.55, vegTint: 0.12, vegSat: 0.7, treeNeed: 0.35, corridorLeaf: 0.62, strata: 0.34 }),
-  Csc: prof({ aridity: 0.3, riparian: 0.52, snowLineScale: 0.92, treeLineScale: 0.9, forest: 0.45, vegTint: 0.05, vegSat: 0.74, groundWarmth: 0.1, treeNeed: 0.33, corridorLeaf: 0.55, strata: 0.3 }),
-  Cwa: prof({ aridity: 0.26, riparian: 0.56, riparianReach: 0.34, groundWarmth: 0.14, snowLineScale: 1.02, treeLineScale: 1.04, forest: 0.6, vegTint: 0.1, vegSat: 1.05, treeNeed: 0.3, corridorLeaf: 0.45, strata: 0.24 }),
-  Cwb: prof({ aridity: 0.22, riparian: 0.5, riparianReach: 0.33, groundWarmth: 0.1, treeLineScale: 1.02, forest: 0.58, vegTint: 0.05, vegSat: 1.02, treeNeed: 0.29, corridorLeaf: 0.45, strata: 0.24 }),
-  Cwc: prof({ aridity: 0.22, riparian: 0.44, groundWarmth: 0.08, snowLineScale: 0.94, treeLineScale: 0.92, forest: 0.45, vegSat: 0.95, treeNeed: 0.29, corridorLeaf: 0.45, strata: 0.26 }),
-  Cfa: prof({ aridity: 0.12, riparian: 0.4, riparianReach: 0.32, groundWarmth: 0.05, snowLineScale: 1.02, treeLineScale: 1.05, forest: 0.7, vegTint: 0.05, vegSat: 1.12, treeNeed: 0.31, corridorLeaf: 0.35, strata: 0.2 }),
+  Csa: prof({ aridity: 0.52, riparian: 0.72, riparianReach: 0.36, groundWarmth: 0.3, snowLineScale: 1.04, treeLineScale: 0.94, forest: 0.42, vegTint: 0.2, vegSat: 0.62, treeNeed: 6, corridorLeaf: 0.72, strata: 0.42 }),
+  Csb: prof({ aridity: 0.38, riparian: 0.62, riparianReach: 0.34, groundWarmth: 0.18, treeLineScale: 0.98, forest: 0.55, vegTint: 0.12, vegSat: 0.7, treeNeed: 3, corridorLeaf: 0.62, strata: 0.34 }),
+  Csc: prof({ aridity: 0.3, riparian: 0.52, snowLineScale: 0.92, treeLineScale: 0.9, forest: 0.45, vegTint: 0.05, vegSat: 0.74, groundWarmth: 0.1, treeNeed: 2.5, corridorLeaf: 0.55, strata: 0.3 }),
+  Cwa: prof({ aridity: 0.26, riparian: 0.56, riparianReach: 0.34, groundWarmth: 0.14, snowLineScale: 1.02, treeLineScale: 1.04, forest: 0.6, vegTint: 0.1, vegSat: 1.05, treeNeed: 1.2, corridorLeaf: 0.45, strata: 0.24 }),
+  Cwb: prof({ aridity: 0.22, riparian: 0.5, riparianReach: 0.33, groundWarmth: 0.1, treeLineScale: 1.02, forest: 0.58, vegTint: 0.05, vegSat: 1.02, treeNeed: 1, corridorLeaf: 0.45, strata: 0.24 }),
+  Cwc: prof({ aridity: 0.22, riparian: 0.44, groundWarmth: 0.08, snowLineScale: 0.94, treeLineScale: 0.92, forest: 0.45, vegSat: 0.95, treeNeed: 1, corridorLeaf: 0.45, strata: 0.26 }),
+  Cfa: prof({ aridity: 0.12, riparian: 0.4, riparianReach: 0.32, groundWarmth: 0.05, snowLineScale: 1.02, treeLineScale: 1.05, forest: 0.7, vegTint: 0.05, vegSat: 1.12, treeNeed: 1.2, corridorLeaf: 0.35, strata: 0.2 }),
   // Oceanic country is as much pasture and moor as it is woodland — and the pasture is
   // the greenest thing in the temperate world.
-  Cfb: prof({ aridity: 0.08, riparian: 0.34, riparianReach: 0.3, groundWarmth: 0.02, snowLineScale: 0.88, forest: 0.55, vegTint: -0.02, vegSat: 1.15, treeNeed: 0.3, corridorLeaf: 0.35, strata: 0.16 }),
-  Cfc: prof({ aridity: 0.08, riparian: 0.3, riparianReach: 0.3, groundWarmth: 0.02, snowLineScale: 0.8, treeLineScale: 0.9, forest: 0.32, vegTint: -0.1, vegSat: 0.92, treeNeed: 0.32, corridorLeaf: 0.4, strata: 0.2 }),
-  Dsa: prof({ aridity: 0.48, riparian: 0.68, riparianReach: 0.36, groundWarmth: 0.24, snowLineScale: 1.2, treeLineScale: 1.28, forest: 0.55, vegTint: 0.22, vegSat: 0.78, treeNeed: 0.38, corridorLeaf: 0.7, strata: 0.4 }),
-  Dsb: prof({ aridity: 0.42, riparian: 0.62, riparianReach: 0.35, groundWarmth: 0.18, snowLineScale: 1.18, treeLineScale: 1.26, forest: 0.62, vegTint: 0.15, vegSat: 0.82, treeNeed: 0.36, corridorLeaf: 0.68, strata: 0.36 }),
-  Dsc: prof({ aridity: 0.34, riparian: 0.52, riparianReach: 0.34, groundWarmth: 0.1, snowLineScale: 1.1, treeLineScale: 1.2, forest: 0.68, vegTint: 0.05, vegSat: 0.85, treeNeed: 0.33, corridorLeaf: 0.66, strata: 0.32 }),
-  Dsd: prof({ aridity: 0.3, riparian: 0.46, riparianReach: 0.33, groundWarmth: 0.06, treeLineScale: 1.1, forest: 0.6, vegSat: 0.8, treeNeed: 0.33, corridorLeaf: 0.64, strata: 0.32 }),
-  Dwa: prof({ aridity: 0.3, riparian: 0.54, riparianReach: 0.34, groundWarmth: 0.12, snowLineScale: 1.18, treeLineScale: 1.32, forest: 0.68, vegTint: 0.08, vegSat: 0.95, treeNeed: 0.32, corridorLeaf: 0.6, strata: 0.28 }),
-  Dwb: prof({ aridity: 0.26, riparian: 0.48, riparianReach: 0.33, groundWarmth: 0.08, snowLineScale: 1.15, treeLineScale: 1.3, forest: 0.78, vegSat: 0.95, treeNeed: 0.3, corridorLeaf: 0.62, strata: 0.24 }),
-  Dwc: prof({ aridity: 0.22, riparian: 0.42, groundWarmth: 0.05, snowLineScale: 1.1, treeLineScale: 1.26, forest: 0.85, vegTint: -0.15, vegSat: 0.88, treeNeed: 0.28, corridorLeaf: 0.7, strata: 0.22 }),
-  Dwd: prof({ aridity: 0.2, riparian: 0.38, riparianReach: 0.31, groundWarmth: 0.03, treeLineScale: 1.14, forest: 0.78, vegTint: -0.2, vegSat: 0.82, treeNeed: 0.28, corridorLeaf: 0.72, strata: 0.22 }),
+  Cfb: prof({ aridity: 0.08, riparian: 0.34, riparianReach: 0.3, groundWarmth: 0.02, snowLineScale: 0.88, forest: 0.55, vegTint: -0.02, vegSat: 1.15, treeNeed: 0.8, corridorLeaf: 0.35, strata: 0.16 }),
+  Cfc: prof({ aridity: 0.08, riparian: 0.3, riparianReach: 0.3, groundWarmth: 0.02, snowLineScale: 0.8, treeLineScale: 0.9, forest: 0.32, vegTint: -0.1, vegSat: 0.92, treeNeed: 1.5, corridorLeaf: 0.4, strata: 0.2 }),
+  Dsa: prof({ aridity: 0.48, riparian: 0.68, riparianReach: 0.36, groundWarmth: 0.24, snowLineScale: 1.2, treeLineScale: 1.28, forest: 0.55, vegTint: 0.22, vegSat: 0.78, treeNeed: 4, corridorLeaf: 0.7, strata: 0.4 }),
+  Dsb: prof({ aridity: 0.42, riparian: 0.62, riparianReach: 0.35, groundWarmth: 0.18, snowLineScale: 1.18, treeLineScale: 1.26, forest: 0.62, vegTint: 0.15, vegSat: 0.82, treeNeed: 3, corridorLeaf: 0.68, strata: 0.36 }),
+  Dsc: prof({ aridity: 0.34, riparian: 0.52, riparianReach: 0.34, groundWarmth: 0.1, snowLineScale: 1.1, treeLineScale: 1.2, forest: 0.68, vegTint: 0.05, vegSat: 0.85, treeNeed: 2, corridorLeaf: 0.66, strata: 0.32 }),
+  Dsd: prof({ aridity: 0.3, riparian: 0.46, riparianReach: 0.33, groundWarmth: 0.06, treeLineScale: 1.1, forest: 0.6, vegSat: 0.8, treeNeed: 2, corridorLeaf: 0.64, strata: 0.32 }),
+  Dwa: prof({ aridity: 0.3, riparian: 0.54, riparianReach: 0.34, groundWarmth: 0.12, snowLineScale: 1.18, treeLineScale: 1.32, forest: 0.68, vegTint: 0.08, vegSat: 0.95, treeNeed: 1.5, corridorLeaf: 0.6, strata: 0.28 }),
+  Dwb: prof({ aridity: 0.26, riparian: 0.48, riparianReach: 0.33, groundWarmth: 0.08, snowLineScale: 1.15, treeLineScale: 1.3, forest: 0.78, vegSat: 0.95, treeNeed: 1, corridorLeaf: 0.62, strata: 0.24 }),
+  Dwc: prof({ aridity: 0.22, riparian: 0.42, groundWarmth: 0.05, snowLineScale: 1.1, treeLineScale: 1.26, forest: 0.85, vegTint: -0.15, vegSat: 0.88, treeNeed: 0.6, corridorLeaf: 0.7, strata: 0.22 }),
+  Dwd: prof({ aridity: 0.2, riparian: 0.38, riparianReach: 0.31, groundWarmth: 0.03, treeLineScale: 1.14, forest: 0.78, vegTint: -0.2, vegSat: 0.82, treeNeed: 0.6, corridorLeaf: 0.72, strata: 0.22 }),
   // The montane belt is forest broken by park and meadow, not closed canopy, so it
   // keeps enough warm open ground to read brown rather than blue-green.
-  Dfa: prof({ aridity: 0.14, riparian: 0.42, riparianReach: 0.32, groundWarmth: 0.16, snowLineScale: 1.12, treeLineScale: 1.3, forest: 0.7, vegTint: 0.02, treeNeed: 0.31, corridorLeaf: 0.5, strata: 0.22 }),
-  Dfb: prof({ aridity: 0.12, riparian: 0.38, riparianReach: 0.31, groundWarmth: 0.13, snowLineScale: 1.16, treeLineScale: 1.35, forest: 0.8, vegTint: -0.1, vegSat: 0.95, treeNeed: 0.3, corridorLeaf: 0.6, strata: 0.2 }),
+  Dfa: prof({ aridity: 0.14, riparian: 0.42, riparianReach: 0.32, groundWarmth: 0.16, snowLineScale: 1.12, treeLineScale: 1.3, forest: 0.7, vegTint: 0.02, treeNeed: 1.2, corridorLeaf: 0.5, strata: 0.22 }),
+  Dfb: prof({ aridity: 0.12, riparian: 0.38, riparianReach: 0.31, groundWarmth: 0.13, snowLineScale: 1.16, treeLineScale: 1.35, forest: 0.8, vegTint: -0.1, vegSat: 0.95, treeNeed: 0.8, corridorLeaf: 0.6, strata: 0.2 }),
   // The boreal and subalpine conifer belt — the darkest ground cover on the planet, and
   // decidedly blue: spruce and fir read closer to slate than to leaf green. A creek here
   // is a bright broadleaf ribbon against all that, so the contrast is at its highest.
-  Dfc: prof({ aridity: 0.14, riparian: 0.34, riparianReach: 0.3, groundWarmth: 0.98, snowLineScale: 1.2, treeLineScale: 1.4, forest: 0.92, vegTint: -0.28, vegSat: 0.8, treeNeed: 0.28, corridorLeaf: 0.85, strata: 0.22 }),
-  Dfd: prof({ aridity: 0.14, riparian: 0.3, riparianReach: 0.3, groundWarmth: 0.07, snowLineScale: 1.05, treeLineScale: 1.18, forest: 0.82, vegTint: -0.32, vegSat: 0.75, treeNeed: 0.29, corridorLeaf: 0.85, strata: 0.24 }),
+  Dfc: prof({ aridity: 0.14, riparian: 0.34, riparianReach: 0.3, groundWarmth: 0.98, snowLineScale: 1.2, treeLineScale: 1.4, forest: 0.92, vegTint: -0.28, vegSat: 0.8, treeNeed: 0.5, corridorLeaf: 0.85, strata: 0.22 }),
+  Dfd: prof({ aridity: 0.14, riparian: 0.3, riparianReach: 0.3, groundWarmth: 0.07, snowLineScale: 1.05, treeLineScale: 1.18, forest: 0.82, vegTint: -0.32, vegSat: 0.75, treeNeed: 0.7, corridorLeaf: 0.85, strata: 0.24 }),
   // Tundra sits above the tree line by definition, so its own scale is near zero. It
   // never suppresses a neighbour's — the tile takes the highest line any class implies.
   // Its colour is lichen and dwarf birch: olive-brown, barely saturated at all.
-  ET: prof({ aridity: 0.36, riparian: 0.26, riparianReach: 0.28, groundWarmth: 0.06, snowLineScale: 0.95, treeLineScale: 0.3, forest: 0, vegTint: 0.18, vegSat: 0.55, treeNeed: 0.85, corridorLeaf: 0.3, strata: 0.5 }),
-  EF: prof({ aridity: 0.24, riparian: 0, riparianReach: 0.25, groundWarmth: 0, snowLineScale: 0.12, treeLineScale: 0, forest: 0, vegSat: 0.5, treeNeed: 1, corridorLeaf: 0, strata: 0.35 }),
+  ET: prof({ aridity: 0.36, riparian: 0.26, riparianReach: 0.28, groundWarmth: 0.06, snowLineScale: 0.95, treeLineScale: 0.3, forest: 0, vegTint: 0.18, vegSat: 0.55, treeNeed: 2000, corridorLeaf: 0.3, strata: 0.5 }),
+  EF: prof({ aridity: 0.24, riparian: 0, riparianReach: 0.25, groundWarmth: 0, snowLineScale: 0.12, treeLineScale: 0, forest: 0, vegSat: 0.5, treeNeed: 20000, corridorLeaf: 0, strata: 0.35 }),
 }
 
 /** Every class the raster can return, in legend order — the panel lists these. */

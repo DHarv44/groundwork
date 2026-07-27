@@ -62,9 +62,10 @@ uniform float uGroundWarmth;   // shift bare ground toward oxidised rust
 uniform float uForest;         // how much of the cover is trees rather than grass
 uniform float uVegTint;        // which green: -1 blue-shifted, +1 yellow-shifted
 uniform float uVegSat;         // how saturated that green is
-uniform float uTreeNeed;       // catchment a slope must gather before it holds timber
-uniform float uTreeLimit;      // catchment past which the channel is too wide for trees
+uniform float uTreeNeed;       // catchment a slope must gather before it holds timber, km²
+uniform float uTreeLimit;      // catchment past which the channel is too wide for trees, km²
 uniform float uTreeSpread;     // how sharply timber gives way to grass across both edges
+uniform float uTreeFractal;    // how raggedly the timber fingers out of the drainage
 uniform float uCorridorLeaf;   // how broadleaf the valley-bottom timber is
 uniform float uShowTrees;      // 0 hides the canopy, leaving grass on the same ground
 uniform float uShowGrass;      // 0 hides the grass, leaving only the timber
@@ -362,31 +363,56 @@ void main() {
   // on seven tenths of the ground before the water is consulted at all, and the network
   // disappears into it. That is the difference between this and scattering trees.
   //
-  // The threshold works exactly as minChannelKm2 does for rivers: how much catchment a
-  // piece of ground has to gather. Aridity raises the bar, because in dry country only
-  // the valley floors ever see enough.
   // And it is a band, not a threshold. Timber rises as a gully gathers water and falls
   // away again once the creek has widened into a river: a canopy closes over a small
   // watercourse — which is exactly how it looks from the air, and why a wooded creek is
   // still drawn as woodland on a real map — but no tree spans a trunk channel. Without
   // the upper edge the biggest rivers come out as the most heavily timbered ground in
   // the tile, which is backwards.
+  //
+  // Both edges of that band are catchment areas in km², exactly as minChannelKm2 is for
+  // the rivers, so the two are directly comparable: set the tree threshold near the
+  // river threshold and the timber traces the same channels the water does.
+  //
+  // The B channel holds log10(km²) remapped to 0..1 by (log10(a) + 3) / 10, so it
+  // inverts exactly and the comparison can be done in real units rather than in a
+  // number whose meaning changes with the tile. Working on the raw 0..1 instead was the
+  // whole problem: the same setting meant a different catchment on every box, and the
+  // biome and aridity shifts stacked on top of it silently moved a 1.26 km² threshold
+  // to 0.003 km² — four hundred times finer, which is every gully on the hillside and
+  // exactly why the timber washed out while the rivers stayed sparse.
   float rawTrees = forestFrac;
   if (uHasWater > 0.5) {
     float treeAccum = texture2D(uWaterMap, vUv).b;
     float edge = max(0.01, uTreeSpread);
-    // The slider is the threshold, in the units of the accumulation field, and biome and
-    // climate shift it rather than scaling it.
+    // Denser cover means timber holds on smaller catchments. This is the only thing
+    // that moves the threshold, and it moves it in the open.
+    float km2 = uTreeNeed / max(0.05, forestFrac);
+    float need = clamp((log(km2) / 2.302585 + 3.0) / 10.0, 0.0, 1.0);
+
+    // Fray the edge fractally.
     //
-    // Multiplying by (1 - forest) instead put the control out of reach exactly where it
-    // was needed: at a temperate tree cover of 0.7 it divided everything by more than
-    // three, so even a slider at maximum landed at 0.19 on a field whose visible channels
-    // start around 0.2, and no setting could put timber on the network. A shift keeps the
-    // full range available at every biome — the biome decides where the middle of the
-    // slider sits, not how much of the slider exists.
-    float need = clamp(uTreeNeed + 0.35 * (aridity - 0.5) - 0.30 * (forest - 0.5), 0.0, 1.0);
+    // A single threshold on catchment draws the timber to a clean contour, which is
+    // wrong in the same way a coastline drawn with a compass is wrong. Real woodland
+    // grows *out* of the channel: it runs up every side gully, spills onto the shoulders
+    // where the ground stays damp, and leaves ragged clearings on the drier spurs
+    // between — self-similar, because the drainage it is following is self-similar.
+    //
+    // Perturbing the threshold rather than the finished coverage is what keeps it
+    // anchored to the network. The noise decides how much catchment this particular
+    // patch of ground demands, so the fingers grow along the tributaries that already
+    // exist instead of being sprayed across them. Multi-octave, so the fraying repeats
+    // at every scale down to the limit of the grid.
+    //
+    // Measured in the units of the channel: 0.1 here is one decade of catchment, so the
+    // full setting swings the requirement by about half an order of magnitude either
+    // way — enough to reach well up the small tributaries without detaching from them.
+    if (uTreeFractal > 0.001) {
+      need += fbm(wp * 0.0016, 5) * uTreeFractal * 0.16;
+    }
+    float stop = clamp((log(max(uTreeLimit, 1e-4)) / 2.302585 + 3.0) / 10.0, 0.0, 1.0);
     rawTrees = smoothstep(need, need + edge, treeAccum) *
-               (1.0 - smoothstep(uTreeLimit, uTreeLimit + edge, treeAccum));
+               (1.0 - smoothstep(stop, stop + edge, treeAccum));
   }
 
   // A closed forest ends abruptly: the last stretch goes timber to krummholz to tundra

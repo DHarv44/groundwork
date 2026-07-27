@@ -1012,6 +1012,15 @@ main {
   box-shadow: 0 2px 16px rgba(125, 211, 252, 0.3);
 }
 
+/* Unit hint on a group header, so a threshold's units are visible while folded. */
+.grp-note {
+  font-size: 9.5px;
+  font-weight: 400;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+  opacity: 0.8;
+}
+
 /* Ground cover, in its own green so it reads apart from the water overlays. */
 .view-layers button.cover.on {
   color: #0a1a08;

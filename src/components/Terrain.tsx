@@ -76,6 +76,7 @@ export default function Terrain({ build, sky, fogDensity }: Props) {
       uTreeNeed: { value: settings.treeNeed },
       uTreeLimit: { value: settings.treeLimit },
       uTreeSpread: { value: settings.treeSpread },
+      uTreeFractal: { value: settings.treeFractal },
       uCorridorLeaf: { value: settings.corridorLeaf },
       uShowTrees: { value: 1 },
       uShowGrass: { value: 1 },
@@ -139,6 +140,7 @@ export default function Terrain({ build, sky, fogDensity }: Props) {
     u.uTreeNeed.value = settings.treeNeed
     u.uTreeLimit.value = settings.treeLimit
     u.uTreeSpread.value = settings.treeSpread
+    u.uTreeFractal.value = settings.treeFractal
     u.uCorridorLeaf.value = settings.corridorLeaf
     u.uShowTrees.value = settings.showTrees ? 1 : 0
     u.uShowGrass.value = settings.showGrass ? 1 : 0

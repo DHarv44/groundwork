@@ -115,9 +115,28 @@ rather than zeroing the setting. Whether the slider should move the sky with it 
 question: physically the two go together, but for judging ground colour you want the air
 cleared without the sky changing underneath you.
 
----
+### 6. Caching **(asked)**
 
-## Known issues
+Worth a proper look rather than incremental patching. What exists today:
+
+- **DEM tiles** in IndexedDB (`demcache.ts`), keyed by area and source. This is the one
+  that matters most — it is what keeps normal use off the OpenTopography allowance — and
+  it appears to be working: the panel reports tens of areas cached and hundreds of MB.
+- **Climate normals** in localStorage, keyed to quarter-degree cells.
+- **The Köppen raster**, decoded once per session and held in memory.
+- **Nothing else.** The hydrology pass, the mesh build and the biome field are all
+  recomputed from scratch every time, including on a reload that changes nothing.
+
+The hydrology pass is the expensive one — a priority flood and a flow accumulation over
+several million cells — and it re-runs on every rebuild even when the DEM, the routing
+resolution and every tuning value are identical. Caching its result against a hash of
+(DEM identity + hydrology tuning) would make revisiting an area effectively instant, and
+would make the water sliders far less punishing to explore, since returning to a previous
+value would be free.
+
+Also worth reviewing: nothing evicts. `cacheClear` is manual, so the store grows without
+bound, and there is no check that the browser's storage quota is close to being hit
+before a write. A failed write is currently swallowed.
 
 ### Montane/plains transition reads as closed forest
 

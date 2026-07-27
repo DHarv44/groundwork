@@ -624,138 +624,177 @@ export default function Controls() {
                     </span>
                   )}
                 </div>
-                <Slider
-                  label="Aridity"
-                  value={settings.aridity}
-                  min={0}
-                  max={1}
-                  step={0.01}
-                  tag={biomeTag('aridity')}
-                  onChange={setSetting('aridity')}
-                />
-                <Slider
-                  label="Tree cover"
-                  value={settings.forest}
-                  min={0}
-                  max={FOREST_MAX}
-                  step={0.005}
-                  decimals={3}
-                  tag={biomeTag('forest')}
-                  onChange={setSetting('forest')}
-                />
-                <Slider
-                  label="Leaf colour"
-                  value={settings.vegTint}
-                  min={-1}
-                  max={1}
-                  step={0.01}
-                  tag={biomeTag('vegTint')}
-                  onChange={setSetting('vegTint')}
-                />
-                <Slider
-                  label="Leaf saturation"
-                  value={settings.vegSat}
-                  min={0}
-                  max={2}
-                  step={0.01}
-                  tag={biomeTag('vegSat')}
-                  onChange={setSetting('vegSat')}
-                />
-                <Slider
-                  label="Rock strata"
-                  value={settings.strata}
-                  min={0}
-                  max={1}
-                  step={0.01}
-                  tag={biomeTag('strata')}
-                  onChange={setSetting('strata')}
-                />
-                <Slider
-                  label="Ground warmth"
-                  value={settings.groundWarmth}
-                  min={0}
-                  max={GROUND_WARMTH_MAX}
-                  step={0.01}
-                  tag={biomeTag('groundWarmth')}
-                  onChange={setSetting('groundWarmth')}
-                />
-                <Slider
-                  label="Riparian growth"
-                  value={settings.riparian}
-                  min={0}
-                  max={1}
-                  step={0.01}
-                  tag={biomeTag('riparian')}
-                  onChange={setSetting('riparian')}
-                />
-                <Slider
-                  label="Tree water need"
-                  value={settings.treeNeed}
-                  min={0}
-                  max={1}
-                  step={0.005}
-                  decimals={3}
-                  tag={biomeTag('treeNeed')}
-                  onChange={setSetting('treeNeed')}
-                />
-                <Slider
-                  label="Tree water limit"
-                  value={settings.treeLimit}
-                  min={0}
-                  max={1}
-                  step={0.005}
-                  decimals={3}
-                  tag={biomeTag('treeLimit')}
-                  onChange={setSetting('treeLimit')}
-                />
-                <Slider
-                  label="Tree edge"
-                  value={settings.treeSpread}
-                  min={0.01}
-                  max={0.6}
-                  step={0.005}
-                  decimals={3}
-                  tag={biomeTag('treeSpread')}
-                  onChange={setSetting('treeSpread')}
-                />
-                <Slider
-                  label="Corridor leaf"
-                  value={settings.corridorLeaf}
-                  min={0}
-                  max={1}
-                  step={0.01}
-                  tag={biomeTag('corridorLeaf')}
-                  onChange={setSetting('corridorLeaf')}
-                />
-                <Slider
-                  label="Corridor reach"
-                  value={settings.riparianReach}
-                  min={0.15}
-                  max={0.6}
-                  step={0.005}
-                  decimals={3}
-                  tag={biomeTag('riparianReach')}
-                  onChange={setSetting('riparianReach')}
-                />
+                {/* Where the timber is. Both thresholds are catchment areas in km², the
+                    same units as the rivers' own minChannelKm2, so the two can be set
+                    against each other directly. */}
+                <Group
+                  title="Trees"
+                  badge={<span className="grp-note">km² of catchment</span>}
+                >
+                  {/* Down to a thousandth of a km² — a hectare of catchment. The dissected
+                      ground beside a channel is fed by gullies that small, and that is
+                      where the timber actually is, so a floor of 0.02 put the whole
+                      useful range off the bottom of the slider. */}
+                  <Slider
+                    label="Smallest wooded catchment"
+                    value={settings.treeNeed}
+                    min={0.001}
+                    max={5}
+                    step={0.001}
+                    suffix=" km²"
+                    decimals={3}
+                    tag={biomeTag('treeNeed')}
+                    onChange={setSetting('treeNeed')}
+                  />
+                  <Slider
+                    label="Largest wooded catchment"
+                    value={settings.treeLimit}
+                    min={1}
+                    max={5000}
+                    step={5}
+                    suffix=" km²"
+                    tag={biomeTag('treeLimit')}
+                    onChange={setSetting('treeLimit')}
+                  />
+                  <Slider
+                    label="Fractal spread"
+                    value={settings.treeFractal}
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    tag={biomeTag('treeFractal')}
+                    onChange={setSetting('treeFractal')}
+                  />
+                  <Slider
+                    label="Tree edge"
+                    value={settings.treeSpread}
+                    min={0.01}
+                    max={0.6}
+                    step={0.005}
+                    decimals={3}
+                    tag={biomeTag('treeSpread')}
+                    onChange={setSetting('treeSpread')}
+                  />
+                  <Slider
+                    label="Tree cover"
+                    value={settings.forest}
+                    min={0}
+                    max={FOREST_MAX}
+                    step={0.005}
+                    decimals={3}
+                    tag={biomeTag('forest')}
+                    onChange={setSetting('forest')}
+                  />
+                </Group>
+
+                {/* The ribbon of growth along the drainage, and what species it is. */}
+                <Group title="Riparian">
+                  <Slider
+                    label="Riparian growth"
+                    value={settings.riparian}
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    tag={biomeTag('riparian')}
+                    onChange={setSetting('riparian')}
+                  />
+                  <Slider
+                    label="Corridor reach"
+                    value={settings.riparianReach}
+                    min={0.15}
+                    max={0.6}
+                    step={0.005}
+                    decimals={3}
+                    tag={biomeTag('riparianReach')}
+                    onChange={setSetting('riparianReach')}
+                  />
+                  <Slider
+                    label="Corridor leaf"
+                    value={settings.corridorLeaf}
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    tag={biomeTag('corridorLeaf')}
+                    onChange={setSetting('corridorLeaf')}
+                  />
+                </Group>
+
+                {/* What colour the cover is, as opposed to where it is. */}
+                <Group title="Cover colour">
+                  <Slider
+                    label="Aridity"
+                    value={settings.aridity}
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    tag={biomeTag('aridity')}
+                    onChange={setSetting('aridity')}
+                  />
+                  <Slider
+                    label="Leaf colour"
+                    value={settings.vegTint}
+                    min={-1}
+                    max={1}
+                    step={0.01}
+                    tag={biomeTag('vegTint')}
+                    onChange={setSetting('vegTint')}
+                  />
+                  <Slider
+                    label="Leaf saturation"
+                    value={settings.vegSat}
+                    min={0}
+                    max={2}
+                    step={0.01}
+                    tag={biomeTag('vegSat')}
+                    onChange={setSetting('vegSat')}
+                  />
+                </Group>
+
+                {/* Bare ground: what shows where nothing is growing. */}
+                <Group title="Bare ground">
+                  <Slider
+                    label="Ground warmth"
+                    value={settings.groundWarmth}
+                    min={0}
+                    max={GROUND_WARMTH_MAX}
+                    step={0.01}
+                    tag={biomeTag('groundWarmth')}
+                    onChange={setSetting('groundWarmth')}
+                  />
+                  <Slider
+                    label="Rock strata"
+                    value={settings.strata}
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    tag={biomeTag('strata')}
+                    onChange={setSetting('strata')}
+                  />
+                </Group>
             </>
-            <Slider
-              label="Micro relief"
-              value={settings.microDetail}
-              min={0}
-              max={1}
-              step={0.01}
-              onChange={setSetting('microDetail')}
-            />
-            <Slider
-              label="Texture range"
-              value={settings.textureRange}
-              min={0.1}
-              max={20}
-              step={0.1}
-              suffix="×"
-              decimals={1}
-              onChange={setSetting('textureRange')}
-            />
+
+            {/* Neither climate nor place: how much detail survives at distance. These are
+                the only two on this tab that are not biome-owned. */}
+            <Group title="Detail">
+              <Slider
+                label="Micro relief"
+                value={settings.microDetail}
+                min={0}
+                max={1}
+                step={0.01}
+                onChange={setSetting('microDetail')}
+              />
+              <Slider
+                label="Texture range"
+                value={settings.textureRange}
+                min={0.1}
+                max={20}
+                step={0.1}
+                suffix="×"
+                decimals={1}
+                onChange={setSetting('textureRange')}
+              />
+            </Group>
           </section>
         )}
 

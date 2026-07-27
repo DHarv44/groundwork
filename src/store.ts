@@ -54,6 +54,8 @@ export interface Settings {
   treeLimit: number
   /** How sharply timber gives way to grass across both edges of that band. */
   treeSpread: number
+  /** How raggedly the timber fingers out of the drainage rather than ending on a contour. */
+  treeFractal: number
   /** How broadleaf the valley-bottom timber is against the conifer above it. */
   corridorLeaf: number
   textureRange: number
@@ -129,10 +131,13 @@ export const DEFAULT_SETTINGS: Settings = {
   // scale, and anything below that is the broad hillslope background — put the threshold
   // there and the timber spreads over a quarter of the tile as a wash instead of
   // threading the valleys.
-  treeNeed: 0.31,
-  treeLimit: 0.55,
+  // In km², directly comparable with minChannelKm2 — set near it and the timber traces
+  // the same channels the rivers do.
+  treeNeed: 1.2,
+  treeLimit: 400,
   // A narrow edge is what makes the ribbons read as ribbons rather than as a gradient.
   treeSpread: 0.04,
+  treeFractal: 0.45,
   corridorLeaf: 0.6,
   textureRange: 1,
   rivers: 1,
@@ -186,6 +191,7 @@ export const BIOME_KEYS = [
   'treeNeed',
   'treeLimit',
   'treeSpread',
+  'treeFractal',
   'corridorLeaf',
   'strata',
 ] as const
@@ -298,6 +304,7 @@ const PERSISTED_SETTINGS = [
   'treeNeed',
   'treeLimit',
   'treeSpread',
+  'treeFractal',
   'corridorLeaf',
   'textureRange',
   'rivers',
