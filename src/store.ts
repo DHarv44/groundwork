@@ -111,25 +111,24 @@ export const DEFAULT_SETTINGS: Settings = {
   haze: 0.3,
   snowLine: 2600,
   treeLine: 1900,
-  aridity: 0.25,
+  // Every value from here down is biome-owned, and these copies exist only for the
+  // moment before a class is known — an unclassified box, or the instant between the
+  // mesh appearing and the raster resolving. They are kept identical to BASE in
+  // climate.ts so that gap is invisible: once the biome lands the profile supplies the
+  // same numbers, and a fresh load with cleared storage comes up exactly as configured.
+  aridity: 0.12,
   strata: 0.25,
-  riparian: 0.6,
-  riparianReach: 0.34,
-  groundWarmth: 0,
+  riparian: 0.4,
+  riparianReach: 0.32,
+  groundWarmth: 0.05,
   forest: 0.6,
   vegTint: 0,
   vegSat: 1,
-  // Calibrated against the accumulation distribution: about a quarter of a tile sits
-  // above 0.05, a tenth above 0.10, so this puts water-fed timber on the valleys and
-  // their feeders without flooding the interfluves.
   // Calibrated on north-central Texas against Esri imagery. What settles these is the
   // drainage view: the channels you can actually see sit around 0.2 on the accumulation
   // scale, and anything below that is the broad hillslope background — put the threshold
   // there and the timber spreads over a quarter of the tile as a wash instead of
   // threading the valleys.
-  // Biome and climate shift this rather than scaling it, so on the Texas tile it lands
-  // at the 0.225 the calibration settled on while the slider still spans its whole
-  // range at every biome.
   treeNeed: 0.31,
   treeLimit: 0.55,
   // A narrow edge is what makes the ribbons read as ribbons rather than as a gradient.
@@ -165,9 +164,18 @@ export const DEFAULT_SETTINGS: Settings = {
  * genuinely climatic — rock strata, micro relief and texture range describe the geology
  * and the render, not the vegetation, so they stay yours.
  */
+/**
+ * Everything a biome owns.
+ *
+ * Snow and tree lines are deliberately absent. Those are altitude physics — lapse rate
+ * and the oxygen and temperature that come with it — so they belong to the place rather
+ * than to the vegetation, and they stay global.
+ *
+ * Everything else here is a property of the biome and is stored against it. The default
+ * is that a surface setting belongs to the class; a setting only stays global if there
+ * is a reason it cannot sensibly differ between one climate and another.
+ */
 export const BIOME_KEYS = [
-  'snowLine',
-  'treeLine',
   'aridity',
   'riparian',
   'riparianReach',
@@ -175,6 +183,11 @@ export const BIOME_KEYS = [
   'forest',
   'vegTint',
   'vegSat',
+  'treeNeed',
+  'treeLimit',
+  'treeSpread',
+  'corridorLeaf',
+  'strata',
 ] as const
 
 export type BiomeKey = (typeof BIOME_KEYS)[number]
@@ -185,7 +198,7 @@ export type BiomeKey = (typeof BIOME_KEYS)[number]
  * has one tree line and one snow line however many climates cross it, and corridor
  * reach barely varies between classes at all.
  */
-export const PER_CLASS_KEYS = ['aridity', 'riparian', 'groundWarmth', 'forest'] as const
+export const PER_CLASS_KEYS = BIOME_KEYS
 
 interface State {
   bounds: Bounds | null
@@ -422,15 +435,6 @@ export const useStore = create<State>((setState, getState) => {
     }
   }
 
-  /**
-   * Turn a biome into concrete settings: its built-in profile, then whatever you have
-   * tuned for that class on top.
-   *
-   * Snow and tree lines start from the latitude curve and are scaled by the class, so
-   * the biome corrects the altitude rather than replacing it — two places on the same
-   * parallel can be a wet oceanic coast and a high desert, and only the class knows
-   * which. An override, being an absolute height you chose, wins outright.
-   */
   /** The class the sliders currently act on: whichever you picked, else the dominant. */
   function editingCode(dominant: string): string {
     const { editingBiome, biomeComposition } = getState()
@@ -439,18 +443,35 @@ export const useStore = create<State>((setState, getState) => {
     return dominant
   }
 
-  function biomeSettings(code: string, midLat: number): Record<BiomeKey, number> {
-    // The per-class values follow the selected class; the tile-wide ones do not.
+  /**
+   * Every biome-owned setting for the class the sliders are pointed at: its built-in
+   * profile first, then whatever you have tuned for that class on top.
+   *
+   * There is no second tier here. Each of these belongs to the class and is stored
+   * against it, so a value tuned in one steppe tile comes back in the next one.
+   */
+  function biomeSettings(code: string): Record<BiomeKey, number> {
     const edit = editingCode(code)
-    const p = profileFor(edit)
-    const tile = profileFor(code)
+    const p = profileFor(edit) as unknown as Record<string, number>
+    const mine = getState().biomeOverrides[edit] ?? {}
 
-    // Snow and tree lines belong to the place, not the cell. One mountain range has one
-    // tree line, so they come from the highest any class present implies rather than
-    // from the majority class — otherwise a box that is mostly steppe puts its tree
-    // line at the plains' altitude and strips the forest off the range beside it. The
-    // classes that are genuinely treeless are treeless for moisture or exposure, which
-    // the aridity and elevation terms already handle.
+    const out = {} as Record<BiomeKey, number>
+    for (const k of BIOME_KEYS) out[k] = mine[k] ?? p[k]
+    return out
+  }
+
+  /**
+   * Snow and tree lines, which are not biome settings.
+   *
+   * These are altitude physics rather than ecology, so they belong to the tile as a
+   * whole. They still take a correction from the classes present — the latitude curve
+   * is calibrated to maritime ranges and a continental interior runs a third higher on
+   * the same parallel — but it comes from the highest any class present implies, not
+   * from the majority. Otherwise a box that is mostly steppe puts its tree line at the
+   * plains' altitude and strips the forest off the range beside it.
+   */
+  function altitudeLines(code: string, midLat: number): { snowLine: number; treeLine: number } {
+    const tile = profileFor(code)
     let snowScale = tile.snowLineScale
     let treeScale = tile.treeLineScale
     for (const c of getState().biomeComposition) {
@@ -458,33 +479,18 @@ export const useStore = create<State>((setState, getState) => {
       snowScale = Math.max(snowScale, q.snowLineScale)
       treeScale = Math.max(treeScale, q.treeLineScale)
     }
-
-    const tileMine = getState().biomeOverrides[code] ?? {}
-    const editMine = getState().biomeOverrides[edit] ?? {}
-
     return {
-      // Tile-wide: from the dominant class and the composition, never the selection.
-      //
-      // Vegetation colour is here rather than per-class because it is resolved once for
-      // the whole tile — there are no spare channels in the field to vary it per texel.
-      // A box spanning two very different greens gets one compromise; that is the price
-      // of not carrying a second texture, and it is a rarer case than the elevation
-      // mixing the field already handles properly.
-      snowLine: tileMine.snowLine ?? Math.round(climaticSnowLine(midLat) * snowScale),
-      treeLine: tileMine.treeLine ?? Math.round(climaticTreeLine(midLat) * treeScale),
-      riparianReach: tileMine.riparianReach ?? tile.riparianReach,
-      vegTint: tileMine.vegTint ?? tile.vegTint,
-      vegSat: tileMine.vegSat ?? tile.vegSat,
-      // Per-class: whichever class the sliders are pointed at.
-      aridity: editMine.aridity ?? p.aridity,
-      riparian: editMine.riparian ?? p.riparian,
-      groundWarmth: editMine.groundWarmth ?? p.groundWarmth,
-      forest: editMine.forest ?? p.forest,
+      snowLine: Math.round(climaticSnowLine(midLat) * snowScale),
+      treeLine: Math.round(climaticTreeLine(midLat) * treeScale),
     }
   }
 
   function applyBiome(biome: Biome, midLat: number): void {
-    const next: Settings = { ...getState().settings, ...biomeSettings(biome.code, midLat) }
+    const next: Settings = {
+      ...getState().settings,
+      ...altitudeLines(biome.code, midLat),
+      ...biomeSettings(biome.code),
+    }
     setState({ settings: next, biome, biomeKeys: [...BIOME_KEYS] })
     persistSettings(next)
   }
@@ -728,18 +734,14 @@ export const useStore = create<State>((setState, getState) => {
     //
     // Per-class values land on whichever class the sliders are pointed at; the tile-wide
     // ones always land on the dominant, since that is what they describe.
-    const target = biome
-      ? (PER_CLASS_KEYS as readonly string[]).includes(key)
-        ? editingCode(biome.code)
-        : biome.code
-      : null
-    const overrides =
-      target && (BIOME_KEYS as readonly string[]).includes(key)
-        ? {
-            ...biomeOverrides,
-            [target]: { ...biomeOverrides[target], [key]: value as number },
-          }
-        : biomeOverrides
+    const target =
+      biome && (BIOME_KEYS as readonly string[]).includes(key) ? editingCode(biome.code) : null
+    const overrides = target
+      ? {
+          ...biomeOverrides,
+          [target]: { ...biomeOverrides[target], [key]: value as number },
+        }
+      : biomeOverrides
 
     setState({
       settings: next,

@@ -538,6 +538,35 @@ export default function Controls() {
               </p>
             )}
             <>
+                {/* Altitude, not ecology. Where the air runs out is set by lapse rate and
+                    the thinning of the atmosphere, so these belong to the tile rather
+                    than to any biome in it — kept above the biome block, and outside it,
+                    so it is obvious they are not part of the per-class table. */}
+                <Group title="Altitude limits">
+                  <Slider
+                    label="Snow line"
+                    value={settings.snowLine}
+                    min={lineMin}
+                    max={lineMax}
+                    step={10}
+                    suffix=" m"
+                    onChange={setSetting('snowLine')}
+                  />
+                  <Slider
+                    label="Tree line"
+                    value={settings.treeLine}
+                    min={lineMin}
+                    max={lineMax}
+                    step={10}
+                    suffix=" m"
+                    onChange={setSetting('treeLine')}
+                  />
+                  <p className="note">
+                    Global for the tile. Derived from latitude, corrected for how
+                    continental the classes present are, then yours to override.
+                  </p>
+                </Group>
+
                 {/* Where this patch of ground sits climatically, and what that set. */}
                 <div className="biome">
                   {biome ? (
@@ -596,26 +625,6 @@ export default function Controls() {
                   )}
                 </div>
                 <Slider
-                  label="Snow line"
-                  value={settings.snowLine}
-                  min={lineMin}
-                  max={lineMax}
-                  step={10}
-                  suffix=" m"
-                  tag={biomeTag('snowLine')}
-                  onChange={setSetting('snowLine')}
-                />
-                <Slider
-                  label="Tree line"
-                  value={settings.treeLine}
-                  min={lineMin}
-                  max={lineMax}
-                  step={10}
-                  suffix=" m"
-                  tag={biomeTag('treeLine')}
-                  onChange={setSetting('treeLine')}
-                />
-                <Slider
                   label="Aridity"
                   value={settings.aridity}
                   min={0}
@@ -657,6 +666,7 @@ export default function Controls() {
                   min={0}
                   max={1}
                   step={0.01}
+                  tag={biomeTag('strata')}
                   onChange={setSetting('strata')}
                 />
                 <Slider
@@ -684,6 +694,7 @@ export default function Controls() {
                   max={1}
                   step={0.005}
                   decimals={3}
+                  tag={biomeTag('treeNeed')}
                   onChange={setSetting('treeNeed')}
                 />
                 <Slider
@@ -693,6 +704,7 @@ export default function Controls() {
                   max={1}
                   step={0.005}
                   decimals={3}
+                  tag={biomeTag('treeLimit')}
                   onChange={setSetting('treeLimit')}
                 />
                 <Slider
@@ -702,6 +714,7 @@ export default function Controls() {
                   max={0.6}
                   step={0.005}
                   decimals={3}
+                  tag={biomeTag('treeSpread')}
                   onChange={setSetting('treeSpread')}
                 />
                 <Slider
@@ -710,6 +723,7 @@ export default function Controls() {
                   min={0}
                   max={1}
                   step={0.01}
+                  tag={biomeTag('corridorLeaf')}
                   onChange={setSetting('corridorLeaf')}
                 />
                 <Slider
