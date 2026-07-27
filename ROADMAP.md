@@ -46,37 +46,46 @@ different fixes:
 Check the raster values along an east–west transect at Denver's latitude against the
 elevation profile first. That answers it in one measurement.
 
-### 3. Concentrate trees around water **(asked)**
+### 3. Finish the tree calibration on north-central Texas
 
-Riparian corridors currently add *cover*, not *trees*. In the shader, `riparian` raises
-`veg` along the drainage, but `canopy` — the share of that cover which is trees — is a
-function of `forest`, slope and the tree line only. Drainage never enters it. So a
-corridor comes out as more of whatever mix the biome already had, at the same
-grass-to-tree ratio as the dry ground either side.
+The placement is right and the remaining work is tuning. Trees now come off the drainage
+field in km² of catchment, frayed fractally, and biased toward dissected ground — and
+compared against Esri on the same camera the wooded blocks land in the same places as
+the real ones, because both key off the terrain rather than off noise.
 
-That is backwards for the case that matters most. A prairie creek is a line of
-cottonwoods through grassland; a savanna watercourse is gallery forest through open
-country. In dry places the water is very often the *only* thing holding trees, and the
-contrast between the ribbon and its surroundings is almost entirely a difference in tree
-cover, not in how much green there is.
+Three gaps, in the order worth attacking:
 
-The fix is to let accumulated drainage raise `canopy` directly, not just `veg`, and to
-scale that by aridity the way the existing riparian term already is — strongest where it
-is dry, vanishing in a rainforest where the corridor is invisible because everything
-either side is already closed canopy.
+- **Too much of it.** Roughly 45–55% timber against the photograph's 25–30%. The tell is
+  the flat ground: the imagery has broad pale fields, and we scatter woodland across
+  them. Push **Prefers broken ground** from 0.50 toward 0.7–0.8, and raise **Smallest
+  wooded catchment** a little. Both are sliders; no code needed.
+- **Too dark.** The woodland reads nearly black where the photograph is a mid grey-green
+  sitting close to the fields around it. The conifer constants were darkened for boreal
+  spruce during the Front Range calibration and this is broadleaf oak scrub — see the
+  colour-space warning in the note below before touching them, and try **Leaf
+  saturation**, **Leaf colour** and **Corridor leaf** first.
+- **The open ground is too brown**, but that comparison was made with the Grass layer
+  switched off, so it was bare ground against pasture. Turn Grass on before judging it.
 
-Two things to watch. Trees should thin out approaching the channel itself rather than
-growing in it, so the profile wants to peak *beside* the water rather than on it — which
-overlaps with the water-layering item below and is probably worth doing in the same pass.
-And the corridor must still respect the tree line: a drainage above it should stay
-treeless however much water runs down it.
+A caution for whoever picks this up: three separate controls in this area turned out to
+have ranges that excluded the values that mattered — the tree threshold's floor, its
+ceiling, and tree cover's maximum. When a slider appears to do nothing, check what it can
+actually reach before concluding the mechanism is broken. Twice that cost a long detour.
+
+Related, and probably the same root cause as the Denver item above: `Cfa`'s built-in tree
+cover of 0.70 is calibrated for the forested US southeast and is wrong for the rangeland
+in the same climate class. Köppen classifies climate, not land cover, and cannot separate
+them. A per-biome override is the workaround; the real fix is land cover data.
 
 ### 4. Darker green for trees **(asked)**
 
-The conifer colour is still not dark enough. It currently runs
-`(0.016, 0.022, 0.015)` to `(0.031, 0.040, 0.024)` in linear space, mottled by the macro
-noise, and was already darkened once during the Front Range calibration — it needs to go
-further.
+The conifer colour is still not dark enough for boreal forest — and, per the item above,
+simultaneously too dark for temperate broadleaf. One constant is being asked to do both,
+which suggests the answer is a per-biome pair of endpoints rather than a single palette
+pushed one way or the other.
+
+It currently runs `(0.016, 0.022, 0.015)` to `(0.031, 0.040, 0.024)` in linear space,
+mottled by the macro noise, already darkened once during the Front Range calibration.
 
 Real closed conifer is about as dark as any natural surface gets: a spruce stand traps
 almost everything that lands on it and reflects only a few per cent. So there is room to
@@ -95,9 +104,8 @@ the actual reason it reads light:
 - **Aerial perspective adds +29 to +43 luminance at distance** — see below. If the
   colour is being judged from a wide view, most of what looks too light is fog rather
   than the canopy, and darkening the albedo to compensate will make close-ups too dark.
-
-Worth confirming from a close camera first, then adjusting the constants, rather than
-tuning against a washed-out wide shot.
+  The **Haze** layer button switches it off; judge colour with it off, from a close
+  camera.
 
 ### 5. Fog slider on the viewport **(asked)**
 
@@ -137,6 +145,10 @@ value would be free.
 Also worth reviewing: nothing evicts. `cacheClear` is manual, so the store grows without
 bound, and there is no check that the browser's storage quota is close to being hit
 before a write. A failed write is currently swallowed.
+
+---
+
+## Known issues
 
 ### Montane/plains transition reads as closed forest
 
