@@ -36,6 +36,7 @@ export interface Settings {
   /** Sea surface. All shader-side, so these respond without re-deriving anything. */
   seaLevel: number
   shoreCutoff: number
+  shoreFeather: number
   depthFade: number
   waveHeight: number
   foamWidth: number
@@ -76,12 +77,13 @@ export const DEFAULT_SETTINGS: Settings = {
   rivers: 1,
   // 0.30 on the log-drainage scale is about 1 km² of catchment — roughly where a
   // channel actually starts in humid country.
-  riverThreshold: 0.41,
+  riverThreshold: 0.175,
   showOcean: true,
   showRivers: true,
   showLakes: true,
   seaLevel: 0,
   shoreCutoff: 0.25,
+  shoreFeather: 0,
   depthFade: 75,
   waveHeight: 0,
   foamWidth: 0,
@@ -151,6 +153,7 @@ const PERSISTED_SETTINGS = [
   'showLakes',
   'seaLevel',
   'shoreCutoff',
+  'shoreFeather',
   'depthFade',
   'waveHeight',
   'foamWidth',

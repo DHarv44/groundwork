@@ -74,12 +74,12 @@ export const DEFAULT_TUNING: HydrologyTuning = {
   edgeTolerance: 0.82,
   featherCells: 1,
   minLakeArea: 400_000,
-  minChannelKm2: 0.25,
-  riverWidthScale: 1,
+  minChannelKm2: 1.64,
+  riverWidthScale: 2.25,
   riverWidthExponent: 0.45,
-  riverSlopeNarrowing: 5,
-  riverMinWidthScale: 1,
-  riverConvergence: 9,
+  riverSlopeNarrowing: 17,
+  riverMinWidthScale: 1.5,
+  riverConvergence: 19,
 }
 
 export interface HydrologyInput {
@@ -589,8 +589,15 @@ export function computeWaterMask(input: HydrologyInput): HydrologyResult {
     const widthM = Math.max(hydraulicWidth, minWidthM) * slopeNarrowing * tune.riverWidthScale
 
     // Splat onto the mask grid, so channels get the finer grid's resolution too.
+    //
+    // Routing and the mask run on different grids — routing is capped at 1024 while
+    // the mask follows the DEM — so consecutive channel cells land toMask apart here,
+    // not adjacent. A splat narrower than that spacing leaves a gap beside every dot
+    // and the channel rasterises as a checkerboard rather than a line. Widen just
+    // enough that neighbouring splats always overlap, diagonals included.
     const fineCellSize = Math.sqrt(fineCellArea)
-    const rCells = (widthM * 0.5) / fineCellSize
+    const bridge = 0.71 * Math.hypot(toMaskX, toMaskY)
+    const rCells = Math.max((widthM * 0.5) / fineCellSize, bridge)
     const centreX = (cx0 + 0.5) * toMaskX - 0.5
     const centreY = (cy0 + 0.5) * toMaskY - 0.5
 

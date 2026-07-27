@@ -125,7 +125,7 @@ function Toggle({
   )
 }
 
-const DETAIL_STEPS = [256, 384, 512, 768, 1024, 1536]
+const DETAIL_STEPS = [256, 384, 512, 768, 1024, 1536, 2048]
 
 type TabId = 'terrain' | 'surface' | 'water' | 'light' | 'render' | 'export'
 
@@ -439,14 +439,6 @@ export default function Controls() {
                 step={0.01}
                 onChange={setSetting('rivers')}
               />
-              <Slider
-                label="Smallest stream"
-                value={settings.riverThreshold}
-                min={0.2}
-                max={0.75}
-                step={0.005}
-                onChange={setSetting('riverThreshold')}
-              />
             </Group>
 
             <Group title="Ocean surface" badge={<b className="pending">live</b>}>
@@ -472,11 +464,22 @@ export default function Controls() {
             <Slider
               label="Shore cutoff"
               value={settings.shoreCutoff}
-              min={0}
-              max={5}
+              min={-5}
+              max={20}
               step={0.05}
               suffix=" m"
+              decimals={2}
               onChange={setSetting('shoreCutoff')}
+            />
+            <Slider
+              label="Shore feather"
+              value={settings.shoreFeather}
+              min={0}
+              max={10}
+              step={0.05}
+              suffix=" m"
+              decimals={2}
+              onChange={setSetting('shoreFeather')}
             />
             <Slider
               label="Depth fade"
@@ -581,12 +584,25 @@ export default function Controls() {
 
             <Group title="River detection">
             <Slider
+              label="Smallest stream"
+              value={settings.riverThreshold}
+              // Log scale: 0.3 is a 1 km² catchment, 0.4 is 10 km², 0.5 is 100 km².
+              // The old 0.75 ceiling meant ~30,000 km², which no single tile reaches,
+              // so the top third of the slider gated everything out.
+              min={0.1}
+              max={0.6}
+              step={0.005}
+              decimals={3}
+              onChange={setSetting('riverThreshold')}
+            />
+            <Slider
               label="Channel starts at"
               value={settings.minChannelKm2}
-              min={0.02}
+              min={0.01}
               max={5}
-              step={0.02}
+              step={0.01}
               suffix=" km²"
+              decimals={2}
               onChange={setSetting('minChannelKm2')}
             />
             <Slider
@@ -597,6 +613,39 @@ export default function Controls() {
               step={0.05}
               suffix="×"
               onChange={setSetting('riverWidthScale')}
+            />
+            <Slider
+              label="Width exponent"
+              value={settings.riverWidthExponent}
+              min={0.1}
+              max={0.9}
+              step={0.01}
+              onChange={setSetting('riverWidthExponent')}
+            />
+            <Slider
+              label="Minimum width"
+              value={settings.riverMinWidthScale}
+              min={0}
+              max={4}
+              step={0.05}
+              suffix="×"
+              onChange={setSetting('riverMinWidthScale')}
+            />
+            <Slider
+              label="Slope narrowing"
+              value={settings.riverSlopeNarrowing}
+              min={0}
+              max={30}
+              step={0.5}
+              onChange={setSetting('riverSlopeNarrowing')}
+            />
+            <Slider
+              label="Flow convergence"
+              value={settings.riverConvergence}
+              min={0}
+              max={25}
+              step={0.5}
+              onChange={setSetting('riverConvergence')}
             />
             </Group>
           </section>

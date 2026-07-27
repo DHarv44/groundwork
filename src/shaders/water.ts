@@ -19,6 +19,7 @@ uniform float uWidthM;
 uniform float uDepthM;
 uniform float uSeaLevelY;
 uniform float uShoreCutoff;   // how far above the surface still counts as dry
+uniform float uShoreFeather;  // band below the cutoff over which the edge fades in
 uniform float uDepthFade;     // depth at which the water reads fully deep, metres
 uniform float uWaveHeight;
 uniform float uFoamWidth;     // distance from dry ground that surf reaches, metres
@@ -69,7 +70,16 @@ void main() {
   if (uvp.x < 0.0 || uvp.x > 1.0 || uvp.y < 0.0 || uvp.y > 1.0) discard;
 
   float bed = terrainY(uvp);
-  if (bed > uSeaLevelY + uShoreCutoff) discard;   // dry land — no water here
+  float above = bed - uSeaLevelY;
+  if (above > uShoreCutoff) discard;   // dry land — no water here
+
+  // Optional soft waterline. The cutoff is a hard elevation test, so on flat coast
+  // the edge lands as a crisp line at a fixed height rather than easing into the
+  // shore. Fading the last stretch below the cutoff gives a shallowing margin
+  // instead. Zero keeps the hard edge.
+  float edgeFade = uShoreFeather > 0.0001
+    ? clamp((uShoreCutoff - above) / uShoreFeather, 0.0, 1.0)
+    : 1.0;
 
   float depth;
   if (uHasBathymetry > 0.5) {
@@ -140,6 +150,7 @@ void main() {
 
   // Shallow water reads through to the bed; deep water does not.
   float alpha = clamp(uOpacity + smoothstep(0.0, 8.0, depth) * 0.35 + fres * 0.25 + foam * 0.3, 0.0, 1.0);
+  alpha *= edgeFade;
 
   float fog = 1.0 - exp(-dist * uFogDensity);
   vec3 fogColor = mix(uHorizonColor, uSkyColor, pow(clamp(-V.y, 0.0, 1.0), 0.4));

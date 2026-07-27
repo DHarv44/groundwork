@@ -30,6 +30,7 @@ export default function Water({ build, sky, fogDensity }: Props) {
       uDepthM: { value: build.depthMetres },
       uSeaLevelY: { value: 0 },
       uShoreCutoff: { value: settings.shoreCutoff },
+      uShoreFeather: { value: settings.shoreFeather },
       uDepthFade: { value: settings.depthFade },
       uWaveHeight: { value: settings.waveHeight },
       uFoamWidth: { value: settings.foamWidth },
@@ -75,6 +76,7 @@ export default function Water({ build, sky, fogDensity }: Props) {
     // Sea level is a real elevation, so it scales with exaggeration like the terrain.
     u.uSeaLevelY.value = settings.seaLevel * settings.exaggeration
     u.uShoreCutoff.value = settings.shoreCutoff
+    u.uShoreFeather.value = settings.shoreFeather
     u.uDepthFade.value = settings.depthFade
     u.uWaveHeight.value = settings.waveHeight
     u.uFoamWidth.value = settings.foamWidth

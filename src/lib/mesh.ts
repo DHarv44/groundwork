@@ -22,7 +22,7 @@ export interface TerrainBuild {
   gridY: number
 }
 
-const MAX_NORMAL_TEX = 2048
+const MAX_NORMAL_TEX = 4096
 
 /** Bilinear sample of the height field in fractional grid coordinates. */
 function sampleBilinear(hf: HeightField, fx: number, fy: number): number {

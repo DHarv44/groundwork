@@ -18,8 +18,13 @@ import type { HeightField } from './opentopo'
  */
 
 const TILE = 256
-const MAX_TILES = 256
-const MAX_SAMPLES = 2400
+// Budgets for the tile mosaic. Both are fixed pixel counts, so metres-per-sample
+// scales with how large an area you draw: at 256/2400 a 110 km box fell back to z11
+// (~76 m/px) while a 27 km box reached ~13 m/px. Raised to buy back roughly one zoom
+// level on large areas. The ceiling past this is the source itself — Terrarium is
+// SRTM-derived at ~30 m, so beyond z13 it is upsampling, not new detail.
+const MAX_TILES = 600
+const MAX_SAMPLES = 4096
 /** Source data is SRTM-derived, so past ~z13 there is no more real detail to gain. */
 const MAX_ZOOM = 13
 
