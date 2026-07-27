@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useStore, type Settings } from '../store'
 import { DAILY_QUOTA, cacheClear, cacheStats, quotaUsed } from '../lib/demcache'
+import { deletePreset, loadPresets, savePreset } from '../lib/presets'
 import { DEM_SOURCES } from '../lib/opentopo'
 import { boundsAreaKm2, boundsExtentMetres, formatBounds } from '../lib/geo'
 import { captureScreenshot } from '../lib/capture'
@@ -157,7 +158,15 @@ export default function Controls() {
     waterStats,
     generateDemo,
     resetSettings,
+    applySettings,
+    settingsSnapshot,
   } = useStore()
+
+  const [presets, setPresets] = useState(loadPresets)
+  const [presetName, setPresetName] = useState('')
+  const [showPresets, setShowPresets] = useState(false)
+  // Name of the preset that just took an update, so the button can confirm it.
+  const [justSaved, setJustSaved] = useState<string | null>(null)
 
   // What is actually loaded, which is not necessarily what the dropdown says.
   const isDemo = heightField?.demtype === 'DEMO'
@@ -262,6 +271,64 @@ export default function Controls() {
             </button>
           )}
         </div>
+        {showPresets && (
+          <div className="presets-panel">
+            <form
+              className="search"
+              onSubmit={(e) => {
+                e.preventDefault()
+                if (!presetName.trim()) return
+                setPresets(savePreset(presetName, settingsSnapshot()))
+                setPresetName('')
+              }}
+            >
+              <input
+                value={presetName}
+                onChange={(e) => setPresetName(e.target.value)}
+                placeholder="Name this set…"
+                spellCheck={false}
+              />
+              <button type="submit" disabled={!presetName.trim()}>
+                Save
+              </button>
+            </form>
+            {presets.length === 0 ? (
+              <p className="note">
+                Saves every slider and toggle under a name. Area, source and camera are
+                not included, so a set can be applied to any terrain.
+              </p>
+            ) : (
+              <ul className="preset-list">
+                {presets.map((p) => (
+                  <li key={p.name}>
+                    <button className="preset-load" onClick={() => applySettings(p.settings)}>
+                      {p.name}
+                    </button>
+                    <button
+                      className="preset-upd"
+                      title={`Overwrite “${p.name}” with the current settings`}
+                      onClick={() => {
+                        setPresets(savePreset(p.name, settingsSnapshot()))
+                        setJustSaved(p.name)
+                        window.setTimeout(() => setJustSaved(null), 1200)
+                      }}
+                    >
+                      {justSaved === p.name ? '✓' : '⟳'}
+                    </button>
+                    <button
+                      className="preset-del"
+                      title="Delete"
+                      onClick={() => setPresets(deletePreset(p.name))}
+                    >
+                      ×
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+
         <div className="quota">
           <span className={used >= DAILY_QUOTA ? 'bad' : ''}>
             {used}/{DAILY_QUOTA} API calls today
@@ -277,6 +344,9 @@ export default function Controls() {
           </button>
           <button onClick={resetSettings} title="Defaults for every slider and toggle">
             Reset settings
+          </button>
+          <button onClick={() => setShowPresets((v) => !v)} title="Save and recall setting sets">
+            Presets{presets.length > 0 ? ` (${presets.length})` : ''}
           </button>
           {cache.count > 0 && (
             <button
@@ -510,6 +580,28 @@ export default function Controls() {
 
             </Group>
 
+            {/* Both grids feed lakes and rivers alike, so they sit on their own. */}
+            <Group title="Grids" badge={<b className="pending">costly to change</b>}>
+              <Slider
+                label="Detection grid"
+                value={settings.maskResolution}
+                min={512}
+                max={4096}
+                step={256}
+                suffix=" px"
+                onChange={setSetting('maskResolution')}
+              />
+              <Slider
+                label="Routing grid"
+                value={settings.routingResolution}
+                min={256}
+                max={3072}
+                step={256}
+                suffix=" px"
+                onChange={setSetting('routingResolution')}
+              />
+            </Group>
+
             <Group
               title="Lake detection"
               badge={<b className="pending">re-derives water only</b>}
@@ -562,15 +654,6 @@ export default function Controls() {
               onChange={(v) => set('minLakeArea', v * 10_000)}
             />
             <Slider
-              label="Detection grid"
-              value={settings.maskResolution}
-              min={512}
-              max={4096}
-              step={256}
-              suffix=" px"
-              onChange={setSetting('maskResolution')}
-            />
-            <Slider
               label="Sea level margin"
               value={settings.seaLevelMargin}
               min={0}
@@ -604,6 +687,15 @@ export default function Controls() {
               suffix=" km²"
               decimals={2}
               onChange={setSetting('minChannelKm2')}
+            />
+            <Slider
+              label="Channel feather"
+              value={settings.riverFeather}
+              min={0}
+              max={4}
+              step={1}
+              suffix=" px"
+              onChange={setSetting('riverFeather')}
             />
             <Slider
               label="Channel width"

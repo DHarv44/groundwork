@@ -29,12 +29,25 @@ export interface HydrologyTuning {
   bodyDrift: number
   /** Cap on the grid lakes are detected at. Higher is a finer outline, and slower. */
   maskResolution: number
+  /**
+   * Cap on the grid flow routing runs at, which sets how finely a channel can bend —
+   * the path can only step between cells of this grid. Raising it is the only thing
+   * that removes the zigzag, but the priority flood and the accumulation both scale
+   * with cell count, so this is the expensive knob.
+   */
+  routingResolution: number
   /** Lakes within this of sea level are left to the ocean surface, metres. */
   seaLevelMargin: number
   /** How far above water level a shoreline cell may sit and still be lake, metres. */
   edgeTolerance: number
   /** Radius of the shoreline feather, in mask cells. */
   featherCells: number
+  /**
+   * Radius of the channel-edge feather, in mask cells. Channels are stamped as hard
+   * discs along a path quantised to the coarser routing grid, so without this they
+   * read as a chain of blocks.
+   */
+  riverFeather: number
   /** Smallest standing water to keep, m². */
   minLakeArea: number
   /** Drainage area at which a hillslope becomes a channel, km². */
@@ -69,10 +82,12 @@ export interface HydrologyTuning {
 export const DEFAULT_TUNING: HydrologyTuning = {
   flatTolerance: 0,
   bodyDrift: 0,
-  maskResolution: 2048,
+  maskResolution: 4096,
+  routingResolution: 3072,
   seaLevelMargin: 0.5,
   edgeTolerance: 0.82,
   featherCells: 1,
+  riverFeather: 1,
   minLakeArea: 400_000,
   minChannelKm2: 1.64,
   riverWidthScale: 2.25,
@@ -107,16 +122,6 @@ export interface HydrologyResult {
   maxDrainageKm2: number
 }
 
-/**
- * Grid the flow routing runs on.
- *
- * Lakes and the output mask use their own, finer grid (see tuning.maskResolution).
- * Routing needs the coarse one because the priority flood and the accumulation are the
- * expensive part; finding standing water is not — a flat test and a connected-component
- * sweep, both linear. Sharing this grid quantised the lake outline to 51 m on a 52 km
- * box, a visible staircase, for no reason.
- */
-const MAX_HYDRO = 1024
 /**
  * Base tilt applied while filling, so no true flats survive. Jittered per cell — see
  * the flood loop. Kept far below any real elevation signal.
@@ -231,9 +236,16 @@ const NY = [0, 1, 1, 1, 0, -1, -1, -1]
  * The result is coverage, not a flag, so the shader blends the shoreline instead of
  * cutting it.
  */
-function featherMask(src: Uint8Array, w: number, h: number, radius: number): Float32Array {
+function featherMask(
+  src: ArrayLike<number>,
+  w: number,
+  h: number,
+  radius: number,
+): Float32Array {
+  // Values are taken as coverage, so this works on a 0/1 flag array and on fractional
+  // coverage alike — lakes come in as the former, channels as the latter.
   const a = new Float32Array(src.length)
-  for (let i = 0; i < src.length; i++) a[i] = src[i] ? 1 : 0
+  for (let i = 0; i < src.length; i++) a[i] = src[i]
   if (radius <= 0) return a
 
   const b = new Float32Array(a.length)
@@ -331,7 +343,11 @@ function addMicroRelief(elev: Float32Array, w: number, h: number): void {
 export function computeWaterMask(input: HydrologyInput): HydrologyResult {
   const { data: srcData, width: srcW, height: srcH, seaLevel } = input
   const tune = { ...DEFAULT_TUNING, ...input.tuning }
-  const sampled = downsample(srcData, srcW, srcH, MAX_HYDRO)
+  // Routing runs coarser than the mask by default: the priority flood and the
+  // accumulation are the expensive part, while finding standing water is a linear
+  // sweep. The cost of that split is that a channel's path can only bend at routing
+  // cells, which is what makes it zigzag.
+  const sampled = downsample(srcData, srcW, srcH, tune.routingResolution)
   const w = sampled.width
   const h = sampled.height
   const n = w * h
@@ -533,6 +549,9 @@ export function computeWaterMask(input: HydrologyInput): HydrologyResult {
 
   // ---- 5. rasterise into the mask -----------------------------------------
   const mask = new Uint8Array(mn * 4)
+  // Channels accumulate here first so their edges can be softened before they land in
+  // the mask; stamping straight into the byte channel left them hard-edged.
+  const riverCov = new Float32Array(mn)
   const minWidthM =
     Math.max(cellSize * 0.6, input.widthMetres / 800) * tune.riverMinWidthScale
   // Routing grid to mask grid.
@@ -610,8 +629,8 @@ export function computeWaterMask(input: HydrologyInput): HydrologyResult {
         if (px < 0 || px >= mw) continue
         const cov = Math.min(1, Math.max(0, rCells + 0.5 - Math.hypot(dx, dy)))
         if (cov <= 0) continue
-        const o = (py * mw + px) * 4
-        if (cov * 255 > mask[o]) mask[o] = Math.round(cov * 255)
+        const o = py * mw + px
+        if (cov > riverCov[o]) riverCov[o] = cov
       }
     }
   }
@@ -658,6 +677,13 @@ export function computeWaterMask(input: HydrologyInput): HydrologyResult {
 
     lakeCells = 0
     for (let i = 0; i < mn; i++) if (isLake[i]) lakeCells++
+  }
+
+  // Soften the channel edges, then lay them down.
+  const riverSmooth = featherMask(riverCov, mw, mh, tune.riverFeather)
+  for (let c = 0; c < mn; c++) {
+    const v = riverSmooth[c]
+    if (v > 0.002) mask[c * 4] = Math.round(Math.min(1, v) * 255)
   }
 
   // Feather the shoreline, then write it as coverage rather than a hard flag.

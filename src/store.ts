@@ -45,9 +45,11 @@ export interface Settings {
   flatTolerance: number
   bodyDrift: number
   maskResolution: number
+  routingResolution: number
   seaLevelMargin: number
   edgeTolerance: number
   featherCells: number
+  riverFeather: number
   minLakeArea: number
   minChannelKm2: number
   riverWidthScale: number
@@ -121,6 +123,10 @@ interface State {
   set: <K extends keyof Settings>(key: K, value: Settings[K]) => void
   reset: () => void
   resetSettings: () => void
+  /** Overwrite the live settings from a saved snapshot. */
+  applySettings: (patch: Record<string, unknown>) => void
+  /** The persistable slice, for saving as a preset. */
+  settingsSnapshot: () => Record<string, unknown>
   generate: () => Promise<void>
   generateDemo: () => Promise<void>
   loadImagery: () => Promise<void>
@@ -165,9 +171,11 @@ const PERSISTED_SETTINGS = [
   'flatTolerance',
   'bodyDrift',
   'maskResolution',
+  'routingResolution',
   'seaLevelMargin',
   'edgeTolerance',
   'featherCells',
+  'riverFeather',
   'minLakeArea',
   'minChannelKm2',
   'riverWidthScale',
@@ -259,9 +267,11 @@ export const useStore = create<State>((setState, getState) => {
       flatTolerance: s.flatTolerance,
       bodyDrift: s.bodyDrift,
       maskResolution: s.maskResolution,
+      routingResolution: s.routingResolution,
       seaLevelMargin: s.seaLevelMargin,
       edgeTolerance: s.edgeTolerance,
       featherCells: s.featherCells,
+      riverFeather: s.riverFeather,
       minLakeArea: s.minLakeArea,
       minChannelKm2: s.minChannelKm2,
       riverWidthScale: s.riverWidthScale,
@@ -426,6 +436,32 @@ export const useStore = create<State>((setState, getState) => {
    * Snow and tree lines are carried over rather than reset, since they are derived
    * from the tile's latitude on each build and are not preferences.
    */
+  settingsSnapshot: () => {
+    const s = getState().settings
+    const slice: Record<string, unknown> = {}
+    for (const k of PERSISTED_SETTINGS) slice[k] = s[k]
+    return slice
+  },
+
+  applySettings: (patch) => {
+    const { settings } = getState()
+    // Snow and tree lines stay put: they are re-derived from the tile's latitude on
+    // every build, so a preset carrying them would just be overwritten.
+    const next: Settings = {
+      ...settings,
+      ...(patch as Partial<Settings>),
+      snowLine: settings.snowLine,
+      treeLine: settings.treeLine,
+    }
+    setState({ settings: next })
+    persistSettings(next)
+    scheduleWater()
+    // A preset can carry geometry settings, which need the mesh rebuilt.
+    if (next.exaggeration !== settings.exaggeration || next.detail !== settings.detail) {
+      scheduleRebuild()
+    }
+  },
+
   resetSettings: () => {
     const { settings } = getState()
     const next: Settings = {
