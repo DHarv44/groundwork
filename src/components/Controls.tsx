@@ -13,6 +13,7 @@ function Slider({
   max,
   step,
   suffix,
+  decimals,
   onChange,
 }: {
   label: string
@@ -21,26 +22,60 @@ function Slider({
   max: number
   step: number
   suffix?: string
+  /** Override the readout precision, for steps finer than two decimal places. */
+  decimals?: number
   onChange: (v: number) => void
 }) {
+  // Nudge by exactly one step, clamped, and rounded onto the step grid so repeated
+  // presses cannot drift off it through floating-point error.
+  const nudge = (dir: -1 | 1) => {
+    const raw = value + dir * step
+    const snapped = Math.round((raw - min) / step) * step + min
+    onChange(Math.min(max, Math.max(min, parseFloat(snapped.toPrecision(12)))))
+  }
+
   return (
-    <label className="slider">
+    <div className="slider">
       <span className="slider-head">
         <span>{label}</span>
         <b>
-          {Number.isInteger(step) ? Math.round(value).toLocaleString() : value.toFixed(2)}
+          {decimals !== undefined
+            ? value.toFixed(decimals)
+            : Number.isInteger(step)
+              ? Math.round(value).toLocaleString()
+              : value.toFixed(2)}
           {suffix ?? ''}
         </b>
       </span>
-      <input
-        type="range"
-        min={min}
-        max={max}
-        step={step}
-        value={value}
-        onChange={(e) => onChange(parseFloat(e.target.value))}
-      />
-    </label>
+      <span className="slider-row">
+        <button
+          type="button"
+          className="nudge"
+          onClick={() => nudge(-1)}
+          disabled={value <= min}
+          aria-label={`${label} down`}
+        >
+          ‹
+        </button>
+        <input
+          type="range"
+          min={min}
+          max={max}
+          step={step}
+          value={value}
+          onChange={(e) => onChange(parseFloat(e.target.value))}
+        />
+        <button
+          type="button"
+          className="nudge"
+          onClick={() => nudge(1)}
+          disabled={value >= max}
+          aria-label={`${label} up`}
+        >
+          ›
+        </button>
+      </span>
+    </div>
   )
 }
 
@@ -81,6 +116,7 @@ export default function Controls() {
     imageryZoom,
     waterStats,
     generateDemo,
+    resetSettings,
   } = useStore()
 
   // What is actually loaded, which is not necessarily what the dropdown says.
@@ -197,6 +233,9 @@ export default function Controls() {
         <div className="row">
           <button disabled={busy} onClick={() => void generateDemo()} title="No API call">
             Demo terrain
+          </button>
+          <button onClick={resetSettings} title="Defaults for every slider and toggle">
+            Reset settings
           </button>
           {cache.count > 0 && (
             <button
@@ -336,6 +375,98 @@ export default function Controls() {
               step={0.005}
               onChange={setSetting('riverThreshold')}
             />
+            <div className="subhead">
+              <span>Lake detection</span>
+              <b className="pending">re-derives water only</b>
+            </div>
+            <Slider
+              label="Body tolerance"
+              value={settings.flatTolerance}
+              min={0.000025}
+              max={0.0025}
+              step={0.000025}
+              suffix=" m"
+              decimals={6}
+              onChange={setSetting('flatTolerance')}
+            />
+            <Slider
+              label="Body drift"
+              value={settings.bodyDrift}
+              min={1}
+              max={100}
+              step={0.5}
+              suffix="×"
+              onChange={setSetting('bodyDrift')}
+            />
+            <Slider
+              label="Bank reach"
+              value={settings.edgeTolerance}
+              min={0}
+              max={1.5}
+              step={0.01}
+              decimals={2}
+              suffix=" m"
+              onChange={setSetting('edgeTolerance')}
+            />
+            <Slider
+              label="Shore feather"
+              value={settings.featherCells}
+              min={0}
+              max={4}
+              step={1}
+              suffix=" px"
+              onChange={setSetting('featherCells')}
+            />
+            <Slider
+              label="Smallest lake"
+              value={settings.minLakeArea / 10_000}
+              min={0.1}
+              max={20}
+              step={0.1}
+              suffix=" ha"
+              onChange={(v) => set('minLakeArea', v * 10_000)}
+            />
+            <Slider
+              label="Detection grid"
+              value={settings.maskResolution}
+              min={512}
+              max={4096}
+              step={256}
+              suffix=" px"
+              onChange={setSetting('maskResolution')}
+            />
+            <Slider
+              label="Sea level margin"
+              value={settings.seaLevelMargin}
+              min={0}
+              max={5}
+              step={0.1}
+              suffix=" m"
+              onChange={setSetting('seaLevelMargin')}
+            />
+
+            <div className="subhead">
+              <span>River detection</span>
+            </div>
+            <Slider
+              label="Channel starts at"
+              value={settings.minChannelKm2}
+              min={0.02}
+              max={5}
+              step={0.02}
+              suffix=" km²"
+              onChange={setSetting('minChannelKm2')}
+            />
+            <Slider
+              label="Channel width"
+              value={settings.riverWidthScale}
+              min={0.2}
+              max={3}
+              step={0.05}
+              suffix="×"
+              onChange={setSetting('riverWidthScale')}
+            />
+
             <Slider
               label="Micro relief"
               value={settings.microDetail}

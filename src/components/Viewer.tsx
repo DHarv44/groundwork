@@ -40,7 +40,17 @@ interface OrbitLike {
 }
 
 /** Positions the camera to frame a freshly built terrain and sets sane clip planes. */
-function CameraRig({ size, midY, topY }: { size: number; midY: number; topY: number }) {
+function CameraRig({
+  size,
+  midY,
+  topY,
+  ready,
+}: {
+  size: number
+  midY: number
+  topY: number
+  ready: boolean
+}) {
   const camera = useThree((s) => s.camera) as THREE.PerspectiveCamera
   const controls = useThree((s) => s.controls) as OrbitLike | null
   const frameToken = useStore((s) => s.frameToken)
@@ -74,6 +84,14 @@ function CameraRig({ size, midY, topY }: { size: number; midY: number; topY: num
 
   useEffect(() => {
     if (!controls) return
+
+    // Wait for a real terrain.
+    //
+    // OrbitControls attach before the first build lands, so this effect used to run
+    // once against the placeholder extent — consuming the restored camera, then
+    // re-framing to defaults the moment the actual terrain arrived. A saved view was
+    // therefore always thrown away on reload.
+    if (!ready) return
 
     // Distance limits track the terrain size and are safe to apply at any time.
     controls.minDistance = size * 0.008
@@ -112,7 +130,7 @@ function CameraRig({ size, midY, topY }: { size: number; midY: number; topY: num
     controls.enableDamping = false
     controls.update()
     controls.enableDamping = damping
-  }, [frameToken, controls, camera, size, midY, topY])
+  }, [frameToken, controls, camera, size, midY, topY, ready])
 
   return null
 }
@@ -157,7 +175,7 @@ export default function Viewer() {
             {settings.showOcean && <Water build={build} sky={sky} fogDensity={fogDensity} />}
           </>
         )}
-        <CameraRig size={size} midY={midY} topY={topY} />
+        <CameraRig size={size} midY={midY} topY={topY} ready={!!build} />
         <HeadingTape target={tapeRef} />
         <OrbitControls
           makeDefault

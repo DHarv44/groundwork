@@ -84,15 +84,24 @@ export function buildTerrain(
   const sides = new Float32Array(vertCount)
 
   const exag = opts.exaggeration
-  const dxMetres = widthMetres / (demW - 1)
-  const dyMetres = depthMetres / (demH - 1)
+  // DEM tiles are area-based: sample (i,j) is the value *for the cell* spanning
+  // [i, i+1), so its centre sits at i + 0.5 and adjacent centres are one full cell
+  // apart. Treating samples as sitting on the bbox edges instead — spacing them
+  // widthMetres/(demW-1) and reading position i at parameter i/(demW-1) — shifts the
+  // whole surface half a cell west and stretches it by demW/(demW-1). That is why
+  // derived water sat off its banks: the mask is placed correctly in the bbox, and it
+  // was the terrain underneath that was displaced.
+  const dxMetres = widthMetres / demW
+  const dyMetres = depthMetres / demH
 
   for (let j = 0; j < gridY; j++) {
     const v = j / (gridY - 1)
-    const fy = v * (demH - 1)
+    // u and v span the bounding box; convert to sample coordinates on the same
+    // area convention the mask and imagery use.
+    const fy = v * demH - 0.5
     for (let i = 0; i < gridX; i++) {
       const u = i / (gridX - 1)
-      const fx = u * (demW - 1)
+      const fx = u * demW - 0.5
       const idx = j * gridX + i
       const h = sampleBilinear(hf, fx, fy)
 
@@ -231,16 +240,18 @@ function buildNormalTexture(
   const w = Math.max(2, Math.round(hf.width * scale))
   const h = Math.max(2, Math.round(hf.height * scale))
   const px = new Uint8Array(w * h * 4)
-  const sx = (hf.width - 1) / (w - 1)
-  const sy = (hf.height - 1) / (h - 1)
+  // Texel x is sampled at UV (x+0.5)/w, so it must read the DEM at the matching
+  // position — same area convention as the mesh above.
+  const sx = hf.width / w
+  const sy = hf.height / h
   // Spacing between the samples we actually take, in metres.
   const stepX = dxMetres * sx
   const stepY = dyMetres * sy
 
   for (let y = 0; y < h; y++) {
-    const fy = y * sy
+    const fy = (y + 0.5) * sy - 0.5
     for (let x = 0; x < w; x++) {
-      const fx = x * sx
+      const fx = (x + 0.5) * sx - 0.5
       const hL = sampleBilinear(hf, fx - sx, fy)
       const hR = sampleBilinear(hf, fx + sx, fy)
       const hU = sampleBilinear(hf, fx, fy - sy)
@@ -317,14 +328,16 @@ function buildHeightTexture(hf: HeightField): THREE.DataTexture {
   const w = Math.max(2, Math.round(hf.width * scale))
   const h = Math.max(2, Math.round(hf.height * scale))
   const range = Math.max(1e-3, hf.max - hf.min)
-  const sx = (hf.width - 1) / (w - 1)
-  const sy = (hf.height - 1) / (h - 1)
+  // Same texel-centre convention as the normal map.
+  const sx = hf.width / w
+  const sy = hf.height / h
   const useFloat = supportsFloatLinear()
   const px = useFloat ? new Float32Array(w * h) : new Uint16Array(w * h)
 
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
-      const t = (sampleBilinear(hf, x * sx, y * sy) - hf.min) / range
+      const t =
+        (sampleBilinear(hf, (x + 0.5) * sx - 0.5, (y + 0.5) * sy - 0.5) - hf.min) / range
       px[y * w + x] = useFloat ? t : toHalf(t)
     }
   }

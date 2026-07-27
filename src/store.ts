@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import * as THREE from 'three'
 import HydrologyWorker from './workers/hydrology.worker?worker'
-import type { HydrologyResult } from './lib/hydrology'
+import { DEFAULT_TUNING, type HydrologyResult, type HydrologyTuning } from './lib/hydrology'
 import type { Bounds } from './lib/geo'
 import { boundsAreaKm2, climaticSnowLine, climaticTreeLine } from './lib/geo'
 import type { HeightField } from './lib/opentopo'
@@ -33,6 +33,16 @@ export interface Settings {
   showOcean: boolean
   showRivers: boolean
   showLakes: boolean
+  /** Hydrology knobs. Changing one re-runs the water pass, not the DEM fetch. */
+  flatTolerance: number
+  bodyDrift: number
+  maskResolution: number
+  seaLevelMargin: number
+  edgeTolerance: number
+  featherCells: number
+  minLakeArea: number
+  minChannelKm2: number
+  riverWidthScale: number
   shadows: boolean
   aoStrength: number
   microDetail: number
@@ -59,6 +69,7 @@ export const DEFAULT_SETTINGS: Settings = {
   showOcean: true,
   showRivers: true,
   showLakes: true,
+  ...DEFAULT_TUNING,
   shadows: true,
   aoStrength: 0.85,
   microDetail: 0.6,
@@ -90,6 +101,7 @@ interface State {
   setDemType: (id: string) => void
   set: <K extends keyof Settings>(key: K, value: Settings[K]) => void
   reset: () => void
+  resetSettings: () => void
   generate: () => Promise<void>
   generateDemo: () => Promise<void>
   loadImagery: () => Promise<void>
@@ -147,6 +159,7 @@ function runHydrology(
   hf: HeightField,
   widthMetres: number,
   depthMetres: number,
+  tuning: HydrologyTuning,
 ): Promise<HydrologyResult> {
   return new Promise((resolve, reject) => {
     hydroWorker?.terminate()
@@ -174,6 +187,7 @@ function runHydrology(
         widthMetres,
         depthMetres,
         seaLevel: 0,
+        tuning,
       },
       [copy.buffer],
     )
@@ -193,6 +207,56 @@ function makeWaterTexture(result: HydrologyResult): THREE.DataTexture {
 
 export const useStore = create<State>((setState, getState) => {
   let rebuildTimer: ReturnType<typeof setTimeout> | null = null
+  let waterTimer: ReturnType<typeof setTimeout> | null = null
+
+  function tuningOf(s: Settings): HydrologyTuning {
+    return {
+      flatTolerance: s.flatTolerance,
+      bodyDrift: s.bodyDrift,
+      maskResolution: s.maskResolution,
+      seaLevelMargin: s.seaLevelMargin,
+      edgeTolerance: s.edgeTolerance,
+      featherCells: s.featherCells,
+      minLakeArea: s.minLakeArea,
+      minChannelKm2: s.minChannelKm2,
+      riverWidthScale: s.riverWidthScale,
+    }
+  }
+
+  function applyWater(result: HydrologyResult): void {
+    getState().waterMask?.dispose()
+    setState({
+      waterMask: makeWaterTexture(result),
+      waterStats: {
+        rivers: result.riverCells,
+        lakes: result.lakeCells,
+        maxDrainageKm2: result.maxDrainageKm2,
+      },
+    })
+  }
+
+  /**
+   * Re-derive water only. The DEM and the mesh are untouched, so tuning a knob costs
+   * one worker pass rather than a rebuild — and never an API call.
+   */
+  function scheduleWater(): void {
+    if (waterTimer !== null) clearTimeout(waterTimer)
+    waterTimer = setTimeout(() => {
+      waterTimer = null
+      const { heightField, build, settings } = getState()
+      if (!heightField || !build) return
+      setState({ message: 'Re-deriving water…' })
+      runHydrology(heightField, build.widthMetres, build.depthMetres, tuningOf(settings))
+        .then((result) => {
+          applyWater(result)
+          setState({ message: '' })
+        })
+        .catch((e) => {
+          setState({ message: '' })
+          console.warn('hydrology failed', e)
+        })
+    }, 220)
+  }
 
   /** Coalesce rapid geometry changes into one rebuild once the slider settles. */
   function scheduleRebuild(): void {
@@ -256,18 +320,10 @@ export const useStore = create<State>((setState, getState) => {
     if (getState().settings.textureMode === 'satellite') void getState().loadImagery()
 
     // Terrain is already on screen; rivers and lakes stream in behind it.
-    runHydrology(heightField, build.widthMetres, build.depthMetres)
+    runHydrology(heightField, build.widthMetres, build.depthMetres, tuningOf(settings))
       .then((result) => {
         if (signal.aborted) return
-        getState().waterMask?.dispose()
-        setState({
-          waterMask: makeWaterTexture(result),
-          waterStats: {
-            rivers: result.riverCells,
-            lakes: result.lakeCells,
-            maxDrainageKm2: result.maxDrainageKm2,
-          },
-        })
+        applyWater(result)
       })
       .catch((e) => console.warn('hydrology failed', e))
   }
@@ -308,6 +364,29 @@ export const useStore = create<State>((setState, getState) => {
     // drags fire on every pixel of travel, and a rebuild is hundreds of thousands of
     // vertices, so coalesce them instead of rebuilding per event.
     if (key === 'exaggeration' || key === 'detail') scheduleRebuild()
+    if (key in DEFAULT_TUNING) scheduleWater()
+  },
+
+  /**
+   * Put every display and hydrology setting back to its default.
+   *
+   * Deliberately narrow: the area, the source, the 3D camera and the mini-map position
+   * are all left alone, so this clears what you have been dialling without also
+   * throwing away where you were looking.
+   *
+   * Snow and tree lines are carried over rather than reset, since they are derived
+   * from the tile's latitude on each build and are not preferences.
+   */
+  resetSettings: () => {
+    const { settings } = getState()
+    const next: Settings = {
+      ...DEFAULT_SETTINGS,
+      snowLine: settings.snowLine,
+      treeLine: settings.treeLine,
+    }
+    setState({ settings: next })
+    persistSettings(next)
+    scheduleWater()
   },
 
   reset: () => {
