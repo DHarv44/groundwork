@@ -152,7 +152,9 @@ export default function Viewer() {
   // Haze is expressed relative to terrain size so it reads the same at every scale.
   // Calibrated so the default lays ~15% of atmosphere over the far edge of the box,
   // which is about right for clear mountain air.
-  const fogDensity = (settings.haze * 0.55) / size
+  // Killing the fog is not the same as setting haze to zero: haze also tints the sky
+  // dome, so this switch has to bypass the density rather than zero the setting.
+  const fogDensity = settings.showFog ? (settings.haze * 0.55) / size : 0
 
   return (
     <div className="viewer">

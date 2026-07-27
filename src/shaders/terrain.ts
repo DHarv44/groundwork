@@ -62,6 +62,10 @@ uniform float uGroundWarmth;   // shift bare ground toward oxidised rust
 uniform float uForest;         // how much of the cover is trees rather than grass
 uniform float uVegTint;        // which green: -1 blue-shifted, +1 yellow-shifted
 uniform float uVegSat;         // how saturated that green is
+uniform float uTreeNeed;       // catchment a slope must gather before it holds timber
+uniform float uTreeLimit;      // catchment past which the channel is too wide for trees
+uniform float uTreeSpread;     // how sharply timber gives way to grass across both edges
+uniform float uCorridorLeaf;   // how broadleaf the valley-bottom timber is
 uniform float uTextureRange;   // scales how far surface detail survives
 // Biomes baked over the tile: aridity, riparian, ground warmth and corridor reach, one
 // per channel. Sampling it replaces the four scalars above wherever it is present —
@@ -282,8 +286,13 @@ void main() {
   // Not "patch" — that is a reserved word in GLSL and the whole shader fails to build.
   float mottle = clamp(macro + 0.5, 0.0, 1.0);
   float parch = smoothstep(0.18, 0.82, aridity);
-  vec3 grassWet = mix(vec3(0.042, 0.072, 0.024), vec3(0.112, 0.136, 0.054), mottle);
-  vec3 grassDry = mix(vec3(0.126, 0.104, 0.048), vec3(0.212, 0.184, 0.094), mottle);
+  // The ends of this ramp were both overshot, in opposite directions — measured against
+  // Esri imagery with haze off, arid rangeland rendered about 15 too bright and humid
+  // grassland about 13 too dark. Green country is not dark; a watered pasture reflects
+  // a good deal more than a parched one absorbs. So the wet end comes up and the dry end
+  // comes down, which narrows the range without touching the hue shift between them.
+  vec3 grassWet = mix(vec3(0.068, 0.108, 0.038), vec3(0.170, 0.198, 0.082), mottle);
+  vec3 grassDry = mix(vec3(0.112, 0.093, 0.043), vec3(0.188, 0.164, 0.084), mottle);
   vec3 grassCol = vegTone(mix(grassWet, grassDry, parch), uVegTint, uVegSat);
 
   // Closed conifer canopy. Far darker than grass and barely green — a spruce stand
@@ -325,16 +334,61 @@ void main() {
   // one slope limit for both treats every mountainside as bare rock, which is precisely
   // backwards for a forested range and was leaving the Rockies rendered as scree.
   float wetness = 1.0 - aridity;
+
+  // ---- where the trees are ------------------------------------------------
+  //
+  // Trees are placed from the drainage field — the same flow accumulation the rivers
+  // come from — rather than scattered by noise and then nudged toward water. That is
+  // the actual pattern on the ground: satellite imagery of anywhere short of rainforest
+  // shows timber threading the valleys while the interfluves stay open, because trees
+  // grow where water collects. Noise can only ever approximate that by accident, and it
+  // reads as static rather than landscape.
+  //
+  // Everything that is not tree is grass.
+  //
+  // Tree cover moves the threshold; it is not a floor added underneath. Every tree in
+  // the tile follows the drainage, at every setting — what the biome changes is how
+  // little catchment a piece of ground needs before it qualifies. A rainforest asks for
+  // almost none, so the network fills out until it closes over; a steppe asks for a lot,
+  // so only the valley floors hold timber. The pattern is always the catchment.
+  //
+  // Adding a floor instead washes the whole thing out: at a temperate 0.7 it puts timber
+  // on seven tenths of the ground before the water is consulted at all, and the network
+  // disappears into it. That is the difference between this and scattering trees.
+  //
+  // The threshold works exactly as minChannelKm2 does for rivers: how much catchment a
+  // piece of ground has to gather. Aridity raises the bar, because in dry country only
+  // the valley floors ever see enough.
+  // And it is a band, not a threshold. Timber rises as a gully gathers water and falls
+  // away again once the creek has widened into a river: a canopy closes over a small
+  // watercourse — which is exactly how it looks from the air, and why a wooded creek is
+  // still drawn as woodland on a real map — but no tree spans a trunk channel. Without
+  // the upper edge the biggest rivers come out as the most heavily timbered ground in
+  // the tile, which is backwards.
+  float rawTrees = forest;
+  if (uHasWater > 0.5) {
+    float treeAccum = texture2D(uWaterMap, vUv).b;
+    float edge = max(0.01, uTreeSpread);
+    float need = uTreeNeed * (1.0 - forest) * (0.45 + 0.90 * aridity);
+    rawTrees = smoothstep(need, need + edge, treeAccum) *
+               (1.0 - smoothstep(uTreeLimit, uTreeLimit + edge, treeAccum));
+  }
+
   // A closed forest ends abruptly: the last stretch goes timber to krummholz to tundra
   // inside a couple of hundred metres. Only open scrub thins out over a kilometre, so
   // the width of the fade follows the cover rather than being fixed — at a fixed 420 m
   // better than a third of a range like the Front Range sits half-stripped.
-  float treeFade = mix(420.0, 140.0, forest);
+  float treeFade = mix(420.0, 140.0, rawTrees);
   float lowland = smoothstep(uTreeLine + 220.0, uTreeLine - treeFade, vElev);
-  float steepVeg = smoothstep(0.10 + 0.20 * forest, 0.44 + 0.82 * forest, slope);
+  rawTrees *= lowland;
+
+  // Slope tolerance follows what is actually growing here, not the biome average:
+  // timber holds ground that meadow gives up to scree.
+  float steepVeg = smoothstep(0.10 + 0.20 * rawTrees, 0.44 + 0.82 * rawTrees, slope);
+
   float veg = wetness * lowland * (1.0 - steepVeg);
-  // Dense-canopy biomes are continuous, not patchy: bias the break-up noise by cover.
-  veg *= smoothstep(-0.30, 0.30, macro * 1.5 + meso * 0.5 + 0.20 + forest * 0.72);
+  // Dense-canopy ground is continuous, not patchy: bias the break-up noise by cover.
+  veg *= smoothstep(-0.30, 0.30, macro * 1.5 + meso * 0.5 + 0.20 + rawTrees * 0.72);
   veg = clamp(veg, 0.0, 1.0);
 
   // Vegetation follows the water.
@@ -348,12 +402,15 @@ void main() {
   // Deliberately scaled by aridity — in wet country the hillsides are green too, so
   // riparian corridors barely stand out. It is dryness that makes them visible.
   float riparian = 0.0;
-  if (uHasWater > 0.5 && riparianAmt > 0.001) {
-    float accum = texture2D(uWaterMap, vUv).b;
-    riparian = smoothstep(riparianReach - 0.10, riparianReach + 0.14, accum);
-    riparian *= riparianAmt * (1.0 - steep) * lowland;
-    riparian *= 0.35 + 0.65 * aridity;
-    veg = clamp(veg + riparian, 0.0, 1.0);
+  if (uHasWater > 0.5) {
+    vec4 wm = texture2D(uWaterMap, vUv);
+
+    if (riparianAmt > 0.001) {
+      riparian = smoothstep(riparianReach - 0.10, riparianReach + 0.14, wm.b);
+      riparian *= riparianAmt * (1.0 - steep) * lowland;
+      riparian *= 0.35 + 0.65 * aridity;
+      veg = clamp(veg + riparian, 0.0, 1.0);
+    }
   }
 
   albedo = mix(albedo, soil, clamp(veg * 1.3, 0.0, 1.0) * 0.55);
@@ -363,9 +420,21 @@ void main() {
   // brightness as of hue, and it is what separates a forested range from a meadow one.
   // Trees give out on steep rock and thin toward the tree line, where the belt breaks
   // up into scattered krummholz rather than ending at a hard edge.
-  float canopy = forest * (1.0 - steepVeg * 0.45) *
-                 smoothstep(uTreeLine + 120.0, uTreeLine - 520.0, vElev);
+  // Timber gives out on bare rock. Nothing here excludes the channel itself: a canopy
+  // genuinely does close over a creek, and the upper edge of the band already takes the
+  // trees off anything wide enough to be open water.
+  float canopy = clamp(rawTrees * (1.0 - steepVeg * 0.45), 0.0, 1.0);
+
   vec3 coverCol = mix(grassCol, conifer, canopy);
+
+  // The wettest ground carries a different species. Valley-bottom timber is broadleaf —
+  // cottonwood and willow — lighter, yellower and far more saturated than the conifer on
+  // the slopes above, so a creek in boreal country reads as a bright ribbon *against*
+  // the dark forest rather than more of it. Carries only a fraction of the biome's
+  // blue-shift for the same reason.
+  vec3 broadleaf = mix(vec3(0.050, 0.076, 0.024), vec3(0.106, 0.134, 0.046), mottle);
+  broadleaf = vegTone(broadleaf, uVegTint * 0.30, uVegSat);
+  coverCol = mix(coverCol, broadleaf, clamp(canopy * riparian * 2.0 * uCorridorLeaf, 0.0, 1.0));
   albedo = mix(albedo, coverCol, veg * 0.88);
   // Corridor growth is greener and denser than the scrub around it.
   albedo = mix(albedo, coverCol * 0.72, riparian * 0.5);

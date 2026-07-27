@@ -57,6 +57,25 @@ export default function ViewLayers() {
         </button>
       ))}
 
+      {/* Aerial perspective. Its own group because it is not a layer of the world but a
+          property of the air in front of it — and because turning it off is how you see
+          the ground's true colour, which the haze otherwise washes out badly on a wide
+          box. */}
+      <div className="overlay-group">
+        <button
+          className={`air ${settings.showFog ? 'on' : ''}`}
+          title={
+            settings.showFog
+              ? 'Aerial perspective on — distance washes the ground toward the sky'
+              : 'Aerial perspective off — ground shown at its true colour'
+          }
+          onClick={() => set('showFog', !settings.showFog)}
+        >
+          <span className="glyph">☁</span>
+          Haze
+        </button>
+      </div>
+
       {/* Overlays, each independent of the base and of each other. */}
       <div className="overlay-group">
         {OVERLAYS.map((o) => (

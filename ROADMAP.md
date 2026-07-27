@@ -99,6 +99,22 @@ the actual reason it reads light:
 Worth confirming from a close camera first, then adjusting the constants, rather than
 tuning against a washed-out wide shot.
 
+### 5. Fog slider on the viewport **(asked)**
+
+There is now a **Haze** button in the layer stack that switches aerial perspective off
+outright. The next step is a continuous control in the same place — drag to set how much
+atmosphere sits between you and the ground, without going to the Light tab.
+
+Same shape as the snow scrub: it belongs on the view, next to the layer buttons, where
+you can work it while looking at the result. The two will probably want to share a small
+"viewport controls" strip rather than each inventing its own placement.
+
+Note it should drive `fogDensity` in `Viewer.tsx` and not the `haze` setting, because
+`haze` also tints the sky dome — which is why the on/off switch bypasses the density
+rather than zeroing the setting. Whether the slider should move the sky with it is a real
+question: physically the two go together, but for judging ground colour you want the air
+cleared without the sky changing underneath you.
+
 ---
 
 ## Known issues

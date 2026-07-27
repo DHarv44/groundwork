@@ -615,6 +615,41 @@ export default function Controls() {
                   onChange={setSetting('riparian')}
                 />
                 <Slider
+                  label="Tree water need"
+                  value={settings.treeNeed}
+                  min={0}
+                  max={1}
+                  step={0.005}
+                  decimals={3}
+                  onChange={setSetting('treeNeed')}
+                />
+                <Slider
+                  label="Tree water limit"
+                  value={settings.treeLimit}
+                  min={0}
+                  max={1}
+                  step={0.005}
+                  decimals={3}
+                  onChange={setSetting('treeLimit')}
+                />
+                <Slider
+                  label="Tree edge"
+                  value={settings.treeSpread}
+                  min={0.01}
+                  max={0.6}
+                  step={0.005}
+                  decimals={3}
+                  onChange={setSetting('treeSpread')}
+                />
+                <Slider
+                  label="Corridor leaf"
+                  value={settings.corridorLeaf}
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  onChange={setSetting('corridorLeaf')}
+                />
+                <Slider
                   label="Corridor reach"
                   value={settings.riparianReach}
                   min={0.15}

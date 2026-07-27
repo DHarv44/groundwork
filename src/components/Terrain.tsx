@@ -73,6 +73,10 @@ export default function Terrain({ build, sky, fogDensity }: Props) {
       uForest: { value: settings.forest },
       uVegTint: { value: settings.vegTint },
       uVegSat: { value: settings.vegSat },
+      uTreeNeed: { value: settings.treeNeed },
+      uTreeLimit: { value: settings.treeLimit },
+      uTreeSpread: { value: settings.treeSpread },
+      uCorridorLeaf: { value: settings.corridorLeaf },
       uBiomeMap: { value: WHITE },
       uHasBiomeMap: { value: 0 },
       uTextureRange: { value: settings.textureRange },
@@ -130,6 +134,10 @@ export default function Terrain({ build, sky, fogDensity }: Props) {
     u.uForest.value = settings.forest
     u.uVegTint.value = settings.vegTint
     u.uVegSat.value = settings.vegSat
+    u.uTreeNeed.value = settings.treeNeed
+    u.uTreeLimit.value = settings.treeLimit
+    u.uTreeSpread.value = settings.treeSpread
+    u.uCorridorLeaf.value = settings.corridorLeaf
     u.uBiomeMap.value = biomeMap ?? WHITE
     u.uHasBiomeMap.value = biomeMap ? 1 : 0
     u.uTextureRange.value = settings.textureRange

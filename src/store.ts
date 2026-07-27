@@ -37,11 +37,32 @@ export interface Settings {
   vegTint: number
   /** How saturated that green is. */
   vegSat: number
+  /**
+   * How much catchment a piece of ground must gather before it holds timber — the tree
+   * equivalent of `minChannelKm2` for rivers. Trees are placed from the drainage field,
+   * so this is the threshold that decides where the forest ends and the grass begins.
+   *
+   * Not a biome value: the shader already scales it by per-texel aridity and tree cover,
+   * so the climatic variation comes for free and one control is enough.
+   */
+  treeNeed: number
+  /**
+   * Catchment past which the channel is open water too wide for a canopy to close over.
+   * Timber is a band on the drainage scale, not a threshold — it rises as a gully
+   * gathers water and falls away again once the creek has become a river.
+   */
+  treeLimit: number
+  /** How sharply timber gives way to grass across both edges of that band. */
+  treeSpread: number
+  /** How broadleaf the valley-bottom timber is against the conifer above it. */
+  corridorLeaf: number
   textureRange: number
   /** Master opacity for derived water. */
   rivers: number
   /** Minimum drainage area a channel needs before it is drawn, 0..1 log scale. */
   riverThreshold: number
+  /** Aerial perspective. Off is a diagnostic view, not a weather setting. */
+  showFog: boolean
   /** Each derived water class toggles independently. */
   showOcean: boolean
   showRivers: boolean
@@ -95,11 +116,25 @@ export const DEFAULT_SETTINGS: Settings = {
   forest: 0.6,
   vegTint: 0,
   vegSat: 1,
+  // Calibrated against the accumulation distribution: about a quarter of a tile sits
+  // above 0.05, a tenth above 0.10, so this puts water-fed timber on the valleys and
+  // their feeders without flooding the interfluves.
+  // Calibrated on north-central Texas against Esri imagery. What settles these is the
+  // drainage view: the channels you can actually see sit around 0.2 on the accumulation
+  // scale, and anything below that is the broad hillslope background — put the threshold
+  // there and the timber spreads over a quarter of the tile as a wash instead of
+  // threading the valleys.
+  treeNeed: 0.62,
+  treeLimit: 0.55,
+  // A narrow edge is what makes the ribbons read as ribbons rather than as a gradient.
+  treeSpread: 0.04,
+  corridorLeaf: 0.6,
   textureRange: 1,
   rivers: 1,
   // 0.30 on the log-drainage scale is about 1 km² of catchment — roughly where a
   // channel actually starts in humid country.
   riverThreshold: 0.175,
+  showFog: true,
   showOcean: true,
   showRivers: true,
   showLakes: true,
@@ -239,9 +274,14 @@ const PERSISTED_SETTINGS = [
   'forest',
   'vegTint',
   'vegSat',
+  'treeNeed',
+  'treeLimit',
+  'treeSpread',
+  'corridorLeaf',
   'textureRange',
   'rivers',
   'riverThreshold',
+  'showFog',
   'showOcean',
   'showRivers',
   'showLakes',

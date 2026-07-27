@@ -969,6 +969,15 @@ main {
   box-shadow: 0 2px 16px rgba(125, 211, 252, 0.3);
 }
 
+/* Haze reads as atmosphere, not as a layer of the world — kept pale and neutral so it
+   does not compete with the amber bases or the blue water overlays. */
+.view-layers button.air.on {
+  color: #10161f;
+  background: #c8d4e2;
+  border-color: #c8d4e2;
+  box-shadow: 0 2px 16px rgba(200, 212, 226, 0.25);
+}
+
 /* Overlays, not base layers — set them apart from the mutually exclusive three. */
 .view-layers .overlay-group {
   display: flex;
