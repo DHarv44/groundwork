@@ -8,6 +8,7 @@ import type { HeightField } from './lib/opentopo'
 import { DEM_SOURCES, fetchHeightField, validateRequest } from './lib/opentopo'
 import { fetchImagery } from './lib/imagery'
 import { makeDemoHeightField } from './lib/demo'
+import { loadSession, saveSession } from './lib/session'
 import { buildTerrain, type TerrainBuild } from './lib/mesh'
 
 export type TextureMode = 'procedural' | 'satellite' | 'drainage'
@@ -97,6 +98,39 @@ interface State {
 let inflight: AbortController | null = null
 
 let hydroWorker: Worker | null = null
+
+const restored = loadSession()
+
+/**
+ * Settings worth carrying across a reload. Snow and tree lines are deliberately left
+ * out — they are re-derived from the tile's latitude on every build, so persisting
+ * them would just be overwritten.
+ */
+const PERSISTED_SETTINGS = [
+  'exaggeration',
+  'detail',
+  'textureMode',
+  'sunAzimuth',
+  'sunElevation',
+  'haze',
+  'aridity',
+  'strata',
+  'rivers',
+  'riverThreshold',
+  'showOcean',
+  'showRivers',
+  'showLakes',
+  'shadows',
+  'aoStrength',
+  'microDetail',
+  'wireframe',
+] as const
+
+function persistSettings(settings: Settings): void {
+  const slice: Record<string, unknown> = {}
+  for (const k of PERSISTED_SETTINGS) slice[k] = settings[k]
+  saveSession({ settings: slice })
+}
 
 /** Release the GPU resources a build owns. Nothing else references them. */
 function disposeBuild(build: TerrainBuild | null): void {
@@ -239,10 +273,10 @@ export const useStore = create<State>((setState, getState) => {
   }
 
   return {
-  bounds: null,
+  bounds: restored.bounds ?? null,
   // Keyless and uncapped, so the app works out of the box and normal use never
   // eats into the OpenTopography allowance.
-  demType: 'AWS_TERRARIUM',
+  demType: restored.demType ?? 'AWS_TERRARIUM',
   phase: 'idle',
   message: '',
   error: null,
@@ -252,15 +286,23 @@ export const useStore = create<State>((setState, getState) => {
   imageryZoom: 0,
   waterMask: null,
   waterStats: null,
-  settings: { ...DEFAULT_SETTINGS },
+  settings: { ...DEFAULT_SETTINGS, ...(restored.settings as Partial<Settings>) },
   frameToken: 0,
 
-  setBounds: (bounds) => setState({ bounds, error: null }),
-  setDemType: (demType) => setState({ demType, error: null }),
+  setBounds: (bounds) => {
+    setState({ bounds, error: null })
+    saveSession({ bounds })
+  },
+  setDemType: (demType) => {
+    setState({ demType, error: null })
+    saveSession({ demType })
+  },
 
   set: (key, value) => {
     const { settings } = getState()
-    setState({ settings: { ...settings, [key]: value } })
+    const next = { ...settings, [key]: value }
+    setState({ settings: next })
+    persistSettings(next)
 
     // Geometry-affecting settings need the mesh rebuilt from the cached DEM. Slider
     // drags fire on every pixel of travel, and a rebuild is hundreds of thousands of

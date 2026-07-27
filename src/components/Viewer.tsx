@@ -8,6 +8,7 @@ import HeadingTape from './HeadingTape'
 import ViewLayers from './ViewLayers'
 import { computeSky } from '../lib/atmosphere'
 import { rendererRef } from '../lib/capture'
+import { loadSession, saveSession } from '../lib/session'
 import Terrain from './Terrain'
 import Water from './Water'
 
@@ -34,6 +35,8 @@ interface OrbitLike {
   maxDistance: number
   enableDamping: boolean
   update: () => void
+  addEventListener: (type: string, fn: () => void) => void
+  removeEventListener: (type: string, fn: () => void) => void
 }
 
 /** Positions the camera to frame a freshly built terrain and sets sane clip planes. */
@@ -50,6 +53,24 @@ function CameraRig({ size, midY, topY }: { size: number; midY: number; topY: num
 
   const framedToken = useRef(-1)
   const framedSize = useRef(-1)
+  // Consumed once, by the first build after a reload.
+  const restoredCamera = useRef(loadSession().camera ?? null)
+
+  // Persist the view whenever a drag or zoom settles.
+  useEffect(() => {
+    if (!controls) return
+    const save = () => {
+      saveSession({
+        camera: {
+          pos: camera.position.toArray() as [number, number, number],
+          quat: camera.quaternion.toArray() as [number, number, number, number],
+          target: controls.target.toArray() as [number, number, number],
+        },
+      })
+    }
+    controls.addEventListener('end', save)
+    return () => controls.removeEventListener('end', save)
+  }, [controls, camera])
 
   useEffect(() => {
     if (!controls) return
@@ -70,8 +91,18 @@ function CameraRig({ size, midY, topY }: { size: number; midY: number; topY: num
     framedToken.current = frameToken
     framedSize.current = size
 
-    camera.position.set(size * 0.62, topY + size * 0.38, size * 0.86)
-    controls.target.set(0, midY, 0)
+    // On the first build after a reload, drop the camera back where it was rather
+    // than re-framing — otherwise restoring a session still throws away your view.
+    const saved = restoredCamera.current
+    if (saved) {
+      restoredCamera.current = null
+      camera.position.fromArray(saved.pos)
+      camera.quaternion.fromArray(saved.quat)
+      controls.target.fromArray(saved.target)
+    } else {
+      camera.position.set(size * 0.62, topY + size * 0.38, size * 0.86)
+      controls.target.set(0, midY, 0)
+    }
 
     // Damping keeps residual rotation/pan velocity in the controls, and update() only
     // decays it rather than clearing it — so a fresh camera placement would visibly
