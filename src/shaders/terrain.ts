@@ -289,11 +289,22 @@ void main() {
     waterCov = clamp(wm.r * mix(sizeGate, 1.0, lakeness) * uRivers, 0.0, 1.0);
     // Watercourses dry up in arid country — what is left is a wadi, not a river.
     waterCov *= 1.0 - clamp(uAridity, 0.0, 1.0) * 0.55 * (1.0 - lakeness);
+    // Water cannot hold a broad flat surface on a steep face. Anything that steep is
+    // a cascade — narrow, broken and mostly white water — so fade the sheet out
+    // rather than painting a mirror down the mountainside.
+    //
+    // Measured against the true ground gradient, not the exaggerated one: the normal
+    // map bakes in uExag, so at 1.6x a gentle valley floor reads as steep and would
+    // lose its river purely because of a display setting.
+    float ny = max(n.y, 1e-4);
+    vec3 trueN = normalize(vec3(n.x / ny / uExag, 1.0, n.z / ny / uExag));
+    float trueSlope = 1.0 - clamp(trueN.y, 0.0, 1.0);
+    waterCov *= mix(1.0 - smoothstep(0.14, 0.40, trueSlope), 1.0, lakeness);
   }
 
   if (waterCov > 0.002) {
     // Flatten toward horizontal and darken; standing water is a poor diffuse reflector.
-    N = normalize(mix(N, vec3(0.0, 1.0, 0.0), waterCov * 0.92));
+    N = normalize(mix(N, vec3(0.0, 1.0, 0.0), waterCov * 0.75));
     vec3 riverBed = vec3(0.028, 0.045, 0.042);
     vec3 lakeBody = vec3(0.012, 0.030, 0.052);
     albedo = mix(albedo, mix(riverBed, lakeBody, lakeness), waterCov);

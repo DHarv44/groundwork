@@ -391,7 +391,7 @@ export function computeWaterMask(input: HydrologyInput): HydrologyResult {
 
   // ---- 5. rasterise into the mask -----------------------------------------
   const mask = new Uint8Array(n * 4)
-  const minWidthM = Math.max(cellSize * 0.9, input.widthMetres / 500)
+  const minWidthM = Math.max(cellSize * 0.6, input.widthMetres / 800)
   let riverCells = 0
   let maxDrainageKm2 = 0
 
@@ -412,11 +412,25 @@ export function computeWaterMask(input: HydrologyInput): HydrologyResult {
 
     // Hydraulic geometry: channel width against upstream drainage area.
     const hydraulicWidth = 2.5 * Math.pow(areaKm2, 0.45)
-    // At these viewing scales a true-to-life river is well under a pixel wide — a
-    // 35 m channel across a 27 km tile is invisible. Maps have always drawn rivers
-    // wider than scale for exactly this reason, so enforce a floor. Which streams
-    // appear at all stays under the viewer's control via the threshold.
-    const widthM = Math.max(hydraulicWidth, minWidthM)
+
+    // Steep ground carries the same discharge in a narrow, confined, fast channel;
+    // broad water only forms where the gradient slackens. Without this a mountainside
+    // gets a wide river painted straight down it, which reads completely wrong.
+    const cx0 = c % w
+    const cy0 = (c / w) | 0
+    const gx =
+      (clean[cy0 * w + Math.min(w - 1, cx0 + 1)] - clean[cy0 * w + Math.max(0, cx0 - 1)]) /
+      (2 * cellX)
+    const gy =
+      (clean[Math.min(h - 1, cy0 + 1) * w + cx0] - clean[Math.max(0, cy0 - 1) * w + cx0]) /
+      (2 * cellY)
+    const gradient = Math.hypot(gx, gy)
+    const slopeNarrowing = 1 / (1 + gradient * 5)
+
+    // At these viewing scales a true-to-life river is under a pixel wide — a 35 m
+    // channel across a 27 km tile is invisible. Maps have always drawn rivers wider
+    // than scale for exactly that reason, so keep a floor, but a modest one.
+    const widthM = Math.max(hydraulicWidth, minWidthM) * slopeNarrowing
     const rCells = (widthM * 0.5) / cellSize
 
     const R = Math.ceil(rCells + 0.5)
