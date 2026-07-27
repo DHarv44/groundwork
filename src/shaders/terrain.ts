@@ -259,7 +259,7 @@ void main() {
   float aridity = clamp(uAridity, 0.0, 1.0);
   float riparianAmt = uRiparian;
   float groundWarmth = uGroundWarmth;
-  float forest = clamp(uForest, 0.0, 1.0);
+  float forest = clamp(uForest, 0.0, 2.0);
   // Corridor reach stays tile-wide: it barely varies between classes, so it does not
   // earn one of the four channels.
   float riparianReach = uRiparianReach;
@@ -269,8 +269,12 @@ void main() {
     riparianAmt = bio.g;
     // Warmth runs past 1, so the channel holds it scaled — see GROUND_WARMTH_MAX.
     groundWarmth = bio.b * 2.0;
-    forest = bio.a;
+    // Likewise scaled — see FOREST_MAX.
+    forest = bio.a * 2.0;
   }
+  // Used two ways below: as a fraction where a share of the ground is meant, and raw
+  // where it shifts the threshold, which is what lets it run past 1.
+  float forestFrac = clamp(forest, 0.0, 1.0);
 
   // Linear-space albedos in the range real ground actually occupies: rock sits around
   // 0.15–0.30, vegetation lower still, only snow gets close to 0.8.
@@ -367,7 +371,7 @@ void main() {
   // still drawn as woodland on a real map — but no tree spans a trunk channel. Without
   // the upper edge the biggest rivers come out as the most heavily timbered ground in
   // the tile, which is backwards.
-  float rawTrees = forest;
+  float rawTrees = forestFrac;
   if (uHasWater > 0.5) {
     float treeAccum = texture2D(uWaterMap, vUv).b;
     float edge = max(0.01, uTreeSpread);

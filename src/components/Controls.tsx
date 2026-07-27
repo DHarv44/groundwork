@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { DEFAULT_SETTINGS, useStore, type BiomeKey, type Settings } from '../store'
 import { KOPPEN_CODES, colorFor } from '../lib/koppen'
-import { GROUND_WARMTH_MAX } from '../lib/biomeMap'
+import { FOREST_MAX, GROUND_WARMTH_MAX } from '../lib/biomeMap'
 import { DAILY_QUOTA, cacheClear, cacheStats, quotaUsed } from '../lib/demcache'
 import { decodePreset, deletePreset, encodePreset, loadPresets, savePreset } from '../lib/presets'
 import { DEM_SOURCES } from '../lib/opentopo'
@@ -637,8 +637,9 @@ export default function Controls() {
                   label="Tree cover"
                   value={settings.forest}
                   min={0}
-                  max={1}
-                  step={0.01}
+                  max={FOREST_MAX}
+                  step={0.005}
+                  decimals={3}
                   tag={biomeTag('forest')}
                   onChange={setSetting('forest')}
                 />

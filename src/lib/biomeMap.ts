@@ -35,6 +35,15 @@ const MIN_SHARE = 0.02
  */
 export const GROUND_WARMTH_MAX = 2
 
+/**
+ * Tree cover runs past 1 for the same reason, and needs the same treatment.
+ *
+ * Past 1 it stops meaning "what fraction is timber" and starts meaning "how far below
+ * the norm does this ground hold trees" — the setting for country that is wooded well
+ * beyond what its catchment would suggest. Below 1 it reads as a fraction as before.
+ */
+export const FOREST_MAX = 2
+
 export interface BiomeShare {
   code: string
   /** Fraction of the box's land this class covers, 0..1. */
@@ -187,7 +196,8 @@ export function buildBiomeField(bounds: Bounds, overrides: ProfileOverrides = {}
     data[i * 4 + 1] = Math.round(Math.min(1, Math.max(0, ripB[i])) * 255)
     // Scaled into the channel; the shader multiplies it back out.
     data[i * 4 + 2] = Math.round(Math.min(1, Math.max(0, warmB[i] / GROUND_WARMTH_MAX)) * 255)
-    data[i * 4 + 3] = Math.round(Math.min(1, Math.max(0, treesB[i])) * 255)
+    // Scaled into the channel; the shader multiplies it back out.
+    data[i * 4 + 3] = Math.round(Math.min(1, Math.max(0, treesB[i] / FOREST_MAX)) * 255)
   }
 
   return {
