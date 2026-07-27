@@ -28,6 +28,43 @@ export const PRESETS: Preset[] = [
   { name: 'Mauna Kea & Hilo', bounds: { south: 19.6, north: 19.95, west: -155.6, east: -155.0 } },
 ]
 
+interface BaseLayer {
+  id: string
+  label: string
+  url: string
+  attribution: string
+  maxZoom: number
+}
+
+const BASE_LAYERS: BaseLayer[] = [
+  {
+    id: 'map',
+    label: 'Map',
+    url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+    attribution: '&copy; OpenStreetMap',
+    maxZoom: 19,
+  },
+  {
+    id: 'satellite',
+    label: 'Satellite',
+    // Esri serves z/y/x; Leaflet substitutes the placeholders wherever they appear.
+    url: 'https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    attribution: 'Imagery &copy; Esri',
+    maxZoom: 19,
+  },
+  {
+    id: 'terrain',
+    label: 'Relief',
+    url: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
+    attribution: '&copy; OpenTopoMap (CC-BY-SA)',
+    maxZoom: 17,
+  },
+]
+
+/** Transparent overlays, independent of the base layer. */
+const HYDRO_OVERLAY =
+  'https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Hydro_Reference_Overlay/MapServer/tile/{z}/{y}/{x}'
+
 function toLatLngBounds(b: Bounds): L.LatLngBoundsExpression {
   return [
     [b.south, b.west],
@@ -110,7 +147,10 @@ export default function MapPicker() {
   const bounds = useStore((s) => s.bounds)
   const setBounds = useStore((s) => s.setBounds)
   const [armed, setArmed] = useState(true)
+  const [baseId, setBaseId] = useState('map')
+  const [water, setWater] = useState(false)
   const [fitToken, setFitToken] = useState(0)
+  const base = BASE_LAYERS.find((l) => l.id === baseId)!
   const [query, setQuery] = useState('')
   const [searching, setSearching] = useState(false)
   const [searchNote, setSearchNote] = useState('')
@@ -179,11 +219,22 @@ export default function MapPicker() {
           style={{ height: '100%', width: '100%' }}
           worldCopyJump
         >
+          {/* Keyed so switching base layers swaps the tiles rather than stacking. */}
           <TileLayer
-            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-            attribution="&copy; OpenStreetMap"
-            maxZoom={19}
+            key={base.id}
+            url={base.url}
+            attribution={base.attribution}
+            maxZoom={base.maxZoom}
           />
+          {water && (
+            <TileLayer
+              url={HYDRO_OVERLAY}
+              attribution="Hydrography &copy; Esri"
+              maxZoom={19}
+              opacity={0.9}
+              zIndex={400}
+            />
+          )}
           {bounds && (
             <Rectangle
               bounds={toLatLngBounds(bounds)}
@@ -207,6 +258,26 @@ export default function MapPicker() {
         >
           {armed ? '◻ drag to draw' : '✎ draw box'}
         </button>
+
+        <div className="layers">
+          {BASE_LAYERS.map((l) => (
+            <button
+              key={l.id}
+              className={baseId === l.id ? 'on' : ''}
+              onClick={() => setBaseId(l.id)}
+              title={l.attribution.replace(/&copy;/g, '©')}
+            >
+              {l.label}
+            </button>
+          ))}
+          <button
+            className={`overlay ${water ? 'on' : ''}`}
+            onClick={() => setWater((v) => !v)}
+            title="Rivers, lakes and coastlines — useful for checking where water really is before you build"
+          >
+            Water
+          </button>
+        </div>
       </div>
 
       {searchNote && <div className="search-note">{searchNote}</div>}

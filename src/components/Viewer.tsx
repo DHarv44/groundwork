@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef } from 'react'
 import * as THREE from 'three'
-import { Canvas, useFrame, useThree } from '@react-three/fiber'
+import { Canvas, useThree } from '@react-three/fiber'
 import { OrbitControls } from '@react-three/drei'
 import { useStore } from '../store'
 import SkyDome from './SkyDome'
+import HeadingTape from './HeadingTape'
 import { computeSky } from '../lib/atmosphere'
 import { rendererRef } from '../lib/capture'
 import Terrain from './Terrain'
@@ -30,6 +31,7 @@ interface OrbitLike {
   target: THREE.Vector3
   minDistance: number
   maxDistance: number
+  enableDamping: boolean
   update: () => void
 }
 
@@ -45,29 +47,41 @@ function CameraRig({ size, midY, topY }: { size: number; midY: number; topY: num
     camera.updateProjectionMatrix()
   }, [camera, size])
 
+  const framedToken = useRef(-1)
+  const framedSize = useRef(-1)
+
   useEffect(() => {
     if (!controls) return
-    camera.position.set(size * 0.62, topY + size * 0.38, size * 0.86)
-    controls.target.set(0, midY, 0)
+
+    // Distance limits track the terrain size and are safe to apply at any time.
     controls.minDistance = size * 0.008
     controls.maxDistance = size * 6
+
+    // Re-frame when a new terrain is built, or when the terrain's extent changes.
+    //
+    // Both conditions are needed. OrbitControls attaches a frame or two after mount,
+    // so with a cached DEM the build can land first and the initial framing runs
+    // against the placeholder size — the token alone would then consider it done and
+    // leave the camera parked for a 10 km tile in front of a 27 km one. Extent is safe
+    // to key on because it comes from the ground footprint; only midY and topY move
+    // with exaggeration, so dragging that slider still will not yank the camera.
+    if (framedToken.current === frameToken && framedSize.current === size) return
+    framedToken.current = frameToken
+    framedSize.current = size
+
+    camera.position.set(size * 0.62, topY + size * 0.38, size * 0.86)
+    controls.target.set(0, midY, 0)
+
+    // Damping keeps residual rotation/pan velocity in the controls, and update() only
+    // decays it rather than clearing it — so a fresh camera placement would visibly
+    // drift as the leftover motion played out. Updating once with damping off zeroes
+    // the accumulated deltas instead.
+    const damping = controls.enableDamping
+    controls.enableDamping = false
     controls.update()
+    controls.enableDamping = damping
   }, [frameToken, controls, camera, size, midY, topY])
 
-  return null
-}
-
-/** Rotates the on-screen compass to match where the camera is looking. */
-function CompassLink({ target }: { target: React.RefObject<HTMLDivElement> }) {
-  const camera = useThree((s) => s.camera)
-  const dir = useRef(new THREE.Vector3())
-  useFrame(() => {
-    if (!target.current) return
-    camera.getWorldDirection(dir.current)
-    // World −Z is north; heading grows clockwise.
-    const heading = Math.atan2(dir.current.x, -dir.current.z)
-    target.current.style.transform = `rotate(${-heading}rad)`
-  })
   return null
 }
 
@@ -75,7 +89,7 @@ export default function Viewer() {
   const build = useStore((s) => s.build)
   const settings = useStore((s) => s.settings)
   const isDemo = useStore((s) => s.heightField?.demtype === 'DEMO')
-  const compassRef = useRef<HTMLDivElement>(null)
+  const tapeRef = useRef<HTMLCanvasElement>(null)
 
   const sky = useMemo(
     () => computeSky(settings.sunAzimuth, settings.sunElevation),
@@ -112,7 +126,7 @@ export default function Viewer() {
           </>
         )}
         <CameraRig size={size} midY={midY} topY={topY} />
-        <CompassLink target={compassRef} />
+        <HeadingTape target={tapeRef} />
         <OrbitControls
           makeDefault
           enableDamping
@@ -129,12 +143,7 @@ export default function Viewer() {
         </div>
       )}
 
-      <div className="compass" title="North">
-        <div className="compass-dial" ref={compassRef}>
-          <span className="n">N</span>
-          <span className="needle" />
-        </div>
-      </div>
+      <canvas className="heading-tape" ref={tapeRef} />
     </div>
   )
 }

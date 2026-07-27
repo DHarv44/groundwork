@@ -231,7 +231,9 @@ export const useStore = create<State>((setState, getState) => {
 
   return {
   bounds: null,
-  demType: 'COP30',
+  // Keyless and uncapped, so the app works out of the box and normal use never
+  // eats into the OpenTopography allowance.
+  demType: 'AWS_TERRARIUM',
   phase: 'idle',
   message: '',
   error: null,
