@@ -77,6 +77,8 @@ export default function Terrain({ build, sky, fogDensity }: Props) {
       uTreeLimit: { value: settings.treeLimit },
       uTreeSpread: { value: settings.treeSpread },
       uCorridorLeaf: { value: settings.corridorLeaf },
+      uShowTrees: { value: 1 },
+      uShowGrass: { value: 1 },
       uBiomeMap: { value: WHITE },
       uHasBiomeMap: { value: 0 },
       uTextureRange: { value: settings.textureRange },
@@ -138,6 +140,8 @@ export default function Terrain({ build, sky, fogDensity }: Props) {
     u.uTreeLimit.value = settings.treeLimit
     u.uTreeSpread.value = settings.treeSpread
     u.uCorridorLeaf.value = settings.corridorLeaf
+    u.uShowTrees.value = settings.showTrees ? 1 : 0
+    u.uShowGrass.value = settings.showGrass ? 1 : 0
     u.uBiomeMap.value = biomeMap ?? WHITE
     u.uHasBiomeMap.value = biomeMap ? 1 : 0
     u.uTextureRange.value = settings.textureRange

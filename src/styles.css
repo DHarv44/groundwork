@@ -969,6 +969,14 @@ main {
   box-shadow: 0 2px 16px rgba(125, 211, 252, 0.3);
 }
 
+/* Ground cover, in its own green so it reads apart from the water overlays. */
+.view-layers button.cover.on {
+  color: #0a1a08;
+  background: #86c06a;
+  border-color: #86c06a;
+  box-shadow: 0 2px 16px rgba(134, 192, 106, 0.28);
+}
+
 /* Haze reads as atmosphere, not as a layer of the world — kept pale and neutral so it
    does not compete with the amber bases or the blue water overlays. */
 .view-layers button.air.on {

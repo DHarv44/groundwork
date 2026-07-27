@@ -63,6 +63,9 @@ export interface Settings {
   riverThreshold: number
   /** Aerial perspective. Off is a diagnostic view, not a weather setting. */
   showFog: boolean
+  /** The two ground-cover layers, switchable independently of each other. */
+  showTrees: boolean
+  showGrass: boolean
   /** Each derived water class toggles independently. */
   showOcean: boolean
   showRivers: boolean
@@ -135,6 +138,8 @@ export const DEFAULT_SETTINGS: Settings = {
   // channel actually starts in humid country.
   riverThreshold: 0.175,
   showFog: true,
+  showTrees: true,
+  showGrass: true,
   showOcean: true,
   showRivers: true,
   showLakes: true,
@@ -282,6 +287,8 @@ const PERSISTED_SETTINGS = [
   'rivers',
   'riverThreshold',
   'showFog',
+  'showTrees',
+  'showGrass',
   'showOcean',
   'showRivers',
   'showLakes',

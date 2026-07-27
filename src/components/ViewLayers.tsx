@@ -76,6 +76,28 @@ export default function ViewLayers() {
         </button>
       </div>
 
+      {/* The two ground-cover layers. Hiding grass leaves the timber network standing
+          alone on bare ground, which is the quickest way to check it against the
+          drainage view — the trees are derived from the same field the rivers are. */}
+      <div className="overlay-group">
+        <button
+          className={`cover ${settings.showTrees ? 'on' : ''}`}
+          title="Timber, placed from the drainage field"
+          onClick={() => set('showTrees', !settings.showTrees)}
+        >
+          <span className="glyph">♣</span>
+          Trees
+        </button>
+        <button
+          className={`cover ${settings.showGrass ? 'on' : ''}`}
+          title="Everything the trees do not cover"
+          onClick={() => set('showGrass', !settings.showGrass)}
+        >
+          <span className="glyph">▓</span>
+          Grass
+        </button>
+      </div>
+
       {/* Overlays, each independent of the base and of each other. */}
       <div className="overlay-group">
         {OVERLAYS.map((o) => (

@@ -66,6 +66,8 @@ uniform float uTreeNeed;       // catchment a slope must gather before it holds 
 uniform float uTreeLimit;      // catchment past which the channel is too wide for trees
 uniform float uTreeSpread;     // how sharply timber gives way to grass across both edges
 uniform float uCorridorLeaf;   // how broadleaf the valley-bottom timber is
+uniform float uShowTrees;      // 0 hides the canopy, leaving grass on the same ground
+uniform float uShowGrass;      // 0 hides the grass, leaving only the timber
 uniform float uTextureRange;   // scales how far surface detail survives
 // Biomes baked over the tile: aridity, riparian, ground warmth and corridor reach, one
 // per channel. Sampling it replaces the four scalars above wherever it is present —
@@ -424,6 +426,14 @@ void main() {
   // genuinely does close over a creek, and the upper edge of the band already takes the
   // trees off anything wide enough to be open water.
   float canopy = clamp(rawTrees * (1.0 - steepVeg * 0.45), 0.0, 1.0);
+
+  // The two cover layers switch independently, which is what makes the pattern legible:
+  // with grass hidden, the timber network stands alone against bare ground and can be
+  // compared straight against the drainage view.
+  canopy *= uShowTrees;
+  // Cover survives only where there are trees, so hiding grass strips the ground back
+  // rather than turning the whole tile into meadow.
+  veg *= mix(canopy, 1.0, uShowGrass);
 
   vec3 coverCol = mix(grassCol, conifer, canopy);
 
