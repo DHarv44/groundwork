@@ -755,7 +755,7 @@ export const useStore = create<State>((setState, getState) => {
   biomeKeys: [],
   // A touch of winter on the tops by default — it reads as a real place rather than a
   // rendering, and it makes the snow line visible without having to go looking for it.
-  winter: 0.22,
+  winter: 0.25,
   // Aerial perspective measured out at up to +35 luminance across the frame, flattening
   // the ground's warmth almost to neutral. A quarter of the atmospheric model keeps the
   // sense of depth without washing the colour off the terrain.
