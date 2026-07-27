@@ -35,6 +35,7 @@ uniform float uShowRivers;
 uniform float uShowLakes;
 uniform float uDrainageView;  // 1 = render the catchment network instead of ground
 uniform float uTime;
+uniform float uWaveHeight;
 
 uniform float uUseSat;        // 0 = procedural, 1 = satellite drape
 uniform float uSatDetail;     // how much procedural micro-detail survives under imagery
@@ -373,8 +374,11 @@ void main() {
     float r0 = fbm(wp * 0.09 + drift, 3);
     float rx = fbm((wp + vec2(e2, 0.0)) * 0.09 + drift, 3);
     float rz = fbm((wp + vec2(0.0, e2)) * 0.09 + drift, 3);
-    // Rivers ripple harder than lakes.
-    float amp = mix(5.0, 2.0, lakeness) * rippleFade;
+    // Rivers ripple harder than lakes. Scaled by the same wave-height control as the
+    // sea, so zero really is a still surface — an 11 m ripple is far under a screen
+    // pixel once you pull back, and driving a pow(...,260) specular with it makes the
+    // water crawl and flicker as the camera moves.
+    float amp = mix(5.0, 2.0, lakeness) * rippleFade * uWaveHeight;
     vec3 Nw = normalize(vec3(-(rx - r0) * amp, 1.0, -(rz - r0) * amp));
     Nw = normalize(mix(N, Nw, waterCov));
 

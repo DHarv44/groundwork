@@ -33,6 +33,13 @@ export interface Settings {
   showOcean: boolean
   showRivers: boolean
   showLakes: boolean
+  /** Sea surface. All shader-side, so these respond without re-deriving anything. */
+  seaLevel: number
+  shoreCutoff: number
+  depthFade: number
+  waveHeight: number
+  foamWidth: number
+  waterOpacity: number
   /** Hydrology knobs. Changing one re-runs the water pass, not the DEM fetch. */
   flatTolerance: number
   bodyDrift: number
@@ -43,6 +50,10 @@ export interface Settings {
   minLakeArea: number
   minChannelKm2: number
   riverWidthScale: number
+  riverWidthExponent: number
+  riverSlopeNarrowing: number
+  riverMinWidthScale: number
+  riverConvergence: number
   shadows: boolean
   aoStrength: number
   microDetail: number
@@ -65,10 +76,16 @@ export const DEFAULT_SETTINGS: Settings = {
   rivers: 1,
   // 0.30 on the log-drainage scale is about 1 km² of catchment — roughly where a
   // channel actually starts in humid country.
-  riverThreshold: 0.3,
+  riverThreshold: 0.41,
   showOcean: true,
   showRivers: true,
   showLakes: true,
+  seaLevel: 0,
+  shoreCutoff: 0.25,
+  depthFade: 75,
+  waveHeight: 0,
+  foamWidth: 0,
+  waterOpacity: 0.57,
   ...DEFAULT_TUNING,
   shadows: true,
   aoStrength: 0.85,
@@ -132,6 +149,12 @@ const PERSISTED_SETTINGS = [
   'showOcean',
   'showRivers',
   'showLakes',
+  'seaLevel',
+  'shoreCutoff',
+  'depthFade',
+  'waveHeight',
+  'foamWidth',
+  'waterOpacity',
   'shadows',
   'aoStrength',
   'microDetail',
@@ -145,6 +168,10 @@ const PERSISTED_SETTINGS = [
   'minLakeArea',
   'minChannelKm2',
   'riverWidthScale',
+  'riverWidthExponent',
+  'riverSlopeNarrowing',
+  'riverMinWidthScale',
+  'riverConvergence',
 ] as const
 
 function persistSettings(settings: Settings): void {
@@ -206,8 +233,14 @@ function runHydrology(
 function makeWaterTexture(result: HydrologyResult): THREE.DataTexture {
   const tex = new THREE.DataTexture(result.mask, result.width, result.height, THREE.RGBAFormat)
   tex.flipY = false
-  tex.minFilter = THREE.LinearFilter
+  // Mipmapped. Without them a screen pixel takes one texel out of ~1600, so which
+  // texel it lands on flickers as the camera moves — the mask's hard edges and the
+  // fine drainage filigree both alias badly. Anisotropy keeps it from smearing when
+  // the terrain is viewed at a shallow angle.
+  tex.minFilter = THREE.LinearMipmapLinearFilter
   tex.magFilter = THREE.LinearFilter
+  tex.generateMipmaps = true
+  tex.anisotropy = 8
   tex.wrapS = THREE.ClampToEdgeWrapping
   tex.wrapT = THREE.ClampToEdgeWrapping
   tex.needsUpdate = true
@@ -229,6 +262,10 @@ export const useStore = create<State>((setState, getState) => {
       minLakeArea: s.minLakeArea,
       minChannelKm2: s.minChannelKm2,
       riverWidthScale: s.riverWidthScale,
+      riverWidthExponent: s.riverWidthExponent,
+      riverSlopeNarrowing: s.riverSlopeNarrowing,
+      riverMinWidthScale: s.riverMinWidthScale,
+      riverConvergence: s.riverConvergence,
     }
   }
 

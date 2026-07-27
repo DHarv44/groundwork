@@ -41,6 +41,29 @@ export interface HydrologyTuning {
   minChannelKm2: number
   /** Multiplier on derived channel width. */
   riverWidthScale: number
+  /**
+   * Exponent relating channel width to upstream drainage area. Hydraulic geometry puts
+   * it near 0.45; lower flattens the difference between a brook and a trunk river,
+   * higher exaggerates it.
+   */
+  riverWidthExponent: number
+  /**
+   * How sharply steep ground narrows a channel. Steep ground carries the same
+   * discharge in a confined fast channel; broad water only forms where the gradient
+   * slackens. 0 disables it.
+   */
+  riverSlopeNarrowing: number
+  /**
+   * Multiplier on the cartographic minimum width. A true-to-life river is under a
+   * pixel wide at these scales, so there is a floor; this scales it.
+   */
+  riverMinWidthScale: number
+  /**
+   * How strongly flow concentrates as it accumulates. The routing exponent rises from
+   * dispersive on hillslopes to this on trunk channels — low values spread the network
+   * out, high values cut it into sharp threads.
+   */
+  riverConvergence: number
 }
 
 export const DEFAULT_TUNING: HydrologyTuning = {
@@ -53,6 +76,10 @@ export const DEFAULT_TUNING: HydrologyTuning = {
   minLakeArea: 400_000,
   minChannelKm2: 0.25,
   riverWidthScale: 1,
+  riverWidthExponent: 0.45,
+  riverSlopeNarrowing: 5,
+  riverMinWidthScale: 1,
+  riverConvergence: 9,
 }
 
 export interface HydrologyInput {
@@ -413,7 +440,7 @@ export function computeWaterMask(input: HydrologyInput): HydrologyResult {
     if (cx === 0 || cy === 0 || cx === w - 1 || cy === h - 1) continue
 
     const a = acc[c]
-    const p = 1.1 + 9.0 * Math.min(1, Math.log10(1 + a) / 3)
+    const p = 1.1 + tune.riverConvergence * Math.min(1, Math.log10(1 + a) / 3)
 
     let total = 0
     for (let d = 0; d < 8; d++) {
@@ -506,7 +533,8 @@ export function computeWaterMask(input: HydrologyInput): HydrologyResult {
 
   // ---- 5. rasterise into the mask -----------------------------------------
   const mask = new Uint8Array(mn * 4)
-  const minWidthM = Math.max(cellSize * 0.6, input.widthMetres / 800)
+  const minWidthM =
+    Math.max(cellSize * 0.6, input.widthMetres / 800) * tune.riverMinWidthScale
   // Routing grid to mask grid.
   const toMaskX = mw / w
   const toMaskY = mh / h
@@ -539,7 +567,7 @@ export function computeWaterMask(input: HydrologyInput): HydrologyResult {
     riverCells++
 
     // Hydraulic geometry: channel width against upstream drainage area.
-    const hydraulicWidth = 2.5 * Math.pow(areaKm2, 0.45)
+    const hydraulicWidth = 2.5 * Math.pow(areaKm2, tune.riverWidthExponent)
 
     // Steep ground carries the same discharge in a narrow, confined, fast channel;
     // broad water only forms where the gradient slackens. Without this a mountainside
@@ -553,7 +581,7 @@ export function computeWaterMask(input: HydrologyInput): HydrologyResult {
       (clean[Math.min(h - 1, cy0 + 1) * w + cx0] - clean[Math.max(0, cy0 - 1) * w + cx0]) /
       (2 * cellY)
     const gradient = Math.hypot(gx, gy)
-    const slopeNarrowing = 1 / (1 + gradient * 5)
+    const slopeNarrowing = 1 / (1 + gradient * tune.riverSlopeNarrowing)
 
     // At these viewing scales a true-to-life river is under a pixel wide — a 35 m
     // channel across a 27 km tile is invisible. Maps have always drawn rivers wider

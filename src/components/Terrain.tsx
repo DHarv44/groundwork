@@ -51,6 +51,7 @@ export default function Terrain({ build, sky, fogDensity }: Props) {
       uShowLakes: { value: 1 },
       uDrainageView: { value: 0 },
       uTime: { value: 0 },
+      uWaveHeight: { value: settings.waveHeight },
       uMinElev: { value: build.minElevation },
       uMaxElev: { value: build.maxElevation },
       uExag: { value: settings.exaggeration },
@@ -123,6 +124,7 @@ export default function Terrain({ build, sky, fogDensity }: Props) {
     u.uHasWater.value = waterMask ? 1 : 0
     u.uRivers.value = settings.rivers
     u.uRiverThreshold.value = settings.riverThreshold
+    u.uWaveHeight.value = settings.waveHeight
     u.uShowRivers.value = settings.showRivers ? 1 : 0
     u.uShowLakes.value = settings.showLakes ? 1 : 0
     u.uDrainageView.value = settings.textureMode === 'drainage' && waterMask ? 1 : 0

@@ -79,6 +79,35 @@ function Slider({
   )
 }
 
+/** A titled block of controls that can be folded away. Open by default. */
+function Group({
+  title,
+  badge,
+  children,
+}: {
+  title: string
+  badge?: React.ReactNode
+  children: React.ReactNode
+}) {
+  const [open, setOpen] = useState(true)
+  return (
+    <>
+      <button
+        className={`subhead group-head ${open ? '' : 'closed'}`}
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+      >
+        <span>
+          <span className="chev">{open ? '▾' : '▸'}</span>
+          {title}
+        </span>
+        {badge}
+      </button>
+      {open && children}
+    </>
+  )
+}
+
 function Toggle({
   label,
   value,
@@ -97,6 +126,17 @@ function Toggle({
 }
 
 const DETAIL_STEPS = [256, 384, 512, 768, 1024, 1536]
+
+type TabId = 'terrain' | 'surface' | 'water' | 'light' | 'render' | 'export'
+
+const TABS: { id: TabId; label: string }[] = [
+  { id: 'terrain', label: 'Terrain' },
+  { id: 'surface', label: 'Surface' },
+  { id: 'water', label: 'Water' },
+  { id: 'light', label: 'Light' },
+  { id: 'render', label: 'Render' },
+  { id: 'export', label: 'Export' },
+]
 
 export default function Controls() {
   const {
@@ -122,6 +162,7 @@ export default function Controls() {
   // What is actually loaded, which is not necessarily what the dropdown says.
   const isDemo = heightField?.demtype === 'DEMO'
 
+  const [tab, setTab] = useState<TabId>('terrain')
   const [cache, setCache] = useState({ count: 0, megabytes: 0 })
   const [used, setUsed] = useState(0)
 
@@ -251,8 +292,21 @@ export default function Controls() {
 
       {build && (
         <>
+        <div className="tabs">
+          {TABS.map((t) => (
+            <button
+              key={t.id}
+              className={tab === t.id ? 'on' : ''}
+              onClick={() => setTab(t.id)}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        {tab === 'terrain' && (
           <section>
-            <h3>3 · Terrain</h3>
+            <h3>Terrain</h3>
             <div className="metrics wide">
               <span>
                 {Math.round(build.minElevation).toLocaleString()} –{' '}
@@ -292,9 +346,11 @@ export default function Controls() {
               />
             </label>
           </section>
+        )}
 
+        {tab === 'surface' && (
           <section>
-            <h3>4 · Surface</h3>
+            <h3>Surface</h3>
             {/* The layer switcher itself lives on the 3D view. */}
             {settings.textureMode === 'satellite' ? (
               <p className="note">
@@ -346,39 +402,115 @@ export default function Controls() {
                 />
               </>
             )}
-            <div className="subhead">
-              <span>Rivers &amp; lakes</span>
-              {waterStats ? (
-                <b>
-                  {waterStats.lakes > 0 ? `${waterStats.lakes} lake cells · ` : ''}
-                  {waterStats.maxDrainageKm2 >= 1
-                    ? `${Math.round(waterStats.maxDrainageKm2).toLocaleString()} km² basin`
-                    : 'no basins'}
-                </b>
-              ) : (
-                <b className="pending">tracing drainage…</b>
-              )}
-            </div>
             <Slider
-              label="Water visibility"
-              value={settings.rivers}
+              label="Micro relief"
+              value={settings.microDetail}
               min={0}
               max={1}
               step={0.01}
-              onChange={setSetting('rivers')}
+              onChange={setSetting('microDetail')}
+            />
+          </section>
+        )}
+
+        {tab === 'water' && (
+          <section>
+            <h3>Water</h3>
+            <Group
+              title="Rivers &amp; lakes"
+              badge={
+                waterStats ? (
+                  <b>
+                    {waterStats.lakes > 0 ? `${waterStats.lakes} lake cells · ` : ''}
+                    {waterStats.maxDrainageKm2 >= 1
+                      ? `${Math.round(waterStats.maxDrainageKm2).toLocaleString()} km² basin`
+                      : 'no basins'}
+                  </b>
+                ) : (
+                  <b className="pending">tracing drainage…</b>
+                )
+              }
+            >
+              <Slider
+                label="Water visibility"
+                value={settings.rivers}
+                min={0}
+                max={1}
+                step={0.01}
+                onChange={setSetting('rivers')}
+              />
+              <Slider
+                label="Smallest stream"
+                value={settings.riverThreshold}
+                min={0.2}
+                max={0.75}
+                step={0.005}
+                onChange={setSetting('riverThreshold')}
+              />
+            </Group>
+
+            <Group title="Ocean surface" badge={<b className="pending">live</b>}>
+            <Slider
+              label="Sea level"
+              value={settings.seaLevel}
+              min={-100}
+              max={100}
+              step={0.1}
+              suffix=" m"
+              decimals={1}
+              onChange={setSetting('seaLevel')}
             />
             <Slider
-              label="Smallest stream"
-              value={settings.riverThreshold}
-              min={0.2}
-              max={0.75}
-              step={0.005}
-              onChange={setSetting('riverThreshold')}
+              label="Foam width"
+              value={settings.foamWidth}
+              min={0}
+              max={200}
+              step={1}
+              suffix=" m"
+              onChange={setSetting('foamWidth')}
             />
-            <div className="subhead">
-              <span>Lake detection</span>
-              <b className="pending">re-derives water only</b>
-            </div>
+            <Slider
+              label="Shore cutoff"
+              value={settings.shoreCutoff}
+              min={0}
+              max={5}
+              step={0.05}
+              suffix=" m"
+              onChange={setSetting('shoreCutoff')}
+            />
+            <Slider
+              label="Depth fade"
+              value={settings.depthFade}
+              min={2}
+              max={200}
+              step={1}
+              suffix=" m"
+              onChange={setSetting('depthFade')}
+            />
+            <Slider
+              label="Wave height"
+              value={settings.waveHeight}
+              min={0}
+              max={3}
+              step={0.05}
+              suffix="×"
+              onChange={setSetting('waveHeight')}
+            />
+            <Slider
+              label="Opacity"
+              value={settings.waterOpacity}
+              min={0}
+              max={1}
+              step={0.01}
+              onChange={setSetting('waterOpacity')}
+            />
+
+            </Group>
+
+            <Group
+              title="Lake detection"
+              badge={<b className="pending">re-derives water only</b>}
+            >
             <Slider
               label="Body tolerance"
               value={settings.flatTolerance}
@@ -445,9 +577,9 @@ export default function Controls() {
               onChange={setSetting('seaLevelMargin')}
             />
 
-            <div className="subhead">
-              <span>River detection</span>
-            </div>
+            </Group>
+
+            <Group title="River detection">
             <Slider
               label="Channel starts at"
               value={settings.minChannelKm2}
@@ -466,19 +598,13 @@ export default function Controls() {
               suffix="×"
               onChange={setSetting('riverWidthScale')}
             />
-
-            <Slider
-              label="Micro relief"
-              value={settings.microDetail}
-              min={0}
-              max={1}
-              step={0.01}
-              onChange={setSetting('microDetail')}
-            />
+            </Group>
           </section>
+        )}
 
+        {tab === 'light' && (
           <section>
-            <h3>5 · Light & air</h3>
+            <h3>Light &amp; air</h3>
             <Slider
               label="Sun azimuth"
               value={settings.sunAzimuth}
@@ -506,9 +632,11 @@ export default function Controls() {
               onChange={setSetting('haze')}
             />
           </section>
+        )}
 
+        {tab === 'render' && (
           <section>
-            <h3>6 · Render</h3>
+            <h3>Render</h3>
             <Slider
               label="Ambient occlusion"
               value={settings.aoStrength}
@@ -527,9 +655,11 @@ export default function Controls() {
               <Toggle label="Wireframe" value={settings.wireframe} onChange={setSetting('wireframe')} />
             </div>
           </section>
+        )}
 
+        {tab === 'export' && (
           <section>
-            <h3>7 · Export</h3>
+            <h3>Export</h3>
             <div className="grid2">
               <button onClick={() => captureScreenshot(`${baseName}.png`)}>Screenshot</button>
               <button onClick={() => heightField && exportHeightmapPNG(heightField, baseName)}>
@@ -543,6 +673,7 @@ export default function Controls() {
               16-bit elevation across the red and green channels.
             </p>
           </section>
+        )}
         </>
       )}
     </div>
