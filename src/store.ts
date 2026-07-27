@@ -136,6 +136,15 @@ const PERSISTED_SETTINGS = [
   'aoStrength',
   'microDetail',
   'wireframe',
+  'flatTolerance',
+  'bodyDrift',
+  'maskResolution',
+  'seaLevelMargin',
+  'edgeTolerance',
+  'featherCells',
+  'minLakeArea',
+  'minChannelKm2',
+  'riverWidthScale',
 ] as const
 
 function persistSettings(settings: Settings): void {

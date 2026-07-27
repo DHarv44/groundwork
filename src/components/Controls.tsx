@@ -382,11 +382,11 @@ export default function Controls() {
             <Slider
               label="Body tolerance"
               value={settings.flatTolerance}
-              min={0.000025}
-              max={0.0025}
-              step={0.000025}
+              min={0}
+              max={0.05}
+              step={0.0005}
               suffix=" m"
-              decimals={6}
+              decimals={4}
               onChange={setSetting('flatTolerance')}
             />
             <Slider
@@ -421,8 +421,8 @@ export default function Controls() {
               label="Smallest lake"
               value={settings.minLakeArea / 10_000}
               min={0.1}
-              max={20}
-              step={0.1}
+              max={40}
+              step={1}
               suffix=" ha"
               onChange={(v) => set('minLakeArea', v * 10_000)}
             />

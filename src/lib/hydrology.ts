@@ -44,13 +44,13 @@ export interface HydrologyTuning {
 }
 
 export const DEFAULT_TUNING: HydrologyTuning = {
-  flatTolerance: 0.002325,
-  bodyDrift: 100,
+  flatTolerance: 0,
+  bodyDrift: 0,
   maskResolution: 2048,
   seaLevelMargin: 0.5,
-  edgeTolerance: 0.58,
+  edgeTolerance: 0.82,
   featherCells: 1,
-  minLakeArea: 20_000,
+  minLakeArea: 400_000,
   minChannelKm2: 0.25,
   riverWidthScale: 1,
 }
