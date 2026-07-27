@@ -274,7 +274,8 @@ void main() {
     vec4 bio = texture2D(uBiomeMap, vUv);
     aridity = bio.r;
     riparianAmt = bio.g;
-    groundWarmth = bio.b;
+    // Warmth runs past 1, so the channel holds it scaled — see GROUND_WARMTH_MAX.
+    groundWarmth = bio.b * 2.0;
     forest = bio.a;
   }
 
@@ -346,7 +347,9 @@ void main() {
   // dropping luminance, so it survives the lighting.
   if (groundWarmth > 0.001) {
     float w = groundWarmth * (1.0 - veg);
-    albedo *= vec3(1.0 + 1.10 * w, 1.0 - 0.06 * w, 1.0 - 0.52 * w);
+    // Clamped at zero: past w = 1.9 the blue term would go negative and the channel
+    // would wrap back up as a false cyan cast instead of simply bottoming out.
+    albedo *= max(vec3(0.0), vec3(1.0 + 1.10 * w, 1.0 - 0.06 * w, 1.0 - 0.52 * w));
   }
 
   // Snow: accumulates with altitude, slides off anything steep, and does not linger

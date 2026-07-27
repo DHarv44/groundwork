@@ -248,7 +248,7 @@ const PROFILES: Record<string, BiomeProfile> = {
   Dfa: prof(0.14, 0.42, 0.32, 0.16, 1.12, 1.30, 0.70),
   Dfb: prof(0.12, 0.38, 0.31, 0.13, 1.16, 1.35, 0.80),
   // The boreal and subalpine conifer belt — the darkest ground cover on the planet.
-  Dfc: prof(0.14, 0.34, 0.30, 0.09, 1.20, 1.40, 0.92),
+  Dfc: prof(0.14, 0.34, 0.30, 0.98, 1.20, 1.40, 0.92),
   Dfd: prof(0.14, 0.30, 0.30, 0.07, 1.05, 1.18, 0.82),
   // Tundra sits above the tree line by definition, so its own scale is near zero. It
   // never suppresses a neighbour's — the tile takes the highest line any class implies.

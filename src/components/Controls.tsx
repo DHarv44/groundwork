@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useStore, type BiomeKey, type Settings } from '../store'
 import { KOPPEN_CODES, colorFor } from '../lib/koppen'
+import { GROUND_WARMTH_MAX } from '../lib/biomeMap'
 import { DAILY_QUOTA, cacheClear, cacheStats, quotaUsed } from '../lib/demcache'
 import { deletePreset, loadPresets, savePreset } from '../lib/presets'
 import { DEM_SOURCES } from '../lib/opentopo'
@@ -576,7 +577,7 @@ export default function Controls() {
                   label="Ground warmth"
                   value={settings.groundWarmth}
                   min={0}
-                  max={1}
+                  max={GROUND_WARMTH_MAX}
                   step={0.01}
                   tag={biomeTag('groundWarmth')}
                   onChange={setSetting('groundWarmth')}

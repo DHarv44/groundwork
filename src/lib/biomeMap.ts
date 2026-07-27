@@ -28,6 +28,13 @@ const RASTER_DEG = 0.1
 /** Classes below this share of the box are raster edge noise, not a biome present. */
 const MIN_SHARE = 0.02
 
+/**
+ * Ground warmth runs past 1, so it cannot go into a byte channel raw. It is stored
+ * divided by this and multiplied back out in the shader — the slider and the encoding
+ * have to agree, so both read it from here.
+ */
+export const GROUND_WARMTH_MAX = 2
+
 export interface BiomeShare {
   code: string
   /** Fraction of the box's land this class covers, 0..1. */
@@ -178,7 +185,8 @@ export function buildBiomeField(bounds: Bounds, overrides: ProfileOverrides = {}
   for (let i = 0; i < w * h; i++) {
     data[i * 4] = Math.round(Math.min(1, Math.max(0, arB[i])) * 255)
     data[i * 4 + 1] = Math.round(Math.min(1, Math.max(0, ripB[i])) * 255)
-    data[i * 4 + 2] = Math.round(Math.min(1, Math.max(0, warmB[i])) * 255)
+    // Scaled into the channel; the shader multiplies it back out.
+    data[i * 4 + 2] = Math.round(Math.min(1, Math.max(0, warmB[i] / GROUND_WARMTH_MAX)) * 255)
     data[i * 4 + 3] = Math.round(Math.min(1, Math.max(0, treesB[i])) * 255)
   }
 
