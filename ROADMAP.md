@@ -46,6 +46,59 @@ different fixes:
 Check the raster values along an east–west transect at Denver's latitude against the
 elevation profile first. That answers it in one measurement.
 
+### 3. Concentrate trees around water **(asked)**
+
+Riparian corridors currently add *cover*, not *trees*. In the shader, `riparian` raises
+`veg` along the drainage, but `canopy` — the share of that cover which is trees — is a
+function of `forest`, slope and the tree line only. Drainage never enters it. So a
+corridor comes out as more of whatever mix the biome already had, at the same
+grass-to-tree ratio as the dry ground either side.
+
+That is backwards for the case that matters most. A prairie creek is a line of
+cottonwoods through grassland; a savanna watercourse is gallery forest through open
+country. In dry places the water is very often the *only* thing holding trees, and the
+contrast between the ribbon and its surroundings is almost entirely a difference in tree
+cover, not in how much green there is.
+
+The fix is to let accumulated drainage raise `canopy` directly, not just `veg`, and to
+scale that by aridity the way the existing riparian term already is — strongest where it
+is dry, vanishing in a rainforest where the corridor is invisible because everything
+either side is already closed canopy.
+
+Two things to watch. Trees should thin out approaching the channel itself rather than
+growing in it, so the profile wants to peak *beside* the water rather than on it — which
+overlaps with the water-layering item below and is probably worth doing in the same pass.
+And the corridor must still respect the tree line: a drainage above it should stay
+treeless however much water runs down it.
+
+### 4. Darker green for trees **(asked)**
+
+The conifer colour is still not dark enough. It currently runs
+`(0.016, 0.022, 0.015)` to `(0.031, 0.040, 0.024)` in linear space, mottled by the macro
+noise, and was already darkened once during the Front Range calibration — it needs to go
+further.
+
+Real closed conifer is about as dark as any natural surface gets: a spruce stand traps
+almost everything that lands on it and reflects only a few per cent. So there is room to
+push down without becoming unphysical.
+
+Three things to check before simply scaling the numbers, because any of them could be
+the actual reason it reads light:
+
+- **The values are linear, not sRGB.** `0.016` linear is roughly `#22` on screen, not
+  `#04`. Anything picked from a swatch has to go through `convertSRGBToLinear()` on the
+  way in or it will land far lighter than intended — the mistake that cost a long detour
+  on the sky palette.
+- **`vegSat` and `vegTint` are applied after the mix**, and saturation below 1 pulls the
+  colour toward its own luminance, which can lighten as well as flatten. `Dfc` sits at
+  `0.80`.
+- **Aerial perspective adds +29 to +43 luminance at distance** — see below. If the
+  colour is being judged from a wide view, most of what looks too light is fog rather
+  than the canopy, and darkening the albedo to compensate will make close-ups too dark.
+
+Worth confirming from a close camera first, then adjusting the constants, rather than
+tuning against a washed-out wide shot.
+
 ---
 
 ## Known issues
