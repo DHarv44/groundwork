@@ -31,6 +31,8 @@ export interface Settings {
   riparian: number
   riparianReach: number
   groundWarmth: number
+  /** Share of the ground cover that is trees rather than grass. */
+  forest: number
   textureRange: number
   /** Master opacity for derived water. */
   rivers: number
@@ -86,6 +88,7 @@ export const DEFAULT_SETTINGS: Settings = {
   riparian: 0.6,
   riparianReach: 0.34,
   groundWarmth: 0,
+  forest: 0.6,
   textureRange: 1,
   rivers: 1,
   // 0.30 on the log-drainage scale is about 1 km² of catchment — roughly where a
@@ -120,9 +123,18 @@ export const BIOME_KEYS = [
   'riparian',
   'riparianReach',
   'groundWarmth',
+  'forest',
 ] as const
 
 export type BiomeKey = (typeof BIOME_KEYS)[number]
+
+/**
+ * The subset that is genuinely per-class, and so follows whichever biome you have
+ * selected to edit. The rest are properties of the tile as a whole: one mountain range
+ * has one tree line and one snow line however many climates cross it, and corridor
+ * reach barely varies between classes at all.
+ */
+export const PER_CLASS_KEYS = ['aridity', 'riparian', 'groundWarmth', 'forest'] as const
 
 interface State {
   bounds: Bounds | null
@@ -153,6 +165,12 @@ interface State {
   /** Every class present in the box with its share of the land, largest first. */
   biomeComposition: BiomeShare[]
   /**
+   * Which class the surface sliders act on. Null means the dominant one. A tile is
+   * often several climates, and without this only the majority is reachable — you
+   * could not touch the plains of a box whose mountains happened to win on area.
+   */
+  editingBiome: string | null
+  /**
    * Your own values for each biome, keyed by Köppen code. Editing a surface slider
    * while a biome is active records it here, so the next tile in that climate comes up
    * the way you tuned it. Saved with presets, so a preset carries your whole scheme
@@ -172,7 +190,9 @@ interface State {
   set: <K extends keyof Settings>(key: K, value: Settings[K]) => void
   reset: () => void
   resetSettings: () => void
-  /** Discard your overrides for the current biome and go back to its built-in profile. */
+  /** Point the surface sliders at one of the classes present. Null returns to dominant. */
+  setEditingBiome: (code: string | null) => void
+  /** Discard your overrides for the selected biome and go back to its built-in profile. */
   resetBiome: () => void
   /** Classify the current selection. Called on start-up and whenever the box moves. */
   refreshBiome: () => void
@@ -208,6 +228,7 @@ const PERSISTED_SETTINGS = [
   'riparian',
   'riparianReach',
   'groundWarmth',
+  'forest',
   'textureRange',
   'rivers',
   'riverThreshold',
@@ -350,16 +371,47 @@ export const useStore = create<State>((setState, getState) => {
    * parallel can be a wet oceanic coast and a high desert, and only the class knows
    * which. An override, being an absolute height you chose, wins outright.
    */
+  /** The class the sliders currently act on: whichever you picked, else the dominant. */
+  function editingCode(dominant: string): string {
+    const { editingBiome, biomeComposition } = getState()
+    // A selection only survives while that class is still in the box.
+    if (editingBiome && biomeComposition.some((c) => c.code === editingBiome)) return editingBiome
+    return dominant
+  }
+
   function biomeSettings(code: string, midLat: number): Record<BiomeKey, number> {
-    const p = profileFor(code)
+    // The per-class values follow the selected class; the tile-wide ones do not.
+    const edit = editingCode(code)
+    const p = profileFor(edit)
+    const tile = profileFor(code)
+
+    // Snow and tree lines belong to the place, not the cell. One mountain range has one
+    // tree line, so they come from the highest any class present implies rather than
+    // from the majority class — otherwise a box that is mostly steppe puts its tree
+    // line at the plains' altitude and strips the forest off the range beside it. The
+    // classes that are genuinely treeless are treeless for moisture or exposure, which
+    // the aridity and elevation terms already handle.
+    let snowScale = tile.snowLineScale
+    let treeScale = tile.treeLineScale
+    for (const c of getState().biomeComposition) {
+      const q = profileFor(c.code)
+      snowScale = Math.max(snowScale, q.snowLineScale)
+      treeScale = Math.max(treeScale, q.treeLineScale)
+    }
+
+    const tileMine = getState().biomeOverrides[code] ?? {}
+    const editMine = getState().biomeOverrides[edit] ?? {}
+
     return {
-      snowLine: Math.round(climaticSnowLine(midLat) * p.snowLineScale),
-      treeLine: Math.round(climaticTreeLine(midLat) * p.treeLineScale),
-      aridity: p.aridity,
-      riparian: p.riparian,
-      riparianReach: p.riparianReach,
-      groundWarmth: p.groundWarmth,
-      ...getState().biomeOverrides[code],
+      // Tile-wide: from the dominant class and the composition, never the selection.
+      snowLine: tileMine.snowLine ?? Math.round(climaticSnowLine(midLat) * snowScale),
+      treeLine: tileMine.treeLine ?? Math.round(climaticTreeLine(midLat) * treeScale),
+      riparianReach: tileMine.riparianReach ?? tile.riparianReach,
+      // Per-class: whichever class the sliders are pointed at.
+      aridity: editMine.aridity ?? p.aridity,
+      riparian: editMine.riparian ?? p.riparian,
+      groundWarmth: editMine.groundWarmth ?? p.groundWarmth,
+      forest: editMine.forest ?? p.forest,
     }
   }
 
@@ -392,9 +444,10 @@ export const useStore = create<State>((setState, getState) => {
       }
 
       const previous = getState().biome
-      applyBiome(biome, (bounds.north + bounds.south) / 2)
-      // The dominant class dresses the sliders; the field dresses the ground.
+      // Bake first: the field's composition is what the snow and tree lines are drawn
+      // from, so it has to exist before the settings are worked out.
       bakeBiomeField()
+      applyBiome(biome, (bounds.north + bounds.south) / 2)
 
       // One readout per class is enough to label the panel; re-fetching it for every
       // nudge of the box would burn the rate limit for a cosmetic line of text.
@@ -544,6 +597,11 @@ export const useStore = create<State>((setState, getState) => {
 
     if (getState().settings.textureMode === 'satellite') void getState().loadImagery()
 
+    // The lines just set above are the bare latitude curve. Re-deriving puts the
+    // biome's correction back on top — without this the build silently undoes it, and
+    // a forested range whose class carries a high tree line gets stripped to bare rock.
+    deriveBiome()
+
     // Terrain is already on screen; rivers and lakes stream in behind it.
     runHydrology(heightField, build.widthMetres, build.depthMetres, tuningOf(settings))
       .then((result) => {
@@ -576,6 +634,7 @@ export const useStore = create<State>((setState, getState) => {
   biome: null,
   biomeMap: null,
   biomeComposition: [],
+  editingBiome: null,
   biomeOverrides: (restored.biomeOverrides as BiomeOverrides) ?? {},
   biomeKeys: [],
   frameToken: 0,
@@ -598,11 +657,19 @@ export const useStore = create<State>((setState, getState) => {
     // Editing a climatic slider while a biome is known records the value against that
     // biome, not against this one tile: dial the aridity down in a Cfa valley and every
     // Cfa tile you open afterwards comes up the same. Presets carry the whole table.
+    //
+    // Per-class values land on whichever class the sliders are pointed at; the tile-wide
+    // ones always land on the dominant, since that is what they describe.
+    const target = biome
+      ? (PER_CLASS_KEYS as readonly string[]).includes(key)
+        ? editingCode(biome.code)
+        : biome.code
+      : null
     const overrides =
-      biome && (BIOME_KEYS as readonly string[]).includes(key)
+      target && (BIOME_KEYS as readonly string[]).includes(key)
         ? {
             ...biomeOverrides,
-            [biome.code]: { ...biomeOverrides[biome.code], [key]: value as number },
+            [target]: { ...biomeOverrides[target], [key]: value as number },
           }
         : biomeOverrides
 
@@ -691,11 +758,20 @@ export const useStore = create<State>((setState, getState) => {
 
   refreshBiome: () => deriveBiome(),
 
+  setEditingBiome: (code) => {
+    const { biome, bounds } = getState()
+    setState({ editingBiome: code })
+    // Re-derive so the sliders jump to the selected class's values straight away.
+    if (biome && bounds) applyBiome(biome, (bounds.north + bounds.south) / 2)
+  },
+
   resetBiome: () => {
     const { biome, bounds, biomeOverrides } = getState()
     if (!biome || !bounds) return
+    // Clears the class you are looking at, not the majority one.
+    const target = editingCode(biome.code)
     const rest = { ...biomeOverrides }
-    delete rest[biome.code]
+    delete rest[target]
     setState({ biomeOverrides: rest })
     applyBiome(biome, (bounds.north + bounds.south) / 2)
     bakeBiomeField()

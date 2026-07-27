@@ -36,7 +36,13 @@ export interface BiomeShare {
 
 export interface BiomeField {
   /**
-   * RGBA8: aridity, riparian, groundWarmth, riparianReach. Row 0 is the north edge.
+   * RGBA8: aridity, riparian, groundWarmth, tree cover. Row 0 is the north edge.
+   *
+   * Corridor reach is deliberately not here. There are only four channels and tree
+   * cover earns one far more: reach spans 0.28–0.44 across all thirty classes, so it
+   * barely varies in space, while cover runs the whole way from bare tundra to closed
+   * rainforest and drives the tone of the ground.
+   *
    * Pinned to ArrayBuffer, not ArrayBufferLike, so it stays a valid texture source.
    */
   data: Uint8Array<ArrayBuffer>
@@ -61,6 +67,7 @@ function resolve(code: string, overrides: ProfileOverrides): BiomeProfile {
     riparian: mine.riparian ?? base.riparian,
     riparianReach: mine.riparianReach ?? base.riparianReach,
     groundWarmth: mine.groundWarmth ?? base.groundWarmth,
+    forest: mine.forest ?? base.forest,
   }
 }
 
@@ -146,14 +153,14 @@ export function buildBiomeField(bounds: Bounds, overrides: ProfileOverrides = {}
   const ar = new Float32Array(w * h)
   const rip = new Float32Array(w * h)
   const warm = new Float32Array(w * h)
-  const reach = new Float32Array(w * h)
+  const trees = new Float32Array(w * h)
 
   for (let i = 0; i < w * h; i++) {
     const p = profileAt(index[i])
     ar[i] = p.aridity
     rip[i] = p.riparian
     warm[i] = p.groundWarmth
-    reach[i] = p.riparianReach
+    trees[i] = p.forest
   }
 
   // Feather by about one raster cell, measured in texels of this field. A box that
@@ -165,14 +172,14 @@ export function buildBiomeField(bounds: Bounds, overrides: ProfileOverrides = {}
   const arB = blurChannel(ar, w, h, radius)
   const ripB = blurChannel(rip, w, h, radius)
   const warmB = blurChannel(warm, w, h, radius)
-  const reachB = blurChannel(reach, w, h, radius)
+  const treesB = blurChannel(trees, w, h, radius)
 
   const data = new Uint8Array(w * h * 4)
   for (let i = 0; i < w * h; i++) {
     data[i * 4] = Math.round(Math.min(1, Math.max(0, arB[i])) * 255)
     data[i * 4 + 1] = Math.round(Math.min(1, Math.max(0, ripB[i])) * 255)
     data[i * 4 + 2] = Math.round(Math.min(1, Math.max(0, warmB[i])) * 255)
-    data[i * 4 + 3] = Math.round(Math.min(1, Math.max(0, reachB[i])) * 255)
+    data[i * 4 + 3] = Math.round(Math.min(1, Math.max(0, treesB[i])) * 255)
   }
 
   return {

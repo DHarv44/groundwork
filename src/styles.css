@@ -523,15 +523,37 @@ button.primary:hover:not(:disabled) {
   color: var(--muted);
 }
 
-.biome-mix span {
+.biome-mix button {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  padding: 2px 6px;
+  font-size: 10px;
   font-variant-numeric: tabular-nums;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
 }
 
-.biome-mix span.lead {
+.biome-mix button:hover {
+  border-color: var(--line);
   color: var(--text);
+}
+
+/* The class the sliders are currently aimed at. */
+.biome-mix button.on {
+  border-color: var(--accent);
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+/* Marks a class you have tuned. */
+.biome-mix em {
+  font-style: normal;
+  color: #fbbf24;
+  line-height: 1;
 }
 
 .biome-mix i {

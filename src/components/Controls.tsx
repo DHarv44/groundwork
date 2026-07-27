@@ -177,10 +177,17 @@ export default function Controls() {
     biomeKeys,
     biomeOverrides,
     biomeComposition,
+    editingBiome,
+    setEditingBiome,
     resetBiome,
   } = useStore()
 
-  const myValues = biome ? biomeOverrides[biome.code] : undefined
+  // The class the sliders act on: your pick, falling back to the dominant one.
+  const editing =
+    editingBiome && biomeComposition.some((c) => c.code === editingBiome)
+      ? editingBiome
+      : (biome?.code ?? '')
+  const myValues = biomeOverrides[editing]
   const tuned = !!myValues && Object.keys(myValues).length > 0
 
   // Chip every climatic slider with where its value came from: the biome's built-in
@@ -472,9 +479,9 @@ export default function Controls() {
                           <button
                             className="ghost"
                             onClick={resetBiome}
-                            title={`Discard your ${biome.code} values and go back to the built-in profile`}
+                            title={`Discard your ${editing} values and go back to the built-in profile`}
                           >
-                            Reset {biome.code}
+                            Reset {editing}
                           </button>
                         )}
                       </span>
@@ -483,10 +490,18 @@ export default function Controls() {
                       {biomeComposition.length > 1 && (
                         <span className="biome-mix">
                           {biomeComposition.map((c) => (
-                            <span key={c.code} className={c.code === biome.code ? 'lead' : ''}>
+                            <button
+                              key={c.code}
+                              className={c.code === editing ? 'on' : ''}
+                              title={`Point the sliders below at ${c.code}`}
+                              onClick={() =>
+                                setEditingBiome(c.code === biome.code ? null : c.code)
+                              }
+                            >
                               <i style={{ background: swatch(c.code) }} />
                               {c.code} {Math.round(c.share * 100)}%
-                            </span>
+                              {biomeOverrides[c.code] && <em>•</em>}
+                            </button>
                           ))}
                         </span>
                       )}
@@ -499,9 +514,9 @@ export default function Controls() {
                         )}
                         Köppen–Geiger, Beck et al. (2023).{' '}
                         {biomeComposition.length > 1
-                          ? `Blended across the tile. Sliders set ${biome.code}, the largest share.`
+                          ? `Blended across the tile. Pick a class above to aim the sliders — currently ${editing}${editing === biome.code ? ', the largest share' : ''}.`
                           : tuned
-                            ? `Chips marked YOURS are saved against ${biome.code} and travel with presets.`
+                            ? `Chips marked YOURS are saved against ${editing} and travel with presets.`
                             : 'Move any chipped slider and the value is kept for this climate.'}
                       </span>
                     </>
@@ -539,6 +554,15 @@ export default function Controls() {
                   step={0.01}
                   tag={biomeTag('aridity')}
                   onChange={setSetting('aridity')}
+                />
+                <Slider
+                  label="Tree cover"
+                  value={settings.forest}
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  tag={biomeTag('forest')}
+                  onChange={setSetting('forest')}
                 />
                 <Slider
                   label="Rock strata"

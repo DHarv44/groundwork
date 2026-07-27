@@ -159,9 +159,14 @@ export function biomeName(code: string): string {
  *
  * Snow and tree lines are multipliers rather than absolute heights, because the
  * latitude curve in geo.ts already gets the broad altitude right; what the biome adds
- * is the correction latitude alone cannot know — that the dry subtropics carry their
- * snow line far higher than a maritime climate on the same parallel, and that a savanna
- * keeps trees several hundred metres above a steppe.
+ * is the correction latitude alone cannot know.
+ *
+ * The largest part of that correction is continentality, and Köppen's letters encode it
+ * directly. The latitude curve is calibrated to maritime ranges — it puts the Alps at
+ * about 2,190 m, which is correct — but a continental interior runs far higher on the
+ * same parallel: the Colorado Rockies at 40°N carry trees to roughly 3,500 m against
+ * the curve's 2,550. So the D classes, which are the cold continental interiors, scale
+ * their tree line up by a third or more, while the oceanic C classes sit near 1.
  */
 export interface BiomeProfile {
   aridity: number
@@ -170,6 +175,16 @@ export interface BiomeProfile {
   groundWarmth: number
   snowLineScale: number
   treeLineScale: number
+  /**
+   * How much of the ground cover is trees rather than grass, 0..1.
+   *
+   * Aridity cannot stand in for this. It conflates how dry a place looks with how
+   * vegetated it is, which leaves no way to say wet-but-treeless — tundra, moorland,
+   * puna — or dry-but-wooded, like pinyon-juniper on a desert range. It also gets the
+   * tone badly wrong: dense conifer is far darker than any grass, so a forested range
+   * painted as meadow comes out about half as dark as it should be.
+   */
+  forest: number
 }
 
 function prof(
@@ -179,8 +194,17 @@ function prof(
   groundWarmth: number,
   snowLineScale: number,
   treeLineScale: number,
+  forest: number,
 ): BiomeProfile {
-  return { aridity, riparian, riparianReach, groundWarmth, snowLineScale, treeLineScale }
+  return {
+    aridity,
+    riparian,
+    riparianReach,
+    groundWarmth,
+    snowLineScale,
+    treeLineScale,
+    forest,
+  }
 }
 
 /**
@@ -189,37 +213,47 @@ function prof(
  * rainforest the corridor is invisible because everything either side is already green.
  */
 const PROFILES: Record<string, BiomeProfile> = {
-  //         aridity  riparian  reach  warmth  snow×  tree×
-  Af: prof(0.02, 0.20, 0.28, 0.00, 1.05, 1.14),
-  Am: prof(0.08, 0.32, 0.30, 0.03, 1.05, 1.12),
-  Aw: prof(0.44, 0.76, 0.38, 0.24, 1.08, 1.06),
-  BWh: prof(0.97, 0.95, 0.44, 0.72, 1.18, 0.52),
-  BWk: prof(0.92, 0.88, 0.42, 0.44, 1.10, 0.58),
-  BSh: prof(0.80, 0.90, 0.40, 0.52, 1.12, 0.78),
-  BSk: prof(0.66, 0.82, 0.38, 0.30, 1.05, 0.86),
-  Csa: prof(0.52, 0.72, 0.36, 0.30, 1.04, 0.94),
-  Csb: prof(0.38, 0.62, 0.34, 0.18, 1.00, 0.98),
-  Csc: prof(0.30, 0.52, 0.32, 0.10, 0.92, 0.90),
-  Cwa: prof(0.26, 0.56, 0.34, 0.14, 1.02, 1.04),
-  Cwb: prof(0.22, 0.50, 0.33, 0.10, 1.00, 1.02),
-  Cwc: prof(0.22, 0.44, 0.32, 0.08, 0.94, 0.92),
-  Cfa: prof(0.12, 0.40, 0.32, 0.05, 1.02, 1.05),
-  Cfb: prof(0.08, 0.34, 0.30, 0.02, 0.88, 1.00),
-  Cfc: prof(0.08, 0.30, 0.30, 0.02, 0.80, 0.90),
-  Dsa: prof(0.48, 0.68, 0.36, 0.24, 1.02, 0.92),
-  Dsb: prof(0.42, 0.62, 0.35, 0.18, 0.98, 0.90),
-  Dsc: prof(0.34, 0.52, 0.34, 0.10, 0.90, 0.84),
-  Dsd: prof(0.30, 0.46, 0.33, 0.06, 0.84, 0.76),
-  Dwa: prof(0.30, 0.54, 0.34, 0.12, 1.00, 0.96),
-  Dwb: prof(0.26, 0.48, 0.33, 0.08, 0.96, 0.92),
-  Dwc: prof(0.22, 0.42, 0.32, 0.05, 0.90, 0.84),
-  Dwd: prof(0.20, 0.38, 0.31, 0.03, 0.84, 0.74),
-  Dfa: prof(0.14, 0.42, 0.32, 0.05, 1.00, 0.98),
-  Dfb: prof(0.12, 0.38, 0.31, 0.03, 0.96, 0.94),
-  Dfc: prof(0.14, 0.34, 0.30, 0.02, 0.88, 0.84),
-  Dfd: prof(0.14, 0.30, 0.30, 0.02, 0.82, 0.74),
-  ET: prof(0.36, 0.26, 0.28, 0.06, 0.70, 0.28),
-  EF: prof(0.24, 0.00, 0.25, 0.00, 0.12, 0.00),
+  //         aridity  riparian  reach  warmth  snow×  tree×  forest
+  Af: prof(0.02, 0.20, 0.28, 0.00, 1.05, 1.14, 1.00),
+  Am: prof(0.08, 0.32, 0.30, 0.03, 1.05, 1.12, 0.95),
+  // Savanna is the definition of scattered: trees over grass, not woodland.
+  Aw: prof(0.44, 0.76, 0.38, 0.24, 1.08, 1.06, 0.35),
+  // Arid classes are treeless for moisture, not altitude — aridity does that work, so
+  // their tree line stays near the curve rather than being dragged down and stripping
+  // the forested range that so often stands beside a dry basin.
+  BWh: prof(0.97, 0.95, 0.44, 0.72, 1.18, 1.00, 0.02),
+  BWk: prof(0.92, 0.88, 0.42, 0.44, 1.14, 1.05, 0.05),
+  BSh: prof(0.80, 0.90, 0.40, 0.52, 1.14, 1.05, 0.07),
+  BSk: prof(0.66, 0.82, 0.38, 0.54, 1.15, 1.12, 0.10),
+  Csa: prof(0.52, 0.72, 0.36, 0.30, 1.04, 0.94, 0.42),
+  Csb: prof(0.38, 0.62, 0.34, 0.18, 1.00, 0.98, 0.55),
+  Csc: prof(0.30, 0.52, 0.32, 0.10, 0.92, 0.90, 0.45),
+  Cwa: prof(0.26, 0.56, 0.34, 0.14, 1.02, 1.04, 0.60),
+  Cwb: prof(0.22, 0.50, 0.33, 0.10, 1.00, 1.02, 0.58),
+  Cwc: prof(0.22, 0.44, 0.32, 0.08, 0.94, 0.92, 0.45),
+  Cfa: prof(0.12, 0.40, 0.32, 0.05, 1.02, 1.05, 0.70),
+  // Oceanic country is as much pasture and moor as it is woodland.
+  Cfb: prof(0.08, 0.34, 0.30, 0.02, 0.88, 1.00, 0.55),
+  Cfc: prof(0.08, 0.30, 0.30, 0.02, 0.80, 0.90, 0.32),
+  Dsa: prof(0.48, 0.68, 0.36, 0.24, 1.20, 1.28, 0.55),
+  Dsb: prof(0.42, 0.62, 0.35, 0.18, 1.18, 1.26, 0.62),
+  Dsc: prof(0.34, 0.52, 0.34, 0.10, 1.10, 1.20, 0.68),
+  Dsd: prof(0.30, 0.46, 0.33, 0.06, 1.00, 1.10, 0.60),
+  Dwa: prof(0.30, 0.54, 0.34, 0.12, 1.18, 1.32, 0.68),
+  Dwb: prof(0.26, 0.48, 0.33, 0.08, 1.15, 1.30, 0.78),
+  Dwc: prof(0.22, 0.42, 0.32, 0.05, 1.10, 1.26, 0.85),
+  Dwd: prof(0.20, 0.38, 0.31, 0.03, 1.00, 1.14, 0.78),
+  // The montane belt is forest broken by park and meadow, not closed canopy, so it
+  // keeps enough warm open ground to read brown rather than blue-green.
+  Dfa: prof(0.14, 0.42, 0.32, 0.16, 1.12, 1.30, 0.70),
+  Dfb: prof(0.12, 0.38, 0.31, 0.13, 1.16, 1.35, 0.80),
+  // The boreal and subalpine conifer belt — the darkest ground cover on the planet.
+  Dfc: prof(0.14, 0.34, 0.30, 0.09, 1.20, 1.40, 0.92),
+  Dfd: prof(0.14, 0.30, 0.30, 0.07, 1.05, 1.18, 0.82),
+  // Tundra sits above the tree line by definition, so its own scale is near zero. It
+  // never suppresses a neighbour's — the tile takes the highest line any class implies.
+  ET: prof(0.36, 0.26, 0.28, 0.06, 0.95, 0.30, 0.00),
+  EF: prof(0.24, 0.00, 0.25, 0.00, 0.12, 0.00, 0.00),
 }
 
 /** Every class the raster can return, in legend order — the panel lists these. */

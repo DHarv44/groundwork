@@ -59,6 +59,7 @@ uniform float uStrata;
 uniform float uRiparian;       // how strongly vegetation follows the drainage
 uniform float uRiparianReach;  // how far up the drainage scale corridors extend
 uniform float uGroundWarmth;   // shift bare ground toward oxidised rust
+uniform float uForest;         // how much of the cover is trees rather than grass
 uniform float uTextureRange;   // scales how far surface detail survives
 // Biomes baked over the tile: aridity, riparian, ground warmth and corridor reach, one
 // per channel. Sampling it replaces the four scalars above wherever it is present —
@@ -231,6 +232,9 @@ void main() {
   vec3 scree     = vec3(0.205, 0.192, 0.176);
   vec3 soil      = vec3(0.115, 0.086, 0.055);
   vec3 grassCol  = mix(vec3(0.055, 0.082, 0.030), vec3(0.130, 0.145, 0.062), clamp(macro + 0.5, 0.0, 1.0));
+  // Closed conifer canopy. Far darker than grass and barely green — a spruce stand
+  // reflects only a few per cent of what hits it.
+  vec3 conifer   = mix(vec3(0.016, 0.022, 0.015), vec3(0.031, 0.040, 0.024), clamp(macro + 0.5, 0.0, 1.0));
   vec3 sandCol   = vec3(0.340, 0.288, 0.196);
   vec3 snowCol   = vec3(0.760, 0.795, 0.850);
 
@@ -262,20 +266,36 @@ void main() {
   float aridity = clamp(uAridity, 0.0, 1.0);
   float riparianAmt = uRiparian;
   float groundWarmth = uGroundWarmth;
+  float forest = clamp(uForest, 0.0, 1.0);
+  // Corridor reach stays tile-wide: it barely varies between classes, so it does not
+  // earn one of the four channels.
   float riparianReach = uRiparianReach;
   if (uHasBiomeMap > 0.5) {
     vec4 bio = texture2D(uBiomeMap, vUv);
     aridity = bio.r;
     riparianAmt = bio.g;
     groundWarmth = bio.b;
-    riparianReach = bio.a;
+    forest = bio.a;
   }
 
-  // Soil and vegetation collect on gentle ground below the tree line.
+  // Soil and vegetation collect below the tree line.
+  //
+  // How much the ground has to level off before cover takes hold depends on what the
+  // cover is. Meadow needs gentle ground and gives way to scree early; forest does not
+  // — a conifer slope stays closed well past the angle at which grass has gone. Using
+  // one slope limit for both treats every mountainside as bare rock, which is precisely
+  // backwards for a forested range and was leaving the Rockies rendered as scree.
   float wetness = 1.0 - aridity;
-  float lowland = smoothstep(uTreeLine + 220.0, uTreeLine - 420.0, vElev);
-  float veg = wetness * lowland * (1.0 - steep);
-  veg *= smoothstep(-0.30, 0.30, macro * 1.5 + meso * 0.5 + 0.20);
+  // A closed forest ends abruptly: the last stretch goes timber to krummholz to tundra
+  // inside a couple of hundred metres. Only open scrub thins out over a kilometre, so
+  // the width of the fade follows the cover rather than being fixed — at a fixed 420 m
+  // better than a third of a range like the Front Range sits half-stripped.
+  float treeFade = mix(420.0, 140.0, forest);
+  float lowland = smoothstep(uTreeLine + 220.0, uTreeLine - treeFade, vElev);
+  float steepVeg = smoothstep(0.10 + 0.20 * forest, 0.44 + 0.82 * forest, slope);
+  float veg = wetness * lowland * (1.0 - steepVeg);
+  // Dense-canopy biomes are continuous, not patchy: bias the break-up noise by cover.
+  veg *= smoothstep(-0.30, 0.30, macro * 1.5 + meso * 0.5 + 0.20 + forest * 0.72);
   veg = clamp(veg, 0.0, 1.0);
 
   // Vegetation follows the water.
@@ -298,9 +318,18 @@ void main() {
   }
 
   albedo = mix(albedo, soil, clamp(veg * 1.3, 0.0, 1.0) * 0.55);
+
+  // Grass or trees. Closed conifer is one of the darkest surfaces there is — the
+  // canopy traps almost everything that lands on it — so this is as much a change of
+  // brightness as of hue, and it is what separates a forested range from a meadow one.
+  // Trees give out on steep rock and thin toward the tree line, where the belt breaks
+  // up into scattered krummholz rather than ending at a hard edge.
+  float canopy = forest * (1.0 - steepVeg * 0.45) *
+                 smoothstep(uTreeLine + 120.0, uTreeLine - 520.0, vElev);
+  vec3 coverCol = mix(grassCol, conifer, canopy);
+  albedo = mix(albedo, coverCol, veg * 0.88);
   // Corridor growth is greener and denser than the scrub around it.
-  albedo = mix(albedo, grassCol, veg * 0.88);
-  albedo = mix(albedo, grassCol * 0.72, riparian * 0.5);
+  albedo = mix(albedo, coverCol * 0.72, riparian * 0.5);
 
   // Arid basins get sand in the flats — but not where the drainage keeps them wet.
   float aridFlat = aridity * (1.0 - steep) *
