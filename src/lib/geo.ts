@@ -5,6 +5,22 @@ export interface Bounds {
   east: number
 }
 
+/**
+ * Where a first run lands, before anything is in local storage.
+ *
+ * The Colorado Front Range, because it is the area the vegetation and hydrology were
+ * calibrated against: a single box spans a mountain front, so it contains four Köppen
+ * classes, timber, steppe, a real drainage network, and enough relief for the snow and
+ * tree lines to mean something. A flat or single-climate box would show almost none of
+ * what the renderer actually does.
+ */
+export const DEFAULT_BOUNDS: Bounds = {
+  south: 39.4807,
+  north: 40.1306,
+  west: -105.9631,
+  east: -104.6887,
+}
+
 /** Metres per degree of latitude at a given latitude (WGS84 series expansion). */
 export function metresPerDegLat(latDeg: number): number {
   const p = (latDeg * Math.PI) / 180

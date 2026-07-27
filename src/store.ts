@@ -3,7 +3,7 @@ import * as THREE from 'three'
 import HydrologyWorker from './workers/hydrology.worker?worker'
 import { DEFAULT_TUNING, type HydrologyResult, type HydrologyTuning } from './lib/hydrology'
 import type { Bounds } from './lib/geo'
-import { boundsAreaKm2, climaticSnowLine, climaticTreeLine } from './lib/geo'
+import { DEFAULT_BOUNDS, boundsAreaKm2, climaticSnowLine, climaticTreeLine } from './lib/geo'
 import type { HeightField } from './lib/opentopo'
 import { DEM_SOURCES, fetchHeightField, validateRequest } from './lib/opentopo'
 import { fetchImagery } from './lib/imagery'
@@ -708,7 +708,9 @@ export const useStore = create<State>((setState, getState) => {
   }
 
   return {
-  bounds: restored.bounds ?? null,
+  // A first run lands on a real area rather than an empty map, so the app has something
+  // to show without anyone having to draw a box first.
+  bounds: restored.bounds ?? DEFAULT_BOUNDS,
   // Keyless and uncapped, so the app works out of the box and normal use never
   // eats into the OpenTopography allowance.
   demType: restored.demType ?? 'AWS_TERRARIUM',

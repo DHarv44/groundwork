@@ -218,6 +218,24 @@ body {
   color: var(--muted);
 }
 
+/* Places to jump to. A dropdown rather than a wall of buttons — the list only grows,
+   and it was taking more vertical room than the map it sits under. */
+.poi-select {
+  width: 100%;
+  margin-top: 9px;
+  padding: 6px 8px;
+  font-size: 11.5px;
+  border-radius: 5px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.poi-select:hover {
+  border-color: var(--accent);
+}
+
 .presets {
   display: flex;
   flex-wrap: wrap;

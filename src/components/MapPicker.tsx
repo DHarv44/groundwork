@@ -3,6 +3,7 @@ import L from 'leaflet'
 import { MapContainer, Rectangle, TileLayer, useMap } from 'react-leaflet'
 import 'leaflet/dist/leaflet.css'
 import type { Bounds } from '../lib/geo'
+import { DEFAULT_BOUNDS } from '../lib/geo'
 import { useStore } from '../store'
 import KoppenLayer from './KoppenLayer'
 
@@ -28,6 +29,7 @@ export const PRESETS: Preset[] = [
   { name: 'Table Mountain', bounds: { south: -34.03, north: -33.9, west: 18.33, east: 18.48 } },
   { name: 'Mauna Kea & Hilo', bounds: { south: 19.6, north: 19.95, west: -155.6, east: -155.0 } },
 ]
+
 
 function toLatLngBounds(b: Bounds): L.LatLngBoundsExpression {
   return [
@@ -226,8 +228,15 @@ export default function MapPicker() {
 
       <div className="map-wrap">
         <MapContainer
-          center={saved ? [saved.lat, saved.lng] : [46.0, 7.66]}
-          zoom={saved ? saved.zoom : 10}
+          center={
+            saved
+              ? [saved.lat, saved.lng]
+              : [
+                  (DEFAULT_BOUNDS.north + DEFAULT_BOUNDS.south) / 2,
+                  (DEFAULT_BOUNDS.east + DEFAULT_BOUNDS.west) / 2,
+                ]
+          }
+          zoom={saved ? saved.zoom : 9}
           scrollWheelZoom
           style={{ height: '100%', width: '100%' }}
           worldCopyJump
@@ -286,13 +295,24 @@ export default function MapPicker() {
 
       {searchNote && <div className="search-note">{searchNote}</div>}
 
-      <div className="presets">
+      {/* Value is deliberately not bound to anything: picking a place moves the box, but
+          the box is then yours to redraw, so leaving the name selected would claim a
+          match that no longer holds. It resets to the prompt after each pick. */}
+      <select
+        className="poi-select"
+        value=""
+        onChange={(e) => {
+          const p = PRESETS.find((x) => x.name === e.target.value)
+          if (p) applyBounds(p.bounds, true)
+        }}
+      >
+        <option value="">Jump to a place…</option>
         {PRESETS.map((p) => (
-          <button key={p.name} onClick={() => applyBounds(p.bounds, true)}>
+          <option key={p.name} value={p.name}>
             {p.name}
-          </button>
+          </option>
         ))}
-      </div>
+      </select>
     </div>
   )
 }

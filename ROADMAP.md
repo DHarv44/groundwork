@@ -146,6 +146,23 @@ Also worth reviewing: nothing evicts. `cacheClear` is manual, so the store grows
 bound, and there is no check that the browser's storage quota is close to being hit
 before a write. A failed write is currently swallowed.
 
+### 7. Mini-map box picking is awkward **(asked)**
+
+Drawing and adjusting the selection needs work. Known rough edges:
+
+- The draw tool is armed by default at start-up, so the first drag on the map draws a
+  box instead of panning, which is rarely what is wanted once an area is already loaded.
+- A box can only be drawn, never adjusted. There are no edge or corner handles, so
+  nudging one side means redrawing the whole thing and losing the framing.
+- Panning is disabled outright while armed, so reaching ground off-screen means
+  disarming, panning, and re-arming.
+- A drag that starts outside the map or ends outside it leaves the tool in a half state.
+- There is no way to type or paste a bounding box, which is the fastest way to return to
+  an exact area — and the coordinates are already displayed just below, read-only.
+
+Worth doing together rather than piecemeal, since they all touch the same drag handling
+in `BoxDrawer`.
+
 ---
 
 ## Known issues
