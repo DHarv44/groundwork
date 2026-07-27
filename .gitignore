@@ -1,0 +1,11 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.DS_Store
+
+# Holds the OpenTopography key — keep it out of the repo
+.env
+
+# Emitted by `tsc -b` because tsconfig.node.json is a composite project
+vite.config.js
+vite.config.d.ts
