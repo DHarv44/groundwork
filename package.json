@@ -1,9 +1,9 @@
 {
-  "name": "terrain-builder",
+  "name": "groundwork",
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "Draw a box on a world map, pull real elevation data from OpenTopography, render it as photoreal 3D terrain.",
+  "description": "Pick a box on a world map and see what is actually there: real elevation, with the rivers, lakes, climate and vegetation derived from it rather than painted on.",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",

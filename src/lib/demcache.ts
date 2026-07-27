@@ -10,6 +10,10 @@ import type { HeightField } from './opentopo'
  * are stored rather than the raw GeoTIFF, which also skips re-decoding.
  */
 
+// Kept at the old name through the rename to Groundwork. Changing it would orphan every
+// cached area rather than migrate it, and those cost API calls to fetch — a cosmetic
+// tidy is not worth spending someone's daily allowance twice. The same goes for the
+// localStorage keys elsewhere: they are internal, and nothing reads them but us.
 const DB_NAME = 'terrain-builder'
 const DB_VERSION = 1
 const STORE = 'dem'

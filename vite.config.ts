@@ -8,7 +8,7 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   const key = env.VITE_OPENTOPO_KEY ?? ''
   if (!key) {
-    console.warn('[terrain-builder] VITE_OPENTOPO_KEY is not set — DEM requests will fail.')
+    console.warn('[groundwork] VITE_OPENTOPO_KEY is not set — DEM requests will fail.')
   }
 
   return {

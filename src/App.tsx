@@ -41,8 +41,8 @@ export default function App() {
     <div className={`app ${collapsed ? 'collapsed' : ''}`}>
       <aside className="sidebar">
         <header>
-          <h1>Terrain Builder</h1>
-          <p>Real elevation data from OpenTopography, rendered in three.js.</p>
+          <h1>Groundwork</h1>
+          <p>Pick a place on Earth. Everything you see is derived from its ground.</p>
         </header>
         <MapPicker />
         <Controls />
