@@ -514,6 +514,33 @@ button.primary:hover:not(:disabled) {
   color: var(--muted);
 }
 
+/* Every class in the box with its share, coloured to match the mini-map overlay. */
+.biome-mix {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 9px;
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.biome-mix span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.biome-mix span.lead {
+  color: var(--text);
+}
+
+.biome-mix i {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+}
+
 .slider-row {
   display: flex;
   align-items: center;

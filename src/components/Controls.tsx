@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useStore, type BiomeKey, type Settings } from '../store'
+import { KOPPEN_CODES, colorFor } from '../lib/koppen'
 import { DAILY_QUOTA, cacheClear, cacheStats, quotaUsed } from '../lib/demcache'
 import { deletePreset, loadPresets, savePreset } from '../lib/presets'
 import { DEM_SOURCES } from '../lib/opentopo'
@@ -132,6 +133,12 @@ function Toggle({
   )
 }
 
+/** The dataset's own colour for a class, matching the mini-map overlay. */
+function swatch(code: string): string {
+  const [r, g, b] = colorFor(KOPPEN_CODES.indexOf(code as (typeof KOPPEN_CODES)[number]))
+  return `rgb(${r} ${g} ${b})`
+}
+
 const DETAIL_STEPS = [256, 384, 512, 768, 1024, 1536, 2048]
 
 type TabId = 'terrain' | 'surface' | 'water' | 'light' | 'render' | 'export'
@@ -169,6 +176,7 @@ export default function Controls() {
     biome,
     biomeKeys,
     biomeOverrides,
+    biomeComposition,
     resetBiome,
   } = useStore()
 
@@ -470,6 +478,18 @@ export default function Controls() {
                           </button>
                         )}
                       </span>
+                      {/* Everything in the box, not just the winner — the ground is
+                          rendered as all of these, blended across the tile. */}
+                      {biomeComposition.length > 1 && (
+                        <span className="biome-mix">
+                          {biomeComposition.map((c) => (
+                            <span key={c.code} className={c.code === biome.code ? 'lead' : ''}>
+                              <i style={{ background: swatch(c.code) }} />
+                              {c.code} {Math.round(c.share * 100)}%
+                            </span>
+                          ))}
+                        </span>
+                      )}
                       <span className="biome-sub">
                         {biome.normals && (
                           <>
@@ -478,9 +498,11 @@ export default function Controls() {
                           </>
                         )}
                         Köppen–Geiger, Beck et al. (2023).{' '}
-                        {tuned
-                          ? `Chips marked YOURS are saved against ${biome.code} and travel with presets.`
-                          : 'Move any chipped slider and the value is kept for this climate.'}
+                        {biomeComposition.length > 1
+                          ? `Blended across the tile. Sliders set ${biome.code}, the largest share.`
+                          : tuned
+                            ? `Chips marked YOURS are saved against ${biome.code} and travel with presets.`
+                            : 'Move any chipped slider and the value is kept for this climate.'}
                       </span>
                     </>
                   ) : (

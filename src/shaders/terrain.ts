@@ -60,6 +60,11 @@ uniform float uRiparian;       // how strongly vegetation follows the drainage
 uniform float uRiparianReach;  // how far up the drainage scale corridors extend
 uniform float uGroundWarmth;   // shift bare ground toward oxidised rust
 uniform float uTextureRange;   // scales how far surface detail survives
+// Biomes baked over the tile: aridity, riparian, ground warmth and corridor reach, one
+// per channel. Sampling it replaces the four scalars above wherever it is present —
+// linear filtering blends between neighbouring classes for free.
+uniform sampler2D uBiomeMap;
+uniform float uHasBiomeMap;
 uniform float uShadows;
 uniform float uAoStrength;
 uniform float uDetail;
@@ -250,8 +255,24 @@ void main() {
     albedo = mix(albedo, strataCol, uStrata * (0.35 + 0.65 * cliff));
   }
 
+  // Resolve the biome parameters for this point. One tile can span several climates —
+  // a box across a mountain front is steppe on the plains and forest a thousand metres
+  // up — so these are a field over the tile, not four constants. The sliders stand for
+  // the dominant class; editing one rebakes the field for that class alone.
+  float aridity = clamp(uAridity, 0.0, 1.0);
+  float riparianAmt = uRiparian;
+  float groundWarmth = uGroundWarmth;
+  float riparianReach = uRiparianReach;
+  if (uHasBiomeMap > 0.5) {
+    vec4 bio = texture2D(uBiomeMap, vUv);
+    aridity = bio.r;
+    riparianAmt = bio.g;
+    groundWarmth = bio.b;
+    riparianReach = bio.a;
+  }
+
   // Soil and vegetation collect on gentle ground below the tree line.
-  float wetness = 1.0 - clamp(uAridity, 0.0, 1.0);
+  float wetness = 1.0 - aridity;
   float lowland = smoothstep(uTreeLine + 220.0, uTreeLine - 420.0, vElev);
   float veg = wetness * lowland * (1.0 - steep);
   veg *= smoothstep(-0.30, 0.30, macro * 1.5 + meso * 0.5 + 0.20);
@@ -268,11 +289,11 @@ void main() {
   // Deliberately scaled by aridity — in wet country the hillsides are green too, so
   // riparian corridors barely stand out. It is dryness that makes them visible.
   float riparian = 0.0;
-  if (uHasWater > 0.5 && uRiparian > 0.001) {
+  if (uHasWater > 0.5 && riparianAmt > 0.001) {
     float accum = texture2D(uWaterMap, vUv).b;
-    riparian = smoothstep(uRiparianReach - 0.10, uRiparianReach + 0.14, accum);
-    riparian *= uRiparian * (1.0 - steep) * lowland;
-    riparian *= 0.35 + 0.65 * clamp(uAridity, 0.0, 1.0);
+    riparian = smoothstep(riparianReach - 0.10, riparianReach + 0.14, accum);
+    riparian *= riparianAmt * (1.0 - steep) * lowland;
+    riparian *= 0.35 + 0.65 * aridity;
     veg = clamp(veg + riparian, 0.0, 1.0);
   }
 
@@ -282,7 +303,7 @@ void main() {
   albedo = mix(albedo, grassCol * 0.72, riparian * 0.5);
 
   // Arid basins get sand in the flats — but not where the drainage keeps them wet.
-  float aridFlat = clamp(uAridity, 0.0, 1.0) * (1.0 - steep) *
+  float aridFlat = aridity * (1.0 - steep) *
                    smoothstep(uTreeLine, uTreeLine - 900.0, vElev);
   albedo = mix(albedo, sandCol, aridFlat * 0.6 * (1.0 - riparian));
 
@@ -294,8 +315,8 @@ void main() {
   // Ambient here is sky light, which is markedly blue — blending toward a dark warm
   // tone loses to it and comes back out grey. Scaling the channels shifts hue without
   // dropping luminance, so it survives the lighting.
-  if (uGroundWarmth > 0.001) {
-    float w = uGroundWarmth * (1.0 - veg);
+  if (groundWarmth > 0.001) {
+    float w = groundWarmth * (1.0 - veg);
     albedo *= vec3(1.0 + 1.10 * w, 1.0 - 0.06 * w, 1.0 - 0.52 * w);
   }
 
@@ -304,7 +325,7 @@ void main() {
   float snow = smoothstep(uSnowLine - 260.0, uSnowLine + 190.0, vElev);
   snow *= 1.0 - smoothstep(0.30, 0.66, slope);
   snow *= smoothstep(-0.55, 0.35, macro * 1.4 + meso * 0.6);
-  snow *= 1.0 - clamp(uAridity, 0.0, 1.0) * 0.85;
+  snow *= 1.0 - aridity * 0.85;
   snow = clamp(snow, 0.0, 1.0);
   albedo = mix(albedo, snowCol, snow);
 
@@ -336,7 +357,7 @@ void main() {
     float classGate = mix(uShowRivers, uShowLakes, lakeness);
     waterCov = clamp(wm.r * mix(sizeGate, 1.0, lakeness) * uRivers * classGate, 0.0, 1.0);
     // Watercourses dry up in arid country — what is left is a wadi, not a river.
-    waterCov *= 1.0 - clamp(uAridity, 0.0, 1.0) * 0.55 * (1.0 - lakeness);
+    waterCov *= 1.0 - aridity * 0.55 * (1.0 - lakeness);
     // Water cannot hold a broad flat surface on a steep face. Anything that steep is
     // a cascade — narrow, broken and mostly white water — so fade the sheet out
     // rather than painting a mirror down the mountainside.

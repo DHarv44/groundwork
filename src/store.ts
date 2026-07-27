@@ -8,6 +8,7 @@ import type { HeightField } from './lib/opentopo'
 import { DEM_SOURCES, fetchHeightField, validateRequest } from './lib/opentopo'
 import { fetchImagery } from './lib/imagery'
 import { biomeOf, ensureKoppen, fetchNormals, profileFor, type Biome } from './lib/climate'
+import { buildBiomeField, type BiomeShare } from './lib/biomeMap'
 import { makeDemoHeightField } from './lib/demo'
 import { loadSession, saveSession } from './lib/session'
 import { buildTerrain, type TerrainBuild } from './lib/mesh'
@@ -143,6 +144,14 @@ interface State {
   settings: Settings
   /** Köppen class of the selected area, read from the bundled raster. */
   biome: Biome | null
+  /**
+   * The biomes inside the box baked to a texture — aridity, riparian, ground warmth and
+   * corridor reach per texel. A tile spanning a mountain front is several climates, and
+   * this is what lets it render as several rather than as its majority.
+   */
+  biomeMap: THREE.DataTexture | null
+  /** Every class present in the box with its share of the land, largest first. */
+  biomeComposition: BiomeShare[]
   /**
    * Your own values for each biome, keyed by Köppen code. Editing a surface slider
    * while a biome is active records it here, so the next tile in that climate comes up
@@ -377,12 +386,15 @@ export const useStore = create<State>((setState, getState) => {
 
       const biome = biomeOf(bounds)
       if (!biome) {
-        setState({ biome: null, biomeKeys: [] })
+        getState().biomeMap?.dispose()
+        setState({ biome: null, biomeKeys: [], biomeMap: null, biomeComposition: [] })
         return
       }
 
       const previous = getState().biome
       applyBiome(biome, (bounds.north + bounds.south) / 2)
+      // The dominant class dresses the sliders; the field dresses the ground.
+      bakeBiomeField()
 
       // One readout per class is enough to label the panel; re-fetching it for every
       // nudge of the box would burn the rate limit for a cosmetic line of text.
@@ -396,6 +408,44 @@ export const useStore = create<State>((setState, getState) => {
         if (live?.code === biome.code) setState({ biome: { ...live, normals } })
       })
     })
+  }
+
+  /**
+   * Rebake the biome field for the current box. Cheap — a quarter-megapixel of raster
+   * lookups and a separable blur — but it runs on every slider tick while you drag, so
+   * it is coalesced like the other derived passes.
+   */
+  function bakeBiomeField(): void {
+    const { bounds, biomeOverrides, biomeMap } = getState()
+    if (!bounds) return
+
+    const field = buildBiomeField(bounds, biomeOverrides)
+    if (!field) {
+      biomeMap?.dispose()
+      setState({ biomeMap: null, biomeComposition: [] })
+      return
+    }
+
+    const tex = new THREE.DataTexture(field.data, field.width, field.height, THREE.RGBAFormat)
+    // Row 0 is the north edge, as with the height field and the water mask.
+    tex.flipY = false
+    tex.minFilter = THREE.LinearFilter
+    tex.magFilter = THREE.LinearFilter
+    tex.wrapS = THREE.ClampToEdgeWrapping
+    tex.wrapT = THREE.ClampToEdgeWrapping
+    tex.needsUpdate = true
+
+    biomeMap?.dispose()
+    setState({ biomeMap: tex, biomeComposition: field.composition })
+  }
+
+  let biomeTimer: ReturnType<typeof setTimeout> | null = null
+  function scheduleBiomeBake(): void {
+    if (biomeTimer !== null) clearTimeout(biomeTimer)
+    biomeTimer = setTimeout(() => {
+      biomeTimer = null
+      bakeBiomeField()
+    }, 120)
   }
 
   function applyWater(result: HydrologyResult): void {
@@ -524,6 +574,8 @@ export const useStore = create<State>((setState, getState) => {
   waterStats: null,
   settings: { ...DEFAULT_SETTINGS, ...(restored.settings as Partial<Settings>) },
   biome: null,
+  biomeMap: null,
+  biomeComposition: [],
   biomeOverrides: (restored.biomeOverrides as BiomeOverrides) ?? {},
   biomeKeys: [],
   frameToken: 0,
@@ -560,6 +612,11 @@ export const useStore = create<State>((setState, getState) => {
       biomeKeys: biomeKeys.filter((k) => k !== (key as BiomeKey)),
     })
     persistSettings(next, overrides)
+
+    // An edit to a climatic slider changes that class's numbers, so the field has to be
+    // rebaked — only the texels of that class move, which is what makes tuning the
+    // plains leave the mountains alone.
+    if (overrides !== biomeOverrides) scheduleBiomeBake()
 
     // Geometry-affecting settings need the mesh rebuilt from the cached DEM. Slider
     // drags fire on every pixel of travel, and a rebuild is hundreds of thousands of
@@ -608,6 +665,7 @@ export const useStore = create<State>((setState, getState) => {
     // The preset's per-biome table only shows itself once it is applied to the biome
     // actually on screen.
     if (biome && bounds) applyBiome(biome, (bounds.north + bounds.south) / 2)
+    bakeBiomeField()
     scheduleWater()
     // A preset can carry geometry settings, which need the mesh rebuilt.
     if (next.exaggeration !== settings.exaggeration || next.detail !== settings.detail) {
@@ -627,6 +685,7 @@ export const useStore = create<State>((setState, getState) => {
     setState({ settings: next, biomeOverrides: {}, biomeKeys: [] })
     persistSettings(next, {})
     if (biome && bounds) applyBiome(biome, (bounds.north + bounds.south) / 2)
+    bakeBiomeField()
     scheduleWater()
   },
 
@@ -639,6 +698,7 @@ export const useStore = create<State>((setState, getState) => {
     delete rest[biome.code]
     setState({ biomeOverrides: rest })
     applyBiome(biome, (bounds.north + bounds.south) / 2)
+    bakeBiomeField()
     persistSettings(getState().settings, rest)
   },
 

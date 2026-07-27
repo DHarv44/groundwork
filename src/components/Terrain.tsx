@@ -18,6 +18,7 @@ export default function Terrain({ build, sky, fogDensity }: Props) {
   const settings = useStore((s) => s.settings)
   const imagery = useStore((s) => s.imagery)
   const waterMask = useStore((s) => s.waterMask)
+  const biomeMap = useStore((s) => s.biomeMap)
   const materialRef = useRef<THREE.ShaderMaterial>(null)
 
   const satTexture = useMemo(() => {
@@ -69,6 +70,8 @@ export default function Terrain({ build, sky, fogDensity }: Props) {
       uRiparian: { value: settings.riparian },
       uRiparianReach: { value: settings.riparianReach },
       uGroundWarmth: { value: settings.groundWarmth },
+      uBiomeMap: { value: WHITE },
+      uHasBiomeMap: { value: 0 },
       uTextureRange: { value: settings.textureRange },
       uShadows: { value: settings.shadows ? 1 : 0 },
       uAoStrength: { value: settings.aoStrength },
@@ -121,6 +124,8 @@ export default function Terrain({ build, sky, fogDensity }: Props) {
     u.uRiparian.value = settings.riparian
     u.uRiparianReach.value = settings.riparianReach
     u.uGroundWarmth.value = settings.groundWarmth
+    u.uBiomeMap.value = biomeMap ?? WHITE
+    u.uHasBiomeMap.value = biomeMap ? 1 : 0
     u.uTextureRange.value = settings.textureRange
     u.uShadows.value = settings.shadows ? 1 : 0
     u.uAoStrength.value = settings.aoStrength
