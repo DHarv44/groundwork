@@ -69,9 +69,10 @@ export interface Settings {
   riverThreshold: number
   /** Aerial perspective. Off is a diagnostic view, not a weather setting. */
   showFog: boolean
-  /** The two ground-cover layers, switchable independently of each other. */
+  /** The ground-cover layers, switchable independently of each other. */
   showTrees: boolean
   showGrass: boolean
+  showSnow: boolean
   /** Each derived water class toggles independently. */
   showOcean: boolean
   showRivers: boolean
@@ -153,6 +154,7 @@ export const DEFAULT_SETTINGS: Settings = {
   showFog: true,
   showTrees: true,
   showGrass: true,
+  showSnow: true,
   showOcean: true,
   showRivers: true,
   showLakes: true,
@@ -260,6 +262,22 @@ interface State {
    * hand edit made before the biome was known.
    */
   biomeKeys: BiomeKey[]
+  /**
+   * Viewport scrubs: how the place is being *looked at*, not what it is.
+   *
+   * Deliberately outside `settings`, which is the only thing persisted, snapshotted into
+   * presets, or stored against a biome. Winter is not a property of Colorado, so putting
+   * it there would mean a preset saved in January dragged snow onto every tile it was
+   * later applied to. Keeping them here makes that impossible by construction rather
+   * than by remembering to exclude them from three separate lists.
+   *
+   * Both reset on reload, which is the intent — you scrub, look, and let go.
+   */
+  /** 0 = the climatic snow line, 1 = snow to the valley floor. */
+  winter: number
+  /** Multiplier on aerial perspective. 1 = as the atmosphere model computes it. */
+  hazeScrub: number
+
   /** Incremented whenever the viewer should re-frame the camera. */
   frameToken: number
 
@@ -274,6 +292,10 @@ interface State {
   resetBiome: () => void
   /** Classify the current selection. Called on start-up and whenever the box moves. */
   refreshBiome: () => void
+  /** Drag winter in and out. Transient — never persisted, never saved to a preset. */
+  setWinter: (v: number) => void
+  /** Scale the aerial perspective. Transient, same reasoning. */
+  setHazeScrub: (v: number) => void
   /** Overwrite the live settings from a saved snapshot. */
   applySettings: (patch: Record<string, unknown>) => void
   /** The persistable slice, for saving as a preset. */
@@ -322,6 +344,7 @@ const PERSISTED_SETTINGS = [
   'showFog',
   'showTrees',
   'showGrass',
+  'showSnow',
   'showOcean',
   'showRivers',
   'showLakes',
@@ -730,6 +753,8 @@ export const useStore = create<State>((setState, getState) => {
   editingBiome: null,
   biomeOverrides: (restored.biomeOverrides as BiomeOverrides) ?? {},
   biomeKeys: [],
+  winter: 0,
+  hazeScrub: 1,
   frameToken: 0,
 
   setBounds: (bounds) => {
@@ -846,6 +871,9 @@ export const useStore = create<State>((setState, getState) => {
   },
 
   refreshBiome: () => deriveBiome(),
+
+  setWinter: (winter) => setState({ winter: Math.min(1, Math.max(0, winter)) }),
+  setHazeScrub: (hazeScrub) => setState({ hazeScrub: Math.max(0, hazeScrub) }),
 
   setEditingBiome: (code) => {
     const { biome, bounds } = getState()

@@ -138,6 +138,8 @@ function CameraRig({
 export default function Viewer() {
   const build = useStore((s) => s.build)
   const settings = useStore((s) => s.settings)
+  const winter = useStore((s) => s.winter)
+  const hazeScrub = useStore((s) => s.hazeScrub)
   const isDemo = useStore((s) => s.heightField?.demtype === 'DEMO')
   const tapeRef = useRef<HTMLCanvasElement>(null)
 
@@ -153,8 +155,19 @@ export default function Viewer() {
   // Calibrated so the default lays ~15% of atmosphere over the far edge of the box,
   // which is about right for clear mountain air.
   // Killing the fog is not the same as setting haze to zero: haze also tints the sky
-  // dome, so this switch has to bypass the density rather than zero the setting.
-  const fogDensity = settings.showFog ? (settings.haze * 0.55) / size : 0
+  // dome, so this switch has to bypass the density rather than zero the setting. The
+  // scrub scales it for the same reason — you can clear the air to read the ground's
+  // true colour without the sky changing underneath you and moving the goalposts.
+  const fogDensity = settings.showFog ? (settings.haze * 0.55 * hazeScrub) / size : 0
+
+  // Winter drags the snow line down from wherever the climate put it, rather than
+  // replacing it, so the relationship between the classes present is preserved as it
+  // falls — the range whitens before the plains do, which is what actually happens.
+  // At full winter it goes below the lowest ground in the box so nothing is left bare.
+  const snowLine =
+    build && winter > 0
+      ? settings.snowLine + (build.minElevation - 60 - settings.snowLine) * winter
+      : settings.snowLine
 
   return (
     <div className="viewer">
@@ -173,7 +186,7 @@ export default function Viewer() {
         <SkyDome sky={sky} radius={size * 30} haze={settings.haze} />
         {build && (
           <>
-            <Terrain build={build} sky={sky} fogDensity={fogDensity} />
+            <Terrain build={build} sky={sky} fogDensity={fogDensity} snowLine={snowLine} />
             {settings.showOcean && <Water build={build} sky={sky} fogDensity={fogDensity} />}
           </>
         )}

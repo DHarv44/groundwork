@@ -71,6 +71,7 @@ uniform float uTreeRoughScale; // local relief, in metres, that counts as fully 
 uniform float uCorridorLeaf;   // how broadleaf the valley-bottom timber is
 uniform float uShowTrees;      // 0 hides the canopy, leaving grass on the same ground
 uniform float uShowGrass;      // 0 hides the grass, leaving only the timber
+uniform float uShowSnow;       // 0 hides the snow entirely
 uniform float uTextureRange;   // scales how far surface detail survives
 // Biomes baked over the tile: aridity, riparian, ground warmth and corridor reach, one
 // per channel. Sampling it replaces the four scalars above wherever it is present —
@@ -561,7 +562,7 @@ void main() {
   snow *= 1.0 - smoothstep(0.30, 0.66, slope);
   snow *= smoothstep(-0.55, 0.35, macro * 1.4 + meso * 0.6);
   snow *= 1.0 - aridity * 0.85;
-  snow = clamp(snow, 0.0, 1.0);
+  snow = clamp(snow, 0.0, 1.0) * uShowSnow;
   albedo = mix(albedo, snowCol, snow);
 
   // Beaches where the land meets the sea.

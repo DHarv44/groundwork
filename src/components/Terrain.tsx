@@ -10,11 +10,13 @@ interface Props {
   build: TerrainBuild
   sky: SkyModel
   fogDensity: number
+  /** Already carries the winter scrub, so the shader never sees the raw setting. */
+  snowLine: number
 }
 
 const WHITE = new THREE.Texture()
 
-export default function Terrain({ build, sky, fogDensity }: Props) {
+export default function Terrain({ build, sky, fogDensity, snowLine }: Props) {
   const settings = useStore((s) => s.settings)
   const imagery = useStore((s) => s.imagery)
   const waterMask = useStore((s) => s.waterMask)
@@ -82,6 +84,7 @@ export default function Terrain({ build, sky, fogDensity }: Props) {
       uCorridorLeaf: { value: settings.corridorLeaf },
       uShowTrees: { value: 1 },
       uShowGrass: { value: 1 },
+      uShowSnow: { value: 1 },
       uBiomeMap: { value: WHITE },
       uHasBiomeMap: { value: 0 },
       uTextureRange: { value: settings.textureRange },
@@ -129,7 +132,7 @@ export default function Terrain({ build, sky, fogDensity }: Props) {
     u.uSkyColor.value.copy(sky.skyColor)
     u.uHorizonColor.value.copy(sky.horizonColor)
     u.uGroundTint.value.copy(sky.groundTint)
-    u.uSnowLine.value = settings.snowLine
+    u.uSnowLine.value = snowLine
     u.uTreeLine.value = settings.treeLine
     u.uAridity.value = settings.aridity
     u.uStrata.value = settings.strata
@@ -148,6 +151,7 @@ export default function Terrain({ build, sky, fogDensity }: Props) {
     u.uCorridorLeaf.value = settings.corridorLeaf
     u.uShowTrees.value = settings.showTrees ? 1 : 0
     u.uShowGrass.value = settings.showGrass ? 1 : 0
+    u.uShowSnow.value = settings.showSnow ? 1 : 0
     u.uBiomeMap.value = biomeMap ?? WHITE
     u.uHasBiomeMap.value = biomeMap ? 1 : 0
     u.uTextureRange.value = settings.textureRange

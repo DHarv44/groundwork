@@ -33,6 +33,10 @@ export default function ViewLayers() {
   const waterStats = useStore((s) => s.waterStats)
   const set = useStore((s) => s.set)
   const loadImagery = useStore((s) => s.loadImagery)
+  const winter = useStore((s) => s.winter)
+  const hazeScrub = useStore((s) => s.hazeScrub)
+  const setWinter = useStore((s) => s.setWinter)
+  const setHazeScrub = useStore((s) => s.setHazeScrub)
 
   if (!build) return null
 
@@ -96,6 +100,49 @@ export default function ViewLayers() {
           <span className="glyph">▓</span>
           Grass
         </button>
+        <button
+          className={`cover ${settings.showSnow ? 'on' : ''}`}
+          title="Snow above the snow line"
+          onClick={() => set('showSnow', !settings.showSnow)}
+        >
+          <span className="glyph">❄</span>
+          Snow
+        </button>
+      </div>
+
+      {/* Scrubs, not settings. These say how the place is being looked at, not what it
+          is, so they live here rather than in the panel and are never saved — a preset
+          made in January should not drag winter onto every tile it is applied to. */}
+      <div className="scrub-group">
+        <label className="scrub">
+          <span>
+            Winter
+            <b>{winter === 0 ? 'off' : `${Math.round(winter * 100)}%`}</b>
+          </span>
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.01}
+            value={winter}
+            onChange={(e) => setWinter(parseFloat(e.target.value))}
+          />
+        </label>
+        <label className="scrub">
+          <span>
+            Haze
+            <b>{hazeScrub.toFixed(2)}×</b>
+          </span>
+          <input
+            type="range"
+            min={0}
+            max={3}
+            step={0.05}
+            value={hazeScrub}
+            onChange={(e) => setHazeScrub(parseFloat(e.target.value))}
+            disabled={!settings.showFog}
+          />
+        </label>
       </div>
 
       {/* Overlays, each independent of the base and of each other. */}
