@@ -729,6 +729,49 @@ input[type='range']::-moz-range-thumb {
   color: var(--accent);
 }
 
+/* Copy and paste block under the preset list. */
+.preset-io {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 9px;
+  padding-top: 9px;
+  border-top: 1px solid var(--line);
+}
+
+.preset-io button {
+  padding: 5px 9px;
+  font-size: 11px;
+  border-radius: 5px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.preset-io button:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.preset-io button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.preset-io textarea {
+  resize: vertical;
+  min-height: 34px;
+  padding: 6px 8px;
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  font-size: 10.5px;
+  line-height: 1.4;
+  border-radius: 5px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  color: var(--text);
+}
+
 .preset-del {
   flex: none;
   width: 24px;

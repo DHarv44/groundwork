@@ -127,7 +127,10 @@ export const DEFAULT_SETTINGS: Settings = {
   // scale, and anything below that is the broad hillslope background — put the threshold
   // there and the timber spreads over a quarter of the tile as a wash instead of
   // threading the valleys.
-  treeNeed: 0.62,
+  // Biome and climate shift this rather than scaling it, so on the Texas tile it lands
+  // at the 0.225 the calibration settled on while the slider still spans its whole
+  // range at every biome.
+  treeNeed: 0.31,
   treeLimit: 0.55,
   // A narrow edge is what makes the ribbons read as ribbons rather than as a gradient.
   treeSpread: 0.04,

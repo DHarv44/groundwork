@@ -371,7 +371,16 @@ void main() {
   if (uHasWater > 0.5) {
     float treeAccum = texture2D(uWaterMap, vUv).b;
     float edge = max(0.01, uTreeSpread);
-    float need = uTreeNeed * (1.0 - forest) * (0.45 + 0.90 * aridity);
+    // The slider is the threshold, in the units of the accumulation field, and biome and
+    // climate shift it rather than scaling it.
+    //
+    // Multiplying by (1 - forest) instead put the control out of reach exactly where it
+    // was needed: at a temperate tree cover of 0.7 it divided everything by more than
+    // three, so even a slider at maximum landed at 0.19 on a field whose visible channels
+    // start around 0.2, and no setting could put timber on the network. A shift keeps the
+    // full range available at every biome — the biome decides where the middle of the
+    // slider sits, not how much of the slider exists.
+    float need = clamp(uTreeNeed + 0.35 * (aridity - 0.5) - 0.30 * (forest - 0.5), 0.0, 1.0);
     rawTrees = smoothstep(need, need + edge, treeAccum) *
                (1.0 - smoothstep(uTreeLimit, uTreeLimit + edge, treeAccum));
   }

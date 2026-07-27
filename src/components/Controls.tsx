@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useStore, type BiomeKey, type Settings } from '../store'
+import { DEFAULT_SETTINGS, useStore, type BiomeKey, type Settings } from '../store'
 import { KOPPEN_CODES, colorFor } from '../lib/koppen'
 import { GROUND_WARMTH_MAX } from '../lib/biomeMap'
 import { DAILY_QUOTA, cacheClear, cacheStats, quotaUsed } from '../lib/demcache'
-import { deletePreset, loadPresets, savePreset } from '../lib/presets'
+import { decodePreset, deletePreset, encodePreset, loadPresets, savePreset } from '../lib/presets'
 import { DEM_SOURCES } from '../lib/opentopo'
 import { boundsAreaKm2, boundsExtentMetres, formatBounds } from '../lib/geo'
 import { captureScreenshot } from '../lib/capture'
@@ -201,6 +201,36 @@ export default function Controls() {
   const [showPresets, setShowPresets] = useState(false)
   // Name of the preset that just took an update, so the button can confirm it.
   const [justSaved, setJustSaved] = useState<string | null>(null)
+  const [pasteText, setPasteText] = useState('')
+  const [pasteNote, setPasteNote] = useState('')
+  // Name of the preset just copied, so its button can confirm it.
+  const [justCopied, setJustCopied] = useState<string | null>(null)
+
+  const copyPreset = (name: string, settings: Record<string, unknown>) => {
+    void navigator.clipboard
+      .writeText(encodePreset(name, settings))
+      .then(() => {
+        setJustCopied(name)
+        window.setTimeout(() => setJustCopied(null), 1200)
+      })
+      .catch(() => setPasteNote('Clipboard blocked by the browser.'))
+  }
+
+  const applyPasted = () => {
+    const result = decodePreset(pasteText, DEFAULT_SETTINGS as unknown as Record<string, unknown>)
+    if (result.error || !result.preset) {
+      setPasteNote(result.error ?? 'Could not read that.')
+      return
+    }
+    applySettings(result.preset.settings)
+    setPresets(savePreset(result.preset.name, result.preset.settings))
+    setPasteText('')
+    const n = Object.keys(result.preset.settings).length
+    setPasteNote(
+      `Applied and saved as “${result.preset.name}” — ${n} setting${n === 1 ? '' : 's'}` +
+        (result.ignored ? `, ${result.ignored.length} unrecognised and ignored.` : '.'),
+    )
+  }
 
   // What is actually loaded, which is not necessarily what the dropdown says.
   const isDemo = heightField?.demtype === 'DEMO'
@@ -350,6 +380,13 @@ export default function Controls() {
                       {justSaved === p.name ? '✓' : '⟳'}
                     </button>
                     <button
+                      className="preset-upd"
+                      title={`Copy “${p.name}” to the clipboard as text`}
+                      onClick={() => copyPreset(p.name, p.settings)}
+                    >
+                      {justCopied === p.name ? '✓' : '⧉'}
+                    </button>
+                    <button
                       className="preset-del"
                       title="Delete"
                       onClick={() => setPresets(deletePreset(p.name))}
@@ -360,6 +397,32 @@ export default function Controls() {
                 ))}
               </ul>
             )}
+
+            {/* Copy and paste, so a set can leave this browser: into a message, a file,
+                or another machine. Pasted text is untrusted and gets filtered against
+                the known settings before anything is applied. */}
+            <div className="preset-io">
+              <button
+                className="preset-copy"
+                onClick={() => copyPreset(presetName.trim() || 'Current', settingsSnapshot())}
+              >
+                {justCopied === (presetName.trim() || 'Current') ? '✓ Copied' : '⧉ Copy current'}
+              </button>
+              <textarea
+                value={pasteText}
+                onChange={(e) => {
+                  setPasteText(e.target.value)
+                  setPasteNote('')
+                }}
+                placeholder="…or paste a set here"
+                spellCheck={false}
+                rows={2}
+              />
+              <button className="preset-paste" disabled={!pasteText.trim()} onClick={applyPasted}>
+                Apply pasted
+              </button>
+              {pasteNote && <p className="note">{pasteNote}</p>}
+            </div>
           </div>
         )}
 
