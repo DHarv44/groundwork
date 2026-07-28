@@ -175,8 +175,10 @@ export default function Terrain({ build, sky, fogDensity, snowLine }: Props) {
     uniforms.uTime.value += delta
   })
 
+  // Named so the first-person drop-in can raycast against it without groping through
+  // the scene graph for whatever happens to be carrying the terrain material.
   return (
-    <mesh geometry={build.geometry} frustumCulled={false}>
+    <mesh name="terrain" geometry={build.geometry} frustumCulled={false}>
       <shaderMaterial
         ref={materialRef}
         vertexShader={terrainVertexShader}

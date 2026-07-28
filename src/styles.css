@@ -1030,6 +1030,40 @@ main {
   box-shadow: 0 2px 16px rgba(125, 211, 252, 0.3);
 }
 
+/* First person. The hint sits low and centred, out of the eyeline. */
+.walk-hint,
+.walk-tip {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 11px;
+  letter-spacing: 0.3px;
+  color: #b6c1d0;
+  background: rgba(9, 12, 17, 0.72);
+  border: 1px solid rgba(120, 136, 158, 0.32);
+  backdrop-filter: blur(7px);
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.walk-hint {
+  bottom: 18px;
+}
+
+.walk-hint b {
+  color: #fff;
+  font-weight: 600;
+}
+
+/* Quieter, since it is advice rather than active state. */
+.walk-tip {
+  bottom: 18px;
+  opacity: 0.55;
+  font-size: 10.5px;
+}
+
 /* Viewport scrubs. Narrow enough to sit under the layer stack without crowding it. */
 .view-layers .scrub-group {
   display: flex;

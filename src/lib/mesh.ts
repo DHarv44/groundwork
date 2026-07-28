@@ -24,8 +24,14 @@ export interface TerrainBuild {
 
 const MAX_NORMAL_TEX = 4096
 
-/** Bilinear sample of the height field in fractional grid coordinates. */
-function sampleBilinear(hf: HeightField, fx: number, fy: number): number {
+/**
+ * Bilinear sample of the height field in fractional grid coordinates.
+ *
+ * Exported because anything that needs to know where the surface *is* — walking on it,
+ * for one — has to sample it the same way the vertices were placed, half-cell offset
+ * and all. Reimplementing it elsewhere is how the two drift apart.
+ */
+export function sampleBilinear(hf: HeightField, fx: number, fy: number): number {
   const { width, height, data } = hf
   const x = Math.max(0, Math.min(width - 1, fx))
   const y = Math.max(0, Math.min(height - 1, fy))

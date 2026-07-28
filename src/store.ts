@@ -277,6 +277,8 @@ interface State {
   winter: number
   /** Multiplier on aerial perspective. 1 = as the atmosphere model computes it. */
   hazeScrub: number
+  /** True while standing on the ground in first person rather than orbiting. */
+  walking: boolean
 
   /** Incremented whenever the viewer should re-frame the camera. */
   frameToken: number
@@ -296,6 +298,8 @@ interface State {
   setWinter: (v: number) => void
   /** Scale the aerial perspective. Transient, same reasoning. */
   setHazeScrub: (v: number) => void
+  /** Entering and leaving first person. Transient. */
+  setWalking: (v: boolean) => void
   /** Overwrite the live settings from a saved snapshot. */
   applySettings: (patch: Record<string, unknown>) => void
   /** The persistable slice, for saving as a preset. */
@@ -760,6 +764,7 @@ export const useStore = create<State>((setState, getState) => {
   // the ground's warmth almost to neutral. A quarter of the atmospheric model keeps the
   // sense of depth without washing the colour off the terrain.
   hazeScrub: 0.25,
+  walking: false,
   frameToken: 0,
 
   setBounds: (bounds) => {
@@ -879,6 +884,7 @@ export const useStore = create<State>((setState, getState) => {
 
   setWinter: (winter) => setState({ winter: Math.min(1, Math.max(0, winter)) }),
   setHazeScrub: (hazeScrub) => setState({ hazeScrub: Math.max(0, hazeScrub) }),
+  setWalking: (walking) => setState({ walking }),
 
   setEditingBiome: (code) => {
     const { biome, bounds } = getState()

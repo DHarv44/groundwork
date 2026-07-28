@@ -11,6 +11,7 @@ import { rendererRef } from '../lib/capture'
 import { loadSession, saveSession } from '../lib/session'
 import Terrain from './Terrain'
 import Water from './Water'
+import FirstPerson from './FirstPerson'
 
 function RendererBridge() {
   const gl = useThree((s) => s.gl)
@@ -140,6 +141,7 @@ export default function Viewer() {
   const settings = useStore((s) => s.settings)
   const winter = useStore((s) => s.winter)
   const hazeScrub = useStore((s) => s.hazeScrub)
+  const walking = useStore((s) => s.walking)
   const isDemo = useStore((s) => s.heightField?.demtype === 'DEMO')
   const tapeRef = useRef<HTMLCanvasElement>(null)
 
@@ -191,6 +193,7 @@ export default function Viewer() {
           </>
         )}
         <CameraRig size={size} midY={midY} topY={topY} ready={!!build} />
+        <FirstPerson />
         <HeadingTape target={tapeRef} />
         <OrbitControls
           makeDefault
@@ -208,8 +211,19 @@ export default function Viewer() {
         </div>
       )}
 
-      <canvas className="heading-tape" ref={tapeRef} />
-      <ViewLayers />
+      {/* On foot, the layer stack and the heading tape are just clutter across the view,
+          and none of it can be clicked while the pointer is locked anyway. */}
+      {walking ? (
+        <div className="walk-hint">
+          <b>W A S D</b> walk · <b>shift</b> run · <b>mouse</b> look · <b>esc</b> back to orbit
+        </div>
+      ) : (
+        <>
+          <canvas className="heading-tape" ref={tapeRef} />
+          <ViewLayers />
+          {build && <div className="walk-tip">double-click the ground to stand on it</div>}
+        </>
+      )}
     </div>
   )
 }
