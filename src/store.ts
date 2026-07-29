@@ -10,6 +10,7 @@ import { DEM_SOURCES, fetchHeightField, validateRequest } from './lib/opentopo'
 import { fetchImagery } from './lib/imagery'
 import {
   NoRoadDataError,
+  diagnose,
   fetchOsm,
   type AreaKind,
   type OsmData,
@@ -1390,3 +1391,7 @@ void roadCacheSweep().then((n) => {
 if (import.meta.env.DEV) {
   ;(window as unknown as Record<string, unknown>).__terrain = useStore
 }
+
+// Connectivity report, always available — the failures it diagnoses are network ones and
+// happen to whoever is running the app, not only in development.
+;(window as unknown as Record<string, unknown>).__osm = diagnose

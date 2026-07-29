@@ -139,7 +139,12 @@ export interface OsmData {
 export function classesFor(areaKm2: number): RoadClass[] {
   if (areaKm2 <= 400) return ['track', 'minor', 'secondary', 'primary', 'motorway']
   if (areaKm2 <= 4000) return ['minor', 'secondary', 'primary', 'motorway']
-  return ['secondary', 'primary', 'motorway']
+  // Secondary roads are still worth having across a county. Across a small country they
+  // are neither resolvable nor answerable: a 30,000 km² box asking for every tertiary
+  // road in it is a query no public instance will finish, and the result would be a
+  // grey wash at one texel per two hundred metres even if it did.
+  if (areaKm2 <= 12000) return ['secondary', 'primary', 'motorway']
+  return ['primary', 'motorway']
 }
 
 /** Past this there is no sensible answer to give, so say so rather than hanging. */
@@ -157,15 +162,37 @@ const MAX_RESPONSE_BYTES = 120e6
 /**
  * Public Overpass instances, tried in order.
  *
- * More than two because the failures are not interchangeable. The main instance can be
- * unreachable from a given network entirely — a connection that never opens rather than
- * a request that is refused — while a mirror answers fine, and vice versa. One dead host
- * should cost a few seconds, not the whole feature.
+ * The bar is that an instance is documented on the OpenStreetMap wiki, or is verifiably
+ * run by an operator that is. Adding hosts from memory failed that twice: overpass.osm.jp
+ * serves a certificate for the wrong hostname, and overpass.kumi.systems is absent from
+ * the wiki — though checking rather than assuming showed it is run by Private.coffee,
+ * the same Austrian non-profit as the listed instance, so it stays.
+ *
+ * Which brings up the thing the list does not show on its face: the last two share an
+ * operator. They are two hostnames, not two organisations, so an outage or a policy
+ * decision at Private.coffee removes both at once. Real redundancy here is exactly one
+ * deep — FOSSGIS or them — and that is worth knowing before relying on the fallback.
+ *
+ * What crosses to them is a bounding box and a query; what comes back is JSON, parsed
+ * and never evaluated. No credentials go with it — a cross-origin fetch carries no
+ * cookies by default. So the exposure is that an operator learns which areas are being
+ * looked at, and that a hostile instance could return invented geometry. Private.coffee
+ * states it keeps only the first three bytes of the IPv4 address, for 48 hours.
+ *
+ * NOTE ON TERMS: Private.coffee's terms of use prohibit applications supporting warfare
+ * or military purposes. That is not a hypothetical restriction for this project — the
+ * exports are aimed partly at a military simulation — so anything built on that path
+ * should take its data from FOSSGIS, or bake it once from a source whose terms allow it,
+ * rather than quietly falling back to a mirror that forbids the use.
  */
 const ENDPOINTS = [
+  // FOSSGIS, the official instance. 10,000 queries/day, 1 GB/day.
   'https://overpass-api.de/api/interpreter',
-  'https://overpass.kumi.systems/api/interpreter',
+  // Private.coffee, listed on the wiki. No rate limit, asks for fair sharing.
   'https://overpass.private.coffee/api/interpreter',
+  // The same operator under its older hostname — kept because it is the one instance
+  // reachable on some networks where the other two are not.
+  'https://overpass.kumi.systems/api/interpreter',
 ]
 
 /**
@@ -206,6 +233,29 @@ function rememberEndpoint(endpoint: string): void {
 const PROBE_TIMEOUT_MS = 5000
 
 /**
+ * Tracing for the fetch path, on by default.
+ *
+ * This is the one part of the app whose failures live entirely outside it — an instance
+ * dropping packets, a mirror out of slots, a certificate for the wrong name, a response
+ * too large to parse — and none of those are visible from the rendered result. Every one
+ * of them cost a round of guesswork to identify, so the evidence is printed rather than
+ * reconstructed.
+ *
+ * Silence it with `localStorage['terrain-builder.osmlog'] = 'off'`.
+ */
+function osmLog(message: string, detail?: unknown): void {
+  try {
+    if (localStorage.getItem('terrain-builder.osmlog') === 'off') return
+  } catch {
+    /* storage unavailable — log anyway */
+  }
+  if (detail === undefined) console.info(`%c[osm]%c ${message}`, 'color:#7dd3fc', '')
+  else console.info(`%c[osm]%c ${message}`, 'color:#7dd3fc', '', detail)
+}
+
+const ms = (t0: number) => `${Math.round(performance.now() - t0)}ms`
+
+/**
  * Find instances that will actually talk to us, before sending a real query.
  *
  * Reachability and load are different questions and they deserve different timeouts. A
@@ -241,13 +291,16 @@ async function reachableEndpoints(signal?: AbortSignal): Promise<string[]> {
     // connection opened and rejects when it did not, which is the entire question.
     const origin = new URL(endpoint).origin
     const timeout = AbortSignal.timeout(PROBE_TIMEOUT_MS)
+    const t0 = performance.now()
     try {
       await fetch(origin, {
         mode: 'no-cors',
         signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
       })
+      osmLog(`probe ok    ${origin} (${ms(t0)})`)
       return endpoint
-    } catch {
+    } catch (err) {
+      osmLog(`probe DEAD  ${origin} (${ms(t0)}, ${(err as Error).name})`)
       return null
     }
   }
@@ -261,27 +314,42 @@ async function reachableEndpoints(signal?: AbortSignal): Promise<string[]> {
   const rest = ordered.slice(1)
   const results = await Promise.all(rest.map(probe))
   const live = rest.filter((_, i) => results[i] !== null)
-  // None answered: try everything anyway. A probe failing is evidence, not proof, and
-  // refusing to attempt the real request would be worse than attempting it in vain.
-  return live.length > 0 ? live : ordered
+  if (live.length === 0) {
+    // None answered: try everything anyway. A probe failing is evidence, not proof, and
+    // refusing to attempt the real request would be worse than attempting it in vain.
+    osmLog('no instance answered a probe — trying all of them regardless')
+    return ordered
+  }
+  return live
 }
 
 /**
- * How long to wait on one endpoint before moving to the next.
+ * How long Overpass is allowed to spend on the query, and how long we wait for it.
  *
- * Without this a host that accepts nothing takes the operating system's connect timeout
- * to fail — well over a minute on some networks — and the mirrors never get tried at
- * all. Generous enough for a real query over a city, short enough that an unreachable
- * host is not the end of it.
+ * These have to be set together, and the client's has to be the larger of the two. A
+ * fixed 50 s ceiling against a query that asked the server for 90 s meant aborting work
+ * the server would have finished — a big box failed with "signal timed out" while the
+ * far end was still perfectly happily assembling the answer.
+ *
+ * The server budget scales with the box because the work does. The client then allows
+ * that plus a margin for transferring what can be a hundred megabytes of JSON, which is
+ * not part of the server's own timeout at all.
+ *
+ * Being generous is only safe because reachability is settled separately: the probe has
+ * already established that something is listening, so this is spent on a host that is
+ * working rather than on one that is dropping packets.
  */
-const ATTEMPT_TIMEOUT_MS = 50000
+function timeoutsFor(areaKm2: number): { server: number; client: number } {
+  const server = Math.round(Math.min(180, Math.max(60, areaKm2 / 120)))
+  return { server, client: (server + 45) * 1000 }
+}
 
 function tagsFor(classes: RoadClass[]): string[] {
   const want = new Set(classes)
   return Object.keys(TAG_CLASS).filter((t) => want.has(TAG_CLASS[t]!))
 }
 
-function buildQuery(b: Bounds, classes: RoadClass[]): string {
+function buildQuery(b: Bounds, classes: RoadClass[], serverTimeout: number): string {
   // Overpass bbox order is (south, west, north, east).
   const bbox = `${b.south},${b.west},${b.north},${b.east}`
   const roads = tagsFor(classes).join('|')
@@ -295,7 +363,7 @@ function buildQuery(b: Bounds, classes: RoadClass[]): string {
   // out would silently drop exactly the largest features in the box. Route relations on
   // roads carry no geometry of their own and are not wanted.
   return (
-    `[out:json][timeout:90];(` +
+    `[out:json][timeout:${serverTimeout}];(` +
     `way["highway"~"^(${roads})$"](${bbox});` +
     `way["natural"~"^(water|wood)$"](${bbox});` +
     `way["landuse"~"^(${landuse})$"](${bbox});` +
@@ -411,6 +479,74 @@ function wayLength(pts: Float64Array): number {
 export class NoRoadDataError extends Error {}
 
 /**
+ * Connectivity report, for running by hand from the console.
+ *
+ * Deliberately separate from the app's own path: it takes no state, changes nothing, and
+ * answers the two questions that actually distinguish the failure modes — can the
+ * browser open a connection to each instance, and will each one answer a real (tiny)
+ * query. A host can pass the first and fail the second, which is what "reachable but out
+ * of slots" looks like, and the remedies are different.
+ *
+ * The test query asks for the count of one node in a metre-wide box: valid, CORS-checked
+ * on the same path a real request uses, and about as close to free as Overpass allows.
+ */
+export async function diagnose(): Promise<
+  Array<{ host: string; reachable: string; query: string }>
+> {
+  const probeOne = async (endpoint: string) => {
+    /* one instance, start to finish — see the note on serialisation below */
+    const host = new URL(endpoint).host
+    const origin = new URL(endpoint).origin
+
+    let reachable: string
+    const t0 = performance.now()
+    try {
+      await fetch(origin, { mode: 'no-cors', signal: AbortSignal.timeout(PROBE_TIMEOUT_MS) })
+      reachable = `yes (${ms(t0)})`
+    } catch (err) {
+      reachable = `NO — ${(err as Error).name} (${ms(t0)})`
+    }
+
+    let query: string
+    const t1 = performance.now()
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: `data=${encodeURIComponent('[out:json];node(0,0,0.0001,0.0001);out count;')}`,
+        signal: AbortSignal.timeout(15000),
+      })
+      query = `${res.status} (${ms(t1)})`
+    } catch (err) {
+      query = `NO — ${(err as Error).name} (${ms(t1)})`
+    }
+
+    return { host, reachable, query }
+  }
+
+  // One at a time, not in parallel.
+  //
+  // Overpass counts concurrent query slots per client IP — a couple at most — so firing
+  // a test query at every instance at once means they queue behind each other and time
+  // out, which reads as "every mirror is dead" when the truth is "we asked too much at
+  // once". A diagnostic that creates the condition it is testing for is worse than none.
+  //
+  // For the same reason this is worth running only when the app is idle: a real fetch in
+  // flight holds a slot, and anything asked alongside it queues.
+  const rows = []
+  for (const endpoint of ENDPOINTS) rows.push(await probeOne(endpoint))
+  console.table(rows)
+  let remembered: string | null = null
+  try {
+    remembered = localStorage.getItem(LAST_GOOD_KEY)
+  } catch {
+    /* ignore */
+  }
+  console.info(`[osm] last good endpoint: ${remembered ?? '(none recorded)'}`)
+  return rows
+}
+
+/**
  * POST, retrying once through a short wait when the server says it is busy.
  *
  * A public Overpass instance answers 429 when every query slot for your IP is taken and
@@ -424,13 +560,14 @@ export class NoRoadDataError extends Error {}
 async function postWithBackoff(
   endpoint: string,
   body: string,
+  clientTimeoutMs: number,
   signal: AbortSignal | undefined,
   onProgress?: (note: string) => void,
 ): Promise<Response> {
   const send = () => {
     // The caller's abort still wins; this only adds a ceiling so an endpoint that never
     // answers cannot hold up the ones after it.
-    const timeout = AbortSignal.timeout(ATTEMPT_TIMEOUT_MS)
+    const timeout = AbortSignal.timeout(clientTimeoutMs)
     return fetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -439,13 +576,22 @@ async function postWithBackoff(
     })
   }
 
+  const host = new URL(endpoint).host
+  const t0 = performance.now()
   const first = await send()
-  if (first.status !== 429 && first.status !== 504) return first
+  if (first.status !== 429 && first.status !== 504) {
+    osmLog(`POST ${host} -> ${first.status} (${ms(t0)})`)
+    return first
+  }
 
+  osmLog(`POST ${host} -> ${first.status} busy (${ms(t0)}), waiting 4s`)
   onProgress?.('OpenStreetMap is busy — waiting for a slot…')
   await new Promise((r) => setTimeout(r, 4000))
   if (signal?.aborted) throw new DOMException('aborted', 'AbortError')
-  return send()
+  const t1 = performance.now()
+  const second = await send()
+  osmLog(`POST ${host} retry -> ${second.status} (${ms(t1)})`)
+  return second
 }
 
 /**
@@ -479,10 +625,25 @@ export async function fetchOsm(
   // never cost detail.
   const requested = classesFor(boundsAreaKm2(detailFor ?? bounds))
   const filtered = requested.length < ROAD_ORDER.length
-  const body = `data=${encodeURIComponent(buildQuery(bounds, requested))}`
+  const { server, client } = timeoutsFor(boxKm2)
+  const body = `data=${encodeURIComponent(buildQuery(bounds, requested, server))}`
+
+  const started = performance.now()
+  osmLog(
+    `fetch ${Math.round(boxKm2).toLocaleString()} km²` +
+      (detailFor ? ` (detail for ${Math.round(boundsAreaKm2(detailFor)).toLocaleString()} km²)` : ''),
+    {
+      box: `S${bounds.south.toFixed(4)} N${bounds.north.toFixed(4)} W${bounds.west.toFixed(4)} E${bounds.east.toFixed(4)}`,
+      roadClasses: requested.join(', '),
+      classFilterApplied: filtered,
+      serverTimeout: `${server}s`,
+      clientTimeout: `${Math.round(client / 1000)}s`,
+    },
+  )
 
   onProgress?.('Finding an OpenStreetMap server…')
   const endpoints = await reachableEndpoints(signal)
+  osmLog(`will try ${endpoints.length}: ${endpoints.map((e) => new URL(e).host).join(' → ')}`)
   let lastError: Error | null = null
   let busy = 0
 
@@ -490,7 +651,7 @@ export async function fetchOsm(
     const endpoint = endpoints[i]!
     try {
       onProgress?.(i === 0 ? 'Querying OpenStreetMap…' : 'Trying another mirror…')
-      const res = await postWithBackoff(endpoint, body, signal, onProgress)
+      const res = await postWithBackoff(endpoint, body, client, signal, onProgress)
       if (!res.ok) {
         // 429 and 504 mean the instance is busy rather than broken, so move to the next
         // one instead of giving up — but remember that it happened, because if *every*
@@ -508,7 +669,9 @@ export async function fetchOsm(
       // `out geom` inlines every coordinate, so a dense box produces a very large body,
       // and JSON.parse on hundreds of megabytes takes the tab down rather than throwing
       // something catchable. Checking first turns an out-of-memory crash into a message.
+      const tRead = performance.now()
       const text = await res.text()
+      osmLog(`body ${(text.length / 1e6).toFixed(1)} MB read in ${ms(tRead)}`)
       if (text.length > MAX_RESPONSE_BYTES) {
         throw new NoRoadDataError(
           `OpenStreetMap returned ${(text.length / 1e6).toFixed(0)} MB for this area, which ` +
@@ -516,8 +679,12 @@ export async function fetchOsm(
         )
       }
 
+      const tParse = performance.now()
       const json = JSON.parse(text) as { elements?: OverpassElement[]; remark?: string }
-      // Overpass reports its own failures inside a 200 response.
+      osmLog(`parsed ${(json.elements?.length ?? 0).toLocaleString()} elements in ${ms(tParse)}`)
+      // Overpass reports its own failures inside a 200 response. A remark alongside real
+      // elements is usually a truncation warning, which is worth seeing either way.
+      if (json.remark) osmLog(`server remark: ${json.remark}`)
       if (json.remark && !json.elements?.length) throw new Error(json.remark)
 
       const roads: RoadWay[] = []
@@ -564,6 +731,16 @@ export async function fetchOsm(
       }
 
       rememberEndpoint(endpoint)
+      const holes = areas.reduce((n, a) => n + a.inner.length, 0)
+      osmLog(
+        `done in ${ms(started)} via ${new URL(endpoint).host}`,
+        {
+          roads: roads.length,
+          roadKm: Math.round(metres / 1000),
+          areas: areas.length,
+          holes,
+        },
+      )
       return {
         bounds,
         roads,
@@ -575,12 +752,14 @@ export async function fetchOsm(
       }
     } catch (err) {
       if ((err as Error)?.name === 'AbortError') throw err
+      osmLog(`FAILED on ${new URL(endpoint).host}: ${(err as Error).message}`)
       // A body too large for this box will be too large from every mirror, so there is
       // nothing to gain by asking three more servers the same impossible question.
       if (err instanceof NoRoadDataError) throw err
       lastError = err as Error
     }
   }
+  osmLog(`all ${endpoints.length} instances failed after ${ms(started)} (busy: ${busy})`)
 
   // Every instance refused. Which kind of refusal decides what to tell the user, because
   // the two have completely different remedies.
