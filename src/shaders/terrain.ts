@@ -705,11 +705,7 @@ void main() {
     // sealed in Colorado and graded laterite in the Congo.
     // (No backticks anywhere in here — this GLSL is a JS template literal and one would
     // end it, which fails as a syntax error a long way from the cause.)
-    // The break sits between track and everything above it. Class arrives normalised
-    // against the top of the hierarchy, so the lowest rung is 0 and the next is 1/5 —
-    // this steps across the gap between them rather than at a fixed fraction, which
-    // would move every time a class is added.
-    float tint = mix(max(uRoadTint, 0.9), uRoadTint, smoothstep(0.02, 0.18, roadClass));
+    float tint = mix(max(uRoadTint, 0.9), uRoadTint, smoothstep(0.02, 0.2, roadClass));
     albedo = mix(albedo, mix(metalled, graded, tint), cov);
 
     // Roads are the first thing cleared and the last thing to hold snow.

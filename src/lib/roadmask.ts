@@ -2,7 +2,6 @@ import type { Bounds } from './geo'
 import { boundsExtentMetres } from './geo'
 import {
   ROAD_ORDER,
-  ROAD_ORDER_MAX,
   ROAD_CLASSES,
   type AreaKind,
   type OsmData,
@@ -38,16 +37,6 @@ import {
  */
 
 export interface MaskOptions {
-  /**
-   * The box being drawn, which is not necessarily the box that was fetched.
-   *
-   * The cache can answer with any earlier fetch that *contains* what is wanted, so the
-   * data often covers more ground than the terrain does. Projecting against the render
-   * box rather than the data's own bounds is what makes that safe: the surplus features
-   * land outside the canvas and are clipped, instead of squashing the whole network into
-   * the wrong footprint.
-   */
-  renderBounds: Bounds
   /** Longest side of the masks in pixels. The short side follows the ground aspect. */
   resolution: number
   /** Multiplies the true metric width of every road class. */
@@ -55,11 +44,11 @@ export interface MaskOptions {
   /** Cleared corridor width, as a multiple of the road surface width. */
   vergeScale: number
   /**
-   * Which road classes to draw.
+   * Which road classes to draw, from the Roads tab.
    *
-   * Filtered at stroke time rather than when the geometry is built, so unticking a class
-   * costs one redraw and reticking it costs nothing — the projected paths for everything
-   * fetched stay in the cache either way.
+   * Filtered here rather than at fetch time. Everything the box carries is already in
+   * hand, so this is a redraw — unticking a class costs nothing and ticking it back
+   * costs nothing, and neither goes near the network.
    */
   classes: Record<RoadClass, boolean>
 }
@@ -148,19 +137,15 @@ interface Geometry {
  *
  * Keyed on identity, not contents: a new data object always means a new box.
  */
-let geoCache: { data: OsmData; w: number; h: number; box: string; geo: Geometry } | null = null
+let geoCache: { data: OsmData; w: number; h: number; geo: Geometry } | null = null
 
 function geometryFor(
   data: OsmData,
   w: number,
   h: number,
-  renderBounds: Bounds,
   project: (lon: number, lat: number) => [number, number],
 ): Geometry {
-  // The render box is part of the key as well as the data: the same fetch can be drawn
-  // for several boxes inside it, and each needs its own projection.
-  const box = `${renderBounds.south},${renderBounds.north},${renderBounds.west},${renderBounds.east}`
-  if (geoCache && geoCache.data === data && geoCache.w === w && geoCache.h === h && geoCache.box === box) {
+  if (geoCache && geoCache.data === data && geoCache.w === w && geoCache.h === h) {
     return geoCache.geo
   }
 
@@ -279,7 +264,7 @@ function geometryFor(
   }
 
   const geo: Geometry = { paths, lengths, areas, holed, areaCounts }
-  geoCache = { data, w, h, box, geo }
+  geoCache = { data, w, h, geo }
   return geo
 }
 
@@ -296,7 +281,7 @@ function projector(bounds: Bounds, w: number, h: number) {
 
 export function buildMasks(data: OsmData, opts: MaskOptions): Masks {
   const started = performance.now()
-  const { width: groundW, height: groundH } = boundsExtentMetres(opts.renderBounds)
+  const { width: groundW, height: groundH } = boundsExtentMetres(data.bounds)
 
   // Match the pixel aspect to the ground aspect so one metres-per-pixel figure is true
   // on both axes — otherwise a stroke width correct east-west is wrong north-south, and
@@ -307,8 +292,8 @@ export function buildMasks(data: OsmData, opts: MaskOptions): Masks {
   const h = landscape ? Math.max(1, Math.round((longest * groundH) / groundW)) : longest
   const pxPerMetre = w / groundW
 
-  const project = projector(opts.renderBounds, w, h)
-  const geo = geometryFor(data, w, h, opts.renderBounds, project)
+  const project = projector(data.bounds, w, h)
+  const geo = geometryFor(data, w, h, project)
 
   // Only classes that actually came back can honestly be reported as widened — otherwise
   // the readout claims to have drawn tracks in a box where tracks were never requested.
@@ -319,14 +304,7 @@ export function buildMasks(data: OsmData, opts: MaskOptions): Masks {
     const metres = ROAD_CLASSES[cls].width * opts.widthScale * multiplier
     const px = metres * pxPerMetre
     if (px < MIN_PIXELS && multiplier === 1 && present.has(cls)) widened.add(cls)
-    // The floor scales with the width setting too.
-    //
-    // Otherwise it silently overrides it in exactly the case where it matters: on a wide
-    // box every class is below the floor, so all of them sit at 1.4 px and the slider
-    // can only ever make roads thicker. Scaling the floor keeps roads visible by default
-    // while leaving a way to thin the network down when it reads as a mesh rather than
-    // as roads.
-    return Math.max(MIN_PIXELS * multiplier * opts.widthScale, px)
+    return Math.max(MIN_PIXELS * multiplier, px)
   }
 
   // ---- areas -------------------------------------------------------------------
@@ -406,9 +384,7 @@ export function buildMasks(data: OsmData, opts: MaskOptions): Masks {
   for (const cls of ROAD_ORDER) {
     const p = opts.classes[cls] ? geo.paths.get(cls) : undefined
     if (!p) continue
-    // Normalised against the top of the hierarchy rather than a hardcoded divisor, so
-    // adding a class cannot silently rescale what the shader reads out of this channel.
-    const g = Math.round((ROAD_CLASSES[cls].order / ROAD_ORDER_MAX) * 255)
+    const g = Math.round((ROAD_CLASSES[cls].order / 4) * 255)
     ctx.strokeStyle = `rgb(255,${g},255)`
     ctx.lineWidth = strokeWidth(cls, 1)
     ctx.stroke(p)

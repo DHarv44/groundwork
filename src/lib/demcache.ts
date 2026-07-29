@@ -1,6 +1,6 @@
 import type { Bounds } from './geo'
 import type { HeightField } from './opentopo'
-import type { OsmData, OsmRequest } from './overpass'
+import type { OsmData } from './overpass'
 
 /**
  * Persistent cache of decoded DEMs.
@@ -178,152 +178,27 @@ interface CachedRoads {
  * v3 stitched them into rings correctly but still dropped inner ones, so an island was
  * flooded and a clearing filled in. Those entries hold no hole information at all, which
  * cannot be recovered without asking again.
- *
- * v4 folded tertiary roads in with secondary. Entries from then label the whole arterial
- * street grid as secondary, so they would be drawn at the wrong width and — worse —
- * would satisfy a request for secondary-only with a payload full of tertiary.
- *
- * v5 stored roads and every area kind under one key. Each layer is fetched separately
- * now and keyed by which layer it holds, so the old entries answer a question nothing
- * asks any more.
  */
-const OSM_QUERY_VERSION = 6
+const OSM_QUERY_VERSION = 4
 
 /**
- * Grid steps the fetch box snaps to, in degrees.
+ * Keyed on the box alone.
  *
- * Keying on the exact box means a cache that almost never hits. Nudge the selection by
- * a hair and every coordinate changes, so a box overlapping the last one by 99% counts
- * as somewhere new and refetches the lot. Snapping the *fetch* outward to a grid makes
- * small adjustments land on the same key, which is the common case while framing a shot.
- *
- * The step scales with the box because a fixed one is wrong at both ends: 0.05° is a
- * rounding error on a 100 km box and nearly doubles a 7 km one.
+ * What an entry contains follows from its bounds, so there is one answer per box rather
+ * than one per combination of checkboxes — the Roads tab decides what is drawn out of
+ * this, not what is in it.
  */
-const SNAP_STEPS = [0.005, 0.01, 0.02, 0.05, 0.1, 0.25]
-
-function snapStepFor(bounds: Bounds): number {
-  const span = Math.max(bounds.north - bounds.south, bounds.east - bounds.west)
-  // A fortieth of the box.
-  //
-  // This was a twelfth, which grew the fetched area by up to a third — paid on every
-  // first fetch, to save a request only if the box is later nudged. That is the wrong
-  // way round: the fetch is the slow part and the nudge is hypothetical. A fortieth
-  // still absorbs the small adjustments this exists for while costing a few per cent.
-  const target = span / 40
-  for (let i = SNAP_STEPS.length - 1; i >= 0; i--) {
-    if (SNAP_STEPS[i]! <= target) return SNAP_STEPS[i]!
-  }
-  return SNAP_STEPS[0]!
-}
-
-/** The box actually fetched: the requested one grown out to the nearest grid lines. */
-export function snapBounds(bounds: Bounds): Bounds {
-  const s = snapStepFor(bounds)
-  return {
-    south: Math.floor(bounds.south / s) * s,
-    north: Math.ceil(bounds.north / s) * s,
-    west: Math.floor(bounds.west / s) * s,
-    east: Math.ceil(bounds.east / s) * s,
-  }
-}
-
-/**
- * The key carries what was asked for as well as where.
- *
- * A fetch of motorways alone is not interchangeable with one that went down to
- * residential streets, and neither is one that skipped the landuse polygons. Keying on
- * the box alone would serve the thin answer to a request for the thick one, and the
- * missing detail would look like a place with no streets in it.
- */
-function roadKey(bounds: Bounds, req: OsmRequest): string {
+function roadKey(bounds: Bounds): string {
   const f = (n: number) => n.toFixed(5)
-  return (
-    `${KEY_PREFIX}${req.kind}|` +
-    `${f(bounds.south)}|${f(bounds.north)}|${f(bounds.west)}|${f(bounds.east)}`
-  )
+  return `v${OSM_QUERY_VERSION}|${f(bounds.south)}|${f(bounds.north)}|${f(bounds.west)}|${f(bounds.east)}`
 }
 
-const KEY_PREFIX = `v${OSM_QUERY_VERSION}|`
-
-/**
- * Recover what a key was written for, or null if it is from an older schema.
- *
- * Returns the request alongside the bounds because containment is not enough on its own:
- * an entry covering this box is only usable if it was also asked the same question.
- */
-function fromKey(key: string): { bounds: Bounds; req: OsmRequest } | null {
-  if (!key.startsWith(KEY_PREFIX)) return null
-  const parts = key.slice(KEY_PREFIX.length).split('|')
-  if (parts.length !== 5) return null
-  const p = parts.slice(1).map(Number)
-  if (p.some((n) => !Number.isFinite(n))) return null
-  return {
-    bounds: { south: p[0]!, north: p[1]!, west: p[2]!, east: p[3]! },
-    req: { kind: parts[0] as OsmRequest['kind'] },
-  }
-}
-
-function contains(outer: Bounds, inner: Bounds): boolean {
-  // A hair of tolerance, because these round-trip through five decimal places.
-  const e = 1e-6
-  return (
-    outer.south <= inner.south + e &&
-    outer.north >= inner.north - e &&
-    outer.west <= inner.west + e &&
-    outer.east >= inner.east - e
-  )
-}
-
-function boundsArea(b: Bounds): number {
-  return (b.north - b.south) * (b.east - b.west)
-}
-
-/**
- * Any cached fetch that covers this box.
- *
- * Not an exact-key lookup. Keys carry the bounds they were written for, so the smallest
- * cached box *containing* the wanted one is a valid answer — zooming in, nudging an edge
- * inward, or re-selecting inside somewhere already fetched all become hits instead of
- * full refetches. The extra features outside the box cost nothing: the rasteriser
- * projects against the box being rendered, so they simply fall off the canvas.
- *
- * Keys are read first and only the chosen entry is loaded. Each holds every way in its
- * box, so pulling them all in to compare bounds would mean deserialising tens of
- * megabytes to answer a question the key already contains.
- */
-export async function roadCacheGet(bounds: Bounds, want: OsmRequest): Promise<OsmData | null> {
+export async function roadCacheGet(bounds: Bounds): Promise<OsmData | null> {
   try {
     const db = await openDb()
-
-    const keys = await new Promise<IDBValidKey[]>((resolve, reject) => {
-      const tx = db.transaction(ROAD_STORE, 'readonly')
-      const req = tx.objectStore(ROAD_STORE).getAllKeys()
-      req.onsuccess = () => resolve(req.result)
-      req.onerror = () => reject(req.error)
-    })
-
-    let best: { key: string; area: number } | null = null
-    for (const raw of keys) {
-      const key = String(raw)
-      const entry = fromKey(key)
-      if (!entry) continue
-      if (entry.req.kind !== want.kind) continue
-      const b = entry.bounds
-      if (!contains(b, bounds)) continue
-      const area = boundsArea(b)
-      // Smallest containing box, so a tight fetch is preferred over a sprawling one and
-      // the mask keeps as much of its resolution as possible on the ground being drawn.
-      if (!best || area < best.area) best = { key, area }
-    }
-    if (!best) {
-      db.close()
-      return null
-    }
-
     const entry = await new Promise<CachedRoads | undefined>((resolve, reject) => {
       const tx = db.transaction(ROAD_STORE, 'readonly')
-      const req = tx.objectStore(ROAD_STORE).get(best!.key)
+      const req = tx.objectStore(ROAD_STORE).get(roadKey(bounds))
       req.onsuccess = () => resolve(req.result as CachedRoads | undefined)
       req.onerror = () => reject(req.error)
     })
@@ -334,56 +209,18 @@ export async function roadCacheGet(bounds: Bounds, want: OsmRequest): Promise<Os
   }
 }
 
-export async function roadCachePut(network: OsmData, req: OsmRequest): Promise<void> {
+export async function roadCachePut(network: OsmData): Promise<void> {
   try {
     const db = await openDb()
     await new Promise<void>((resolve, reject) => {
       const tx = db.transaction(ROAD_STORE, 'readwrite')
-      tx.objectStore(ROAD_STORE).put({ key: roadKey(network.bounds, req), network })
+      tx.objectStore(ROAD_STORE).put({ key: roadKey(network.bounds), network })
       tx.oncomplete = () => resolve()
       tx.onerror = () => reject(tx.error)
     })
     db.close()
   } catch {
     /* cache writes are best-effort */
-  }
-}
-
-/**
- * Drop entries written by an older query schema.
- *
- * Version bumps orphan rather than evict: the old keys stop matching but the data stays,
- * and each entry holds every way in its box. Four schema fixes in one afternoon left
- * seven entries for three places, none of them reachable. Nothing else ever removes
- * them, so the sweep runs once at start-up.
- */
-export async function roadCacheSweep(): Promise<number> {
-  try {
-    const db = await openDb()
-    const keys = await new Promise<IDBValidKey[]>((resolve, reject) => {
-      const tx = db.transaction(ROAD_STORE, 'readonly')
-      const req = tx.objectStore(ROAD_STORE).getAllKeys()
-      req.onsuccess = () => resolve(req.result)
-      req.onerror = () => reject(req.error)
-    })
-
-    const stale = keys.filter((k) => !String(k).startsWith(KEY_PREFIX))
-    if (stale.length === 0) {
-      db.close()
-      return 0
-    }
-
-    await new Promise<void>((resolve, reject) => {
-      const tx = db.transaction(ROAD_STORE, 'readwrite')
-      const store = tx.objectStore(ROAD_STORE)
-      for (const k of stale) store.delete(k)
-      tx.oncomplete = () => resolve()
-      tx.onerror = () => reject(tx.error)
-    })
-    db.close()
-    return stale.length
-  } catch {
-    return 0
   }
 }
 

@@ -1,6 +1,5 @@
 import { useStore, type Settings, type TextureMode } from '../store'
-import { ROAD_ORDER, type OsmKind } from '../lib/overpass'
-import type { OsmPhase } from '../store'
+import type { AreaKind } from '../lib/overpass'
 
 interface BaseDef {
   id: TextureMode
@@ -38,15 +37,8 @@ const ROAD_HINT: Record<string, string> = {
 
 interface OsmLayerDef {
   key: 'showRoads' | 'showOsmWater' | 'showOsmWood' | 'showOsmBuilt'
-  /**
-   * Which fetches this button reports on.
-   *
-   * A list because the roads button stands for six of them — one per class, each its own
-   * request — while the area buttons stand for exactly one each. Which classes are in
-   * the list depends on what is ticked on the Roads tab, so it is worked out per render
-   * rather than stated here.
-   */
-  kind?: OsmKind
+  /** Which ring count reports on this layer. Roads are ways, so they have none. */
+  kind?: AreaKind
   glyph: string
   label: string
   hint: string
@@ -82,9 +74,8 @@ export default function ViewLayers() {
   const settings = useStore((s) => s.settings)
   const build = useStore((s) => s.build)
   const waterStats = useStore((s) => s.waterStats)
-  const osmPhase = useStore((s) => s.osmPhase)
-  const osmError = useStore((s) => s.osmError)
-  const loadOsmKind = useStore((s) => s.loadOsmKind)
+  const roadPhase = useStore((s) => s.roadPhase)
+  const roadInfo = useStore((s) => s.roadInfo)
   const imageryLoading = useStore((s) => s.imageryLoading)
   const set = useStore((s) => s.set)
   const loadImagery = useStore((s) => s.loadImagery)
@@ -102,10 +93,10 @@ export default function ViewLayers() {
    * A layer's glyph, or a spinner while the data behind it is still arriving.
    *
    * Every layer here sits on something that streams in after the terrain does — the
-   * hydrology worker, a tile fetch, an Overpass query — and until this, a layer that was
-   * not ready simply looked switched off. The spinner is the difference between "there
-   * is no water here" and "the water has not been worked out yet", which are the two
-   * readings the button has to keep apart.
+   * hydrology worker, a tile fetch, an Overpass query — and without this a layer that
+   * was not ready simply looked switched off. The spinner is the difference between
+   * "there is no water here" and "the water has not been worked out yet", which are the
+   * two readings these buttons exist to keep apart.
    */
   const glyph = (mark: string, pending: boolean) =>
     pending ? <i className="tiny-spin" /> : mark
@@ -230,58 +221,30 @@ export default function ViewLayers() {
           have no mapped anything — and it has to stay distinguishable from a fetch that
           fell over. All four come from one query, so they share a phase. */}
       <div className="overlay-group">
-        {OSM_LAYERS.map((l) => {
-          // Every layer follows its own fetch, and the roads button follows the six
-          // classes underneath it — worst case wins, because that is the state worth
-          // acting on. One class still going means the network is incomplete; one failed
-          // means something needs another go.
-          const kinds: OsmKind[] = l.kind
-            ? [l.kind]
-            : ROAD_ORDER.filter((c) => settings.roadClasses[c])
-          const phase: OsmPhase = kinds.some((k) => osmPhase[k] === 'error')
-            ? 'error'
-            : kinds.some((k) => osmPhase[k] === 'loading')
-              ? 'loading'
-              : kinds.some((k) => osmPhase[k] === 'ready')
-                ? 'ready'
-                : kinds.length && kinds.every((k) => osmPhase[k] === 'empty')
-                  ? 'empty'
-                  : 'idle'
-          const failed = phase === 'error'
-          return (
-            <button
-              key={l.key}
-              className={`road ${settings[l.key] && phase === 'ready' ? 'on' : ''} ${
-                failed ? 'failed' : ''
-              }`}
-              // Never disabled, including mid-fetch. These say whether you want the
-              // layer drawn, which is a question you can answer before the data lands —
-              // and an Overpass query over a city can run for half a minute, so
-              // disabling them meant four dead buttons for most of the wait.
-              title={
-                failed
-                  ? (kinds.map((k) => osmError[k]).find(Boolean) ?? 'Failed — click to retry')
-                  : phase === 'ready'
-                    ? l.hint
-                    : ROAD_HINT[phase]
-              }
-              // A failed layer retries on click rather than toggling something invisible.
-              // Otherwise the flag decides everything: turning a mapped layer on is what
-              // fetches it, so there is no state where pressing this looks like it did
-              // nothing.
-              onClick={() =>
-                failed
-                  ? kinds.forEach((k) => void loadOsmKind(k))
-                  : set(l.key, !settings[l.key])
-              }
-            >
-              <span className="glyph">{glyph(l.glyph, phase === 'loading')}</span>
-              {l.label}
-              {phase === 'empty' && <em>none</em>}
-              {failed && <em>retry</em>}
-            </button>
-          )
-        })}
+        {OSM_LAYERS.map((l) => (
+          <button
+            key={l.key}
+            className={`road ${settings[l.key] && roadPhase === 'ready' ? 'on' : ''} ${
+              roadPhase === 'error' ? 'failed' : ''
+            }`}
+            // Never disabled, including mid-fetch. These say whether you want the layer
+            // drawn, which is answerable before the data lands — and an Overpass query
+            // over a city can run for half a minute, so disabling them meant four dead
+            // buttons for most of the wait.
+            title={roadPhase === 'ready' ? l.hint : ROAD_HINT[roadPhase]}
+            onClick={() => set(l.key, !settings[l.key])}
+          >
+            <span className="glyph">{glyph(l.glyph, roadPhase === 'loading')}</span>
+            {l.label}
+            {roadPhase === 'empty' && <em>none</em>}
+            {roadPhase === 'error' && <em>failed</em>}
+            {/* Zero rings is a fact about the place, not a failure — a moor really has
+                no woodland polygons — so it is stated rather than left ambiguous. */}
+            {roadPhase === 'ready' && l.kind && roadInfo?.areaCounts[l.kind] === 0 && (
+              <em>none</em>
+            )}
+          </button>
+        ))}
       </div>
 
       {/* Overlays, each independent of the base and of each other. */}
