@@ -43,6 +43,14 @@ export interface MaskOptions {
   widthScale: number
   /** Cleared corridor width, as a multiple of the road surface width. */
   vergeScale: number
+  /**
+   * Which road classes to draw, from the Roads tab.
+   *
+   * Filtered here rather than at fetch time. Everything the box carries is already in
+   * hand, so this is a redraw — unticking a class costs nothing and ticking it back
+   * costs nothing, and neither goes near the network.
+   */
+  classes: Record<RoadClass, boolean>
 }
 
 export interface MaskStats {
@@ -357,7 +365,7 @@ export function buildMasks(data: OsmData, opts: MaskOptions): Masks {
 
     let widest = 0
     for (const cls of ROAD_ORDER) {
-      const p = geo.paths.get(cls)
+      const p = opts.classes[cls] ? geo.paths.get(cls) : undefined
       if (!p) continue
       const lw = strokeWidth(cls, opts.vergeScale)
       widest = Math.max(widest, lw)
@@ -374,7 +382,7 @@ export function buildMasks(data: OsmData, opts: MaskOptions): Masks {
   // motorway is what the pixel ends up holding. Blue is written again because the
   // surface sits inside its own verge.
   for (const cls of ROAD_ORDER) {
-    const p = geo.paths.get(cls)
+    const p = opts.classes[cls] ? geo.paths.get(cls) : undefined
     if (!p) continue
     const g = Math.round((ROAD_CLASSES[cls].order / 4) * 255)
     ctx.strokeStyle = `rgb(255,${g},255)`

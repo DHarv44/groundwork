@@ -361,7 +361,6 @@ async function postWithBackoff(
  */
 export async function fetchOsm(
   bounds: Bounds,
-  classes: RoadClass[],
   signal?: AbortSignal,
   onProgress?: (note: string) => void,
 ): Promise<OsmData> {
@@ -373,13 +372,9 @@ export async function fetchOsm(
     )
   }
 
-  // Which classes come back is now the checkboxes' business, not this function's — but
-  // they still travel in ONE query alongside the water, woodland and land use. Overpass
-  // charges by the request, not the byte: an IP gets very few query slots and acquiring
-  // one means queueing, while streaming the answer back once you have it costs little.
-  // Ticking three more classes makes the response larger; it must not make it three
-  // requests.
-  const requested = classes
+  // Fetched once per box, and never re-asked because of a checkbox. The Roads tab is a
+  // render filter over what is already here.
+  const requested = classesFor(boxKm2)
   const filtered = requested.length < ROAD_ORDER.length
   const body = `data=${encodeURIComponent(buildQuery(bounds, requested))}`
 

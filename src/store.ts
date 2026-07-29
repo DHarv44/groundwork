@@ -12,7 +12,6 @@ import {
   NoRoadDataError,
   fetchOsm,
   DEFAULT_ROAD_CLASSES,
-  ROAD_ORDER,
   type AreaKind,
   type OsmData,
   type RoadClass,
@@ -830,6 +829,7 @@ export const useStore = create<State>((setState, getState) => {
       resolution: settings.roadResolution,
       widthScale: settings.roadWidth,
       vergeScale: settings.roadVerge,
+      classes: settings.roadClasses,
     }
 
     // One worker, reused. Replacing it would throw away the held data and the warm
@@ -1110,24 +1110,10 @@ export const useStore = create<State>((setState, getState) => {
     // is what fetches the imagery.
     if (key === 'showRoads' && value) void getState().loadRoads()
 
-    // Ticking a class needs data we do not have, so it re-asks. Unticking one does not —
-    // the ways are already in hand and simply stop being drawn, which costs a redraw
-    // rather than a round trip. Getting that the wrong way round would make hiding a
-    // layer more expensive than showing it.
-    if (key === 'roadClasses') {
-      const now = value as Record<RoadClass, boolean>
-      const added = ROAD_ORDER.some((c) => now[c] && !settings.roadClasses[c])
-      if (added) {
-        clearRoads()
-        if (next.showRoads) void getState().loadRoads()
-      } else {
-        const roads = getState().roads
-        if (roads) {
-          setState({ roads: { ...roads, roads: roads.roads.filter((w) => now[w.cls]) } })
-        }
-        scheduleRoadMask()
-      }
-    }
+    // A render filter, nothing more. Ticking or unticking a class redraws the mask and
+    // never touches the network — the fetch happens once per box and brings back what
+    // that box can carry, and these decide which of it is drawn.
+    if (key === 'roadClasses') scheduleRoadMask()
   },
 
   /**
@@ -1359,21 +1345,18 @@ export const useStore = create<State>((setState, getState) => {
   },
 
   loadRoads: async (): Promise<void> => {
-    const { heightField, roads, roadPhase, settings } = getState()
+    const { heightField, roads, roadPhase } = getState()
     if (!heightField) return
     // Already have them, or already asking. Synchronous, and before any await — this is
     // the guard that keeps one query from becoming several copies of itself in flight.
     if (roads || roadPhase === 'loading') return
 
     const bounds = heightField.bounds
-    const classes = ROAD_ORDER.filter((c) => settings.roadClasses[c])
     setState({ roadPhase: 'loading', roadError: null })
 
     // Cached answers cost nothing, and Overpass is free shared infrastructure — asking
-    // it twice for the same box is the one thing that would actually be rude. The class
-    // set is part of what identifies an answer, so a box fetched for motorways alone
-    // does not satisfy a request that also wants residential streets.
-    const hit = await roadCacheGet(bounds, classes)
+    // it twice for the same box is the one thing that would actually be rude.
+    const hit = await roadCacheGet(bounds)
     if (hit) {
       setState({ roads: hit, roadPhase: hit.roads.length || hit.areas.length ? 'ready' : 'empty' })
       rebuildRoadMask()
@@ -1381,13 +1364,11 @@ export const useStore = create<State>((setState, getState) => {
     }
 
     try {
-      const network = await fetchOsm(bounds, classes, undefined, (note) =>
-        setState({ message: note }),
-      )
+      const network = await fetchOsm(bounds, undefined, (note) => setState({ message: note }))
       // The area may have been rebuilt while Overpass was thinking.
       if (getState().heightField?.bounds !== bounds) return
 
-      void roadCachePut(network, classes)
+      void roadCachePut(network)
       setState({
         roads: network,
         roadPhase: network.roads.length || network.areas.length ? 'ready' : 'empty',
