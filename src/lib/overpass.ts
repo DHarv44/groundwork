@@ -200,6 +200,75 @@ function toFlat(geom: OverpassGeom[]): Float64Array {
   return out
 }
 
+/** Endpoints come from the same shared node, so this only guards float printing. */
+const JOIN_EPS = 1e-9
+
+function samePoint(ax: number, ay: number, bx: number, by: number): boolean {
+  return Math.abs(ax - bx) < JOIN_EPS && Math.abs(ay - by) < JOIN_EPS
+}
+
+/**
+ * Stitch a multipolygon's member ways into closed rings.
+ *
+ * A relation's outer boundary is almost never one way. Mappers split a big shoreline
+ * into dozens of segments — so they can be edited independently, and because ways have
+ * a node limit — and the ring only exists once they are joined end to end. The segments
+ * arrive in no particular order and in no particular direction.
+ *
+ * Treating each member as a ring in its own right is what tore Lake Houston into a
+ * scatter of disconnected blobs: every fragment got closed back on itself, so instead of
+ * one reservoir there were forty slivers with the water between them missing. Small
+ * ponds looked perfect throughout, because a pond is a single closed way and never went
+ * through this path at all.
+ *
+ * Quadratic in the member count, which is fine — relations have tens of members, not
+ * thousands. Fragments that never close are still kept: an unclosed shoreline is better
+ * filled as an implicit polygon than dropped, and canvas closes it for us.
+ */
+function assembleRings(segments: Float64Array[]): Float64Array[] {
+  const rings: Float64Array[] = []
+  const used = new Array<boolean>(segments.length).fill(false)
+
+  const isClosed = (r: number[]): boolean =>
+    r.length >= 6 && samePoint(r[0]!, r[1]!, r[r.length - 2]!, r[r.length - 1]!)
+
+  for (let i = 0; i < segments.length; i++) {
+    if (used[i]) continue
+    used[i] = true
+    const ring: number[] = Array.from(segments[i]!)
+
+    // Keep extending the open end until it meets itself or nothing else fits.
+    while (!isClosed(ring)) {
+      const ex = ring[ring.length - 2]!
+      const ey = ring[ring.length - 1]!
+      let joined = false
+
+      for (let j = 0; j < segments.length; j++) {
+        if (used[j]) continue
+        const s = segments[j]!
+        const n = s.length
+        if (samePoint(ex, ey, s[0]!, s[1]!)) {
+          for (let k = 2; k < n; k += 2) ring.push(s[k]!, s[k + 1]!)
+        } else if (samePoint(ex, ey, s[n - 2]!, s[n - 1]!)) {
+          // Runs the other way round; walk it backwards from its own end.
+          for (let k = n - 4; k >= 0; k -= 2) ring.push(s[k]!, s[k + 1]!)
+        } else {
+          continue
+        }
+        used[j] = true
+        joined = true
+        break
+      }
+
+      if (!joined) break
+    }
+
+    if (ring.length >= 8) rings.push(new Float64Array(ring))
+  }
+
+  return rings
+}
+
 /** Great-circle length of a way in metres, for the readout only. */
 function wayLength(pts: Float64Array): number {
   let total = 0
@@ -298,12 +367,17 @@ export async function fetchOsm(
         if (el.type === 'way' && el.geometry && el.geometry.length >= 4) {
           areas.push({ kind, ring: toFlat(el.geometry) })
         } else if (el.type === 'relation' && el.members) {
-          // Outer rings only — see the note on holes above.
+          // Outer members only — see the note on holes above — stitched into rings
+          // rather than taken one at a time. A relation's boundary is split across many
+          // ways and only becomes a polygon once they are joined.
+          const outer: Float64Array[] = []
           for (const m of el.members) {
+            if (m.type !== 'way') continue
             if (m.role && m.role !== 'outer') continue
-            if (!m.geometry || m.geometry.length < 4) continue
-            areas.push({ kind, ring: toFlat(m.geometry) })
+            if (!m.geometry || m.geometry.length < 2) continue
+            outer.push(toFlat(m.geometry))
           }
+          for (const ring of assembleRings(outer)) areas.push({ kind, ring })
         }
       }
 

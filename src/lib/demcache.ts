@@ -170,8 +170,12 @@ interface CachedRoads {
  * be indistinguishable from a box that genuinely has no lakes or woodland — so the
  * version is part of the key, and old entries are simply never matched rather than
  * being migrated or trusted.
+ *
+ * v2 added areas but stored each relation member as its own ring, which is not what a
+ * multipolygon means — the geometry in those entries is wrong rather than merely
+ * incomplete, so they have to be re-fetched rather than reinterpreted.
  */
-const OSM_QUERY_VERSION = 2
+const OSM_QUERY_VERSION = 3
 
 function roadKey(bounds: Bounds): string {
   const f = (n: number) => n.toFixed(5)

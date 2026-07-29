@@ -741,8 +741,11 @@ void main() {
   //
   // Outside its own guard so this still works with no hydrology pass at all — a mapped
   // lake does not depend on the drainage having been traced.
+  // Not gated on uShowLakes or uRivers: those switch the *derived* water, and mapped
+  // water is its own layer with its own toggle. Riding on them meant turning off the
+  // depression-fill lakes silently took the surveyed ones with it.
   if (osmWater > 0.003 && vSide < 0.5) {
-    float mapped = clamp(osmWater, 0.0, 1.0) * uRivers * uShowLakes * mix(1.0, 0.55, uUseSat);
+    float mapped = clamp(osmWater, 0.0, 1.0) * mix(1.0, 0.55, uUseSat);
     // Standing water, so it reads as a lake rather than a channel.
     lakeness = max(lakeness, mapped);
     waterCov = max(waterCov, mapped);

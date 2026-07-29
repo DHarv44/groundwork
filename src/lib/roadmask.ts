@@ -148,20 +148,65 @@ function geometryFor(
    */
   const trace = (p: Path2D, pts: Float64Array, close: boolean) => {
     const [x0, y0] = project(pts[0]!, pts[1]!)
-    p.moveTo(x0, y0)
     let lx = x0
     let ly = y0
     const last = pts.length - 2
+
+    if (!close) {
+      p.moveTo(x0, y0)
+      for (let i = 2; i < pts.length; i += 2) {
+        const [x, y] = project(pts[i]!, pts[i + 1]!)
+        const dx = x - lx
+        const dy = y - ly
+        if (i !== last && dx * dx + dy * dy < minStep) continue
+        p.lineTo(x, y)
+        lx = x
+        ly = y
+      }
+      return
+    }
+
+    // Rings are collected before being emitted, so their winding can be normalised.
+    //
+    // Every ring of a kind goes into one Path2D and is filled `nonzero`, which unions
+    // overlapping rings — but only when they wind the same way. OSM imposes no winding
+    // convention, so a clockwise ring overlapping an anticlockwise one cancels to a
+    // hole. On a reservoir mapped as a relation with many outer members, plus the
+    // separate ways for its arms and the ponds beside it, that tore Lake Houston into
+    // disconnected fragments with the middle missing.
+    //
+    // Forcing one direction makes the winding numbers add rather than subtract, so
+    // overlap always unions. Holes are not lost by this because inner rings are already
+    // dropped upstream — see fetchOsm.
+    const xs: number[] = [x0]
+    const ys: number[] = [y0]
     for (let i = 2; i < pts.length; i += 2) {
       const [x, y] = project(pts[i]!, pts[i + 1]!)
       const dx = x - lx
       const dy = y - ly
       if (i !== last && dx * dx + dy * dy < minStep) continue
-      p.lineTo(x, y)
+      xs.push(x)
+      ys.push(y)
       lx = x
       ly = y
     }
-    if (close) p.closePath()
+    if (xs.length < 3) return
+
+    // Shoelace, in projected pixels. Sign alone matters, so the halving is skipped.
+    let twiceArea = 0
+    for (let i = 0, j = xs.length - 1; i < xs.length; j = i++) {
+      twiceArea += xs[j]! * ys[i]! - xs[i]! * ys[j]!
+    }
+
+    if (twiceArea >= 0) {
+      p.moveTo(xs[0]!, ys[0]!)
+      for (let i = 1; i < xs.length; i++) p.lineTo(xs[i]!, ys[i]!)
+    } else {
+      const n = xs.length - 1
+      p.moveTo(xs[n]!, ys[n]!)
+      for (let i = n - 1; i >= 0; i--) p.lineTo(xs[i]!, ys[i]!)
+    }
+    p.closePath()
   }
 
   for (const way of data.roads) {
