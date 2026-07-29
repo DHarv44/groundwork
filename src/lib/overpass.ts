@@ -166,8 +166,105 @@ const ENDPOINTS = [
   'https://overpass-api.de/api/interpreter',
   'https://overpass.kumi.systems/api/interpreter',
   'https://overpass.private.coffee/api/interpreter',
-  'https://overpass.osm.jp/api/interpreter',
 ]
+
+/**
+ * The endpoint that last answered, tried first next time.
+ *
+ * Which instances are reachable is a property of the network, not of the code. On one
+ * machine overpass-api.de and overpass.osm.jp both time out at the TCP level — dropped
+ * packets, not refusals — while kumi and private.coffee answer immediately; on another
+ * the main instance is the only one that works. A fixed order makes every request on the
+ * first kind of network pay a full connect timeout before getting anywhere.
+ *
+ * Remembering the last success costs one localStorage read and turns that into a single
+ * lucky first try. The full list is still walked afterwards, so this is only an ordering
+ * hint and a host coming back to life is picked up on the next failure.
+ */
+const LAST_GOOD_KEY = 'terrain-builder.overpass'
+
+function orderedEndpoints(): string[] {
+  let last: string | null = null
+  try {
+    last = localStorage.getItem(LAST_GOOD_KEY)
+  } catch {
+    /* private mode, or storage disabled — the default order is fine */
+  }
+  if (!last || !ENDPOINTS.includes(last)) return ENDPOINTS
+  return [last, ...ENDPOINTS.filter((e) => e !== last)]
+}
+
+function rememberEndpoint(endpoint: string): void {
+  try {
+    localStorage.setItem(LAST_GOOD_KEY, endpoint)
+  } catch {
+    /* best effort */
+  }
+}
+
+/** How long to give the cheap reachability probe on each instance. */
+const PROBE_TIMEOUT_MS = 5000
+
+/**
+ * Find instances that will actually talk to us, before sending a real query.
+ *
+ * Reachability and load are different questions and they deserve different timeouts. A
+ * healthy Overpass opens a connection in well under a second even when the query itself
+ * then takes a minute — so the long timeout a real query needs is exactly the wrong
+ * thing to spend discovering that a host is dropping packets.
+ *
+ * Without this the failover works but costs a full timeout per dead host before it gets
+ * anywhere: measured at 47 seconds of nothing on a network where the main instance is
+ * unreachable. Probing `/api/status` — a few bytes, no query slot consumed — in parallel
+ * turns that into about five.
+ *
+ * Returns every instance that answered, in preference order, so the caller still has
+ * somewhere to fail over to. If none answer the full list is returned anyway: a probe
+ * failing is evidence, not proof, and it would be worse to refuse to try at all.
+ */
+async function reachableEndpoints(signal?: AbortSignal): Promise<string[]> {
+  const ordered = orderedEndpoints()
+
+  const probe = async (endpoint: string): Promise<string | null> => {
+    // `no-cors`, because the only readable endpoint is the one we are trying to avoid
+    // spending a long timeout on.
+    //
+    // Two blind alleys got here. /api/status looks like the obvious health check and
+    // hangs past twenty seconds on the mirrors — it queues behind the same slots a real
+    // query does. The site root answers in under a second, but only /api/interpreter
+    // sends Access-Control-Allow-Origin, so a normal fetch to the root is blocked by
+    // CORS despite the server answering perfectly well. (Both of those measure as fine
+    // under curl, which enforces no CORS at all — a browser feature has to be checked
+    // in a browser.)
+    //
+    // An opaque response cannot be read, and does not need to be: it resolves when the
+    // connection opened and rejects when it did not, which is the entire question.
+    const origin = new URL(endpoint).origin
+    const timeout = AbortSignal.timeout(PROBE_TIMEOUT_MS)
+    try {
+      await fetch(origin, {
+        mode: 'no-cors',
+        signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+      })
+      return endpoint
+    } catch {
+      return null
+    }
+  }
+
+  // Fast path: if the instance that served last time still answers, go straight there
+  // rather than waiting on the rest. That is the steady state after one success, and it
+  // takes the check from the slowest probe — a dead host burning the full timeout — down
+  // to a single round trip.
+  if (await probe(ordered[0]!)) return ordered
+
+  const rest = ordered.slice(1)
+  const results = await Promise.all(rest.map(probe))
+  const live = rest.filter((_, i) => results[i] !== null)
+  // None answered: try everything anyway. A probe failing is evidence, not proof, and
+  // refusing to attempt the real request would be worse than attempting it in vain.
+  return live.length > 0 ? live : ordered
+}
 
 /**
  * How long to wait on one endpoint before moving to the next.
@@ -384,25 +481,24 @@ export async function fetchOsm(
   const filtered = requested.length < ROAD_ORDER.length
   const body = `data=${encodeURIComponent(buildQuery(bounds, requested))}`
 
+  onProgress?.('Finding an OpenStreetMap server…')
+  const endpoints = await reachableEndpoints(signal)
   let lastError: Error | null = null
-  for (const endpoint of ENDPOINTS) {
+  let busy = 0
+
+  for (let i = 0; i < endpoints.length; i++) {
+    const endpoint = endpoints[i]!
     try {
-      onProgress?.(
-        endpoint === ENDPOINTS[0] ? 'Querying OpenStreetMap…' : 'Retrying on a mirror…',
-      )
+      onProgress?.(i === 0 ? 'Querying OpenStreetMap…' : 'Trying another mirror…')
       const res = await postWithBackoff(endpoint, body, signal, onProgress)
       if (!res.ok) {
-        // 429 and 504 are what a public Overpass instance says when it is busy, and they
-        // are worth naming rather than reporting as a generic failure: the request was
-        // fine, the server simply has no slot free. Slots are counted per client IP, so
-        // two tabs on the same machine compete with each other — which is exactly the
-        // shape of "it works over there and not over here".
+        // 429 and 504 mean the instance is busy rather than broken, so move to the next
+        // one instead of giving up — but remember that it happened, because if *every*
+        // instance says busy the answer to give the user is quite different from a host
+        // being unreachable.
         if (res.status === 429 || res.status === 504) {
-          throw new NoRoadDataError(
-            'OpenStreetMap is rate-limiting this connection (all query slots busy). ' +
-              'Wait a minute and try again — the limit is per IP, so another tab or app ' +
-              'querying Overpass from this machine counts against the same allowance.',
-          )
+          busy++
+          throw new Error(`Overpass busy (HTTP ${res.status})`)
         }
         throw new Error(`Overpass HTTP ${res.status}`)
       }
@@ -467,6 +563,7 @@ export async function fetchOsm(
         }
       }
 
+      rememberEndpoint(endpoint)
       return {
         bounds,
         roads,
@@ -478,8 +575,25 @@ export async function fetchOsm(
       }
     } catch (err) {
       if ((err as Error)?.name === 'AbortError') throw err
+      // A body too large for this box will be too large from every mirror, so there is
+      // nothing to gain by asking three more servers the same impossible question.
+      if (err instanceof NoRoadDataError) throw err
       lastError = err as Error
     }
   }
-  throw lastError ?? new Error('Overpass unreachable')
+
+  // Every instance refused. Which kind of refusal decides what to tell the user, because
+  // the two have completely different remedies.
+  if (busy === endpoints.length) {
+    throw new NoRoadDataError(
+      'Every OpenStreetMap mirror is busy right now. Query slots are counted per IP, ' +
+        'so another tab or app querying Overpass from this machine competes for the ' +
+        'same allowance. Wait a minute and try again.',
+    )
+  }
+  throw new NoRoadDataError(
+    `Could not reach any OpenStreetMap mirror (${endpoints.length} tried). The last error ` +
+      `was: ${lastError?.message ?? 'unknown'}. If this persists, the network is blocking ` +
+      `outbound connections to these hosts rather than the request being rejected.`,
+  )
 }

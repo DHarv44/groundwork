@@ -1365,10 +1365,10 @@ export const useStore = create<State>((setState, getState) => {
       setState({
         roadPhase: 'error',
         message: '',
+        // fetchOsm now shapes its own messages — every path out of it is deliberate,
+        // so wrapping them again would only bury the useful half.
         roadError:
-          err instanceof NoRoadDataError
-            ? err.message
-            : `Could not reach OpenStreetMap: ${(err as Error).message}`,
+          err instanceof NoRoadDataError ? err.message : (err as Error).message,
       })
     }
   },
