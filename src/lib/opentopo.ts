@@ -1,6 +1,5 @@
 import { fromArrayBuffer } from 'geotiff'
-import type { Bounds } from './geo'
-import { boundsAreaKm2 } from './geo'
+import { boundsAreaKm2, type Bounds, type HeightField } from '@groundwork/core'
 import {
   DAILY_QUOTA,
   cacheGet,
@@ -110,19 +109,12 @@ export const DEM_SOURCES: DemSource[] = [
   },
 ]
 
-export interface HeightField {
-  width: number
-  height: number
-  /** Elevation in metres, row-major, north row first. Voids already filled. */
-  data: Float32Array
-  /** Actual raster bounds returned by the server (may differ slightly from the request). */
-  bounds: Bounds
-  min: number
-  max: number
-  demtype: string
-  /** Count of samples that were voids in the source raster. */
-  voids: number
-}
+/**
+ * The height field itself is the data model, so it lives in `@groundwork/core` — a
+ * pack reader has to understand one without knowing OpenTopography exists. Re-exported
+ * from here because this is where everything already imports it from.
+ */
+export type { HeightField }
 
 export class OpenTopoError extends Error {}
 

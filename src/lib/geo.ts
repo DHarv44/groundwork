@@ -1,9 +1,27 @@
-export interface Bounds {
-  south: number
-  north: number
-  west: number
-  east: number
-}
+/**
+ * Geodesy is now `@groundwork/core`.
+ *
+ * Re-exported here so existing imports keep resolving while the split proceeds — the
+ * call sites move to the package as each area is touched, rather than in one sweep
+ * that would put a rename on top of every other change in the branch.
+ *
+ * What stays in this file is what is genuinely *this application's*: where a first run
+ * lands, how a box is worded for a person, and the climate curves that set the
+ * viewer's defaults. None of those belong in a data-model package.
+ */
+export type { Bounds } from '@groundwork/core'
+export {
+  boundsAreaKm2,
+  boundsExtentMetres,
+  boxToLonLat,
+  latToTileY,
+  lonLatToBox,
+  lonToTileX,
+  metresPerDegLat,
+  metresPerDegLon,
+} from '@groundwork/core'
+
+import type { Bounds } from '@groundwork/core'
 
 /**
  * Where a first run lands, before anything is in local storage.
@@ -19,35 +37,6 @@ export const DEFAULT_BOUNDS: Bounds = {
   north: 40.1306,
   west: -105.9631,
   east: -104.6887,
-}
-
-/** Metres per degree of latitude at a given latitude (WGS84 series expansion). */
-export function metresPerDegLat(latDeg: number): number {
-  const p = (latDeg * Math.PI) / 180
-  return (
-    111132.92 - 559.82 * Math.cos(2 * p) + 1.175 * Math.cos(4 * p) - 0.0023 * Math.cos(6 * p)
-  )
-}
-
-/** Metres per degree of longitude at a given latitude. */
-export function metresPerDegLon(latDeg: number): number {
-  const p = (latDeg * Math.PI) / 180
-  return 111412.84 * Math.cos(p) - 93.5 * Math.cos(3 * p) + 0.118 * Math.cos(5 * p)
-}
-
-/** Ground size of a bounding box in metres, measured at its centre latitude. */
-export function boundsExtentMetres(b: Bounds): { width: number; height: number } {
-  const midLat = (b.north + b.south) / 2
-  return {
-    width: Math.abs(b.east - b.west) * metresPerDegLon(midLat),
-    height: Math.abs(b.north - b.south) * metresPerDegLat(midLat),
-  }
-}
-
-/** Approximate bounding-box area in km². OpenTopography enforces per-dataset limits. */
-export function boundsAreaKm2(b: Bounds): number {
-  const { width, height } = boundsExtentMetres(b)
-  return (width * height) / 1e6
 }
 
 /** Linear interpolation through a table sampled every 10° of latitude from 0 to 90. */
@@ -83,15 +72,4 @@ export function climaticTreeLine(latDeg: number): number {
 export function formatBounds(b: Bounds, dp = 4): string {
   const f = (n: number) => n.toFixed(dp)
   return `S ${f(b.south)}  N ${f(b.north)}  W ${f(b.west)}  E ${f(b.east)}`
-}
-
-// ---- Web Mercator tile maths (for draping satellite imagery) ----
-
-export function lonToTileX(lon: number, z: number): number {
-  return ((lon + 180) / 360) * Math.pow(2, z)
-}
-
-export function latToTileY(lat: number, z: number): number {
-  const r = (lat * Math.PI) / 180
-  return ((1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2) * Math.pow(2, z)
 }

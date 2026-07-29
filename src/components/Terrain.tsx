@@ -1,10 +1,19 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo } from 'react'
 import * as THREE from 'three'
 import { useFrame } from '@react-three/fiber'
-import type { TerrainBuild } from '../lib/mesh'
-import type { SkyModel } from '../lib/atmosphere'
-import { terrainFragmentShader, terrainVertexShader } from '../shaders/terrain'
+import { TerrainSurface, type SkyModel, type SurfaceConfig, type TerrainBuild } from '@groundwork/engine'
 import { useStore } from '../store'
+
+/**
+ * The builder's binding to the renderer.
+ *
+ * This is the only file that knows both `Settings` and the engine, and that is the
+ * point of it: the engine takes final values in its own vocabulary, so everything
+ * about how those values got chosen — sliders, presets, biome overrides, layer
+ * toggles — stops here. Anything reached for below that the engine does not offer is
+ * a sign the engine's config is missing something, not a reason to import the store
+ * over there.
+ */
 
 interface Props {
   build: TerrainBuild
@@ -14,8 +23,6 @@ interface Props {
   snowLine: number
 }
 
-const WHITE = new THREE.Texture()
-
 export default function Terrain({ build, sky, fogDensity, snowLine }: Props) {
   const settings = useStore((s) => s.settings)
   const imagery = useStore((s) => s.imagery)
@@ -23,7 +30,6 @@ export default function Terrain({ build, sky, fogDensity, snowLine }: Props) {
   const biomeMap = useStore((s) => s.biomeMap)
   const roadMask = useStore((s) => s.roadMask)
   const areaMask = useStore((s) => s.areaMask)
-  const materialRef = useRef<THREE.ShaderMaterial>(null)
 
   const satTexture = useMemo(() => {
     if (!imagery) return null
@@ -41,177 +47,80 @@ export default function Terrain({ build, sky, fogDensity, snowLine }: Props) {
 
   useEffect(() => () => satTexture?.dispose(), [satTexture])
 
-  const uniforms = useMemo(
-    () => ({
-      uNormalMap: { value: build.normalTexture },
-      uHeightMap: { value: build.heightTexture },
-      uSatMap: { value: WHITE },
-      uUseSat: { value: 0 },
-      uSatDetail: { value: 1 },
-      uWaterMap: { value: WHITE },
-      uHasWater: { value: 0 },
-      uRivers: { value: settings.rivers },
-      uRiverThreshold: { value: settings.riverThreshold },
-      uShowRivers: { value: 1 },
-      uShowLakes: { value: 1 },
-      uDrainageView: { value: 0 },
-      uTime: { value: 0 },
-      uWaveHeight: { value: settings.waveHeight },
-      uMinElev: { value: build.minElevation },
-      uMaxElev: { value: build.maxElevation },
-      uExag: { value: settings.exaggeration },
-      uWidthM: { value: build.widthMetres },
-      uDepthM: { value: build.depthMetres },
-      uSunDir: { value: sky.sunDirection.clone() },
-      uSunColor: { value: sky.sunColor.clone() },
-      uSkyColor: { value: sky.skyColor.clone() },
-      uHorizonColor: { value: sky.horizonColor.clone() },
-      uGroundTint: { value: sky.groundTint.clone() },
-      uSnowLine: { value: settings.snowLine },
-      uTreeLine: { value: settings.treeLine },
-      uAridity: { value: settings.aridity },
-      uStrata: { value: settings.strata },
-      uRiparian: { value: settings.riparian },
-      uRiparianReach: { value: settings.riparianReach },
-      uGroundWarmth: { value: settings.groundWarmth },
-      uForest: { value: settings.forest },
-      uVegTint: { value: settings.vegTint },
-      uVegSat: { value: settings.vegSat },
-      uTreeNeed: { value: settings.treeNeed },
-      uTreeLimit: { value: settings.treeLimit },
-      uTreeSpread: { value: settings.treeSpread },
-      uTreeFractal: { value: settings.treeFractal },
-      uTreeRough: { value: settings.treeRough },
-      uTreeRoughScale: { value: settings.treeRoughScale },
-      uCorridorLeaf: { value: settings.corridorLeaf },
-      uShowTrees: { value: 1 },
-      uShowGrass: { value: 1 },
-      uShowSnow: { value: 1 },
-      uBiomeMap: { value: WHITE },
-      uHasBiomeMap: { value: 0 },
-      uRoadMap: { value: WHITE },
-      uHasRoads: { value: 0 },
-      uShowRoads: { value: 1 },
-      uRoadDarkness: { value: settings.roadDarkness },
-      uRoadClearing: { value: settings.roadClearing },
-      uRoadTint: { value: settings.roadTint },
-      uAreaMap: { value: WHITE },
-      uHasAreas: { value: 0 },
-      uOsmWater: { value: settings.osmWaterStrength },
-      uOsmWood: { value: settings.osmWoodStrength },
-      uOsmBuilt: { value: settings.osmBuiltStrength },
-      uTextureRange: { value: settings.textureRange },
-      uShadows: { value: settings.shadows ? 1 : 0 },
-      uAoStrength: { value: settings.aoStrength },
-      uDetail: { value: settings.microDetail },
-      uFogDensity: { value: fogDensity },
-      uSeaLevel: { value: 0 },
-    }),
-    // Created exactly once and mutated in place from here on.
-    //
-    // This object must NEVER be replaced. three caches its uniform upload list against
-    // the uniform objects present when the program was compiled, so assigning a new
-    // `material.uniforms` leaves the renderer still uploading the old values until
-    // something forces a recompile. That was the cause of shadows breaking whenever
-    // vertical exaggeration changed — the shader kept sampling the previous height
-    // texture and exaggeration until a recompile happened to catch up a frame later.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [],
-  )
+  // Built once. The surface holds a uniform object that must not be replaced, so the
+  // component may re-render freely but the material behind it never gets rebuilt.
+  const surface = useMemo(() => new TerrainSurface(build), [])
+  useEffect(() => () => surface.dispose(), [surface])
 
-  // The very first program compiled for a fresh ShaderMaterial can still latch stale
-  // uniform locations, so force one recompile after mount — but only at mount.
   useEffect(() => {
-    const m = materialRef.current
-    if (!m) return
-    const id = requestAnimationFrame(() => {
-      m.needsUpdate = true
+    surface.setBuild(build)
+  }, [surface, build])
+
+  // Pushed every render rather than recompiling the material.
+  useEffect(() => {
+    surface.setSky(sky)
+    surface.setLayers({
+      imagery: satTexture,
+      water: waterMask,
+      biome: biomeMap,
+      road: roadMask,
+      area: areaMask,
     })
-    return () => cancelAnimationFrame(id)
-  }, [])
 
-  // Push live values every render rather than recompiling the material.
-  useEffect(() => {
-    const u = uniforms
-    u.uNormalMap.value = build.normalTexture
-    u.uHeightMap.value = build.heightTexture
-    u.uMinElev.value = build.minElevation
-    u.uMaxElev.value = build.maxElevation
-    u.uWidthM.value = build.widthMetres
-    u.uDepthM.value = build.depthMetres
-    u.uExag.value = settings.exaggeration
-    u.uSunDir.value.copy(sky.sunDirection)
-    u.uSunColor.value.copy(sky.sunColor)
-    u.uSkyColor.value.copy(sky.skyColor)
-    u.uHorizonColor.value.copy(sky.horizonColor)
-    u.uGroundTint.value.copy(sky.groundTint)
-    u.uSnowLine.value = snowLine
-    u.uTreeLine.value = settings.treeLine
-    u.uAridity.value = settings.aridity
-    u.uStrata.value = settings.strata
-    u.uRiparian.value = settings.riparian
-    u.uRiparianReach.value = settings.riparianReach
-    u.uGroundWarmth.value = settings.groundWarmth
-    u.uForest.value = settings.forest
-    u.uVegTint.value = settings.vegTint
-    u.uVegSat.value = settings.vegSat
-    u.uTreeNeed.value = settings.treeNeed
-    u.uTreeLimit.value = settings.treeLimit
-    u.uTreeSpread.value = settings.treeSpread
-    u.uTreeFractal.value = settings.treeFractal
-    u.uTreeRough.value = settings.treeRough
-    u.uTreeRoughScale.value = settings.treeRoughScale
-    u.uCorridorLeaf.value = settings.corridorLeaf
-    u.uShowTrees.value = settings.showTrees ? 1 : 0
-    u.uShowGrass.value = settings.showGrass ? 1 : 0
-    u.uShowSnow.value = settings.showSnow ? 1 : 0
-    u.uBiomeMap.value = biomeMap ?? WHITE
-    u.uHasBiomeMap.value = biomeMap ? 1 : 0
-    u.uRoadMap.value = roadMask ?? WHITE
-    u.uHasRoads.value = roadMask ? 1 : 0
-    u.uShowRoads.value = settings.showRoads ? 1 : 0
-    u.uRoadDarkness.value = settings.roadDarkness
-    u.uRoadClearing.value = settings.roadClearing
-    u.uRoadTint.value = settings.roadTint
-    u.uAreaMap.value = areaMask ?? WHITE
-    u.uHasAreas.value = areaMask ? 1 : 0
-    // Each kind switches independently, and the toggle simply zeroes its weight — the
-    // mask is one texture, so there is nothing to rebuild when one is turned off.
-    u.uOsmWater.value = settings.showOsmWater ? settings.osmWaterStrength : 0
-    u.uOsmWood.value = settings.showOsmWood ? settings.osmWoodStrength : 0
-    u.uOsmBuilt.value = settings.showOsmBuilt ? settings.osmBuiltStrength : 0
-    u.uTextureRange.value = settings.textureRange
-    u.uShadows.value = settings.shadows ? 1 : 0
-    u.uAoStrength.value = settings.aoStrength
-    u.uDetail.value = settings.microDetail
-    u.uFogDensity.value = fogDensity
-    u.uSatMap.value = satTexture ?? WHITE
-    u.uUseSat.value = settings.textureMode === 'satellite' && satTexture ? 1 : 0
-    u.uWaterMap.value = waterMask ?? WHITE
-    u.uHasWater.value = waterMask ? 1 : 0
-    u.uRivers.value = settings.rivers
-    u.uRiverThreshold.value = settings.riverThreshold
-    u.uWaveHeight.value = settings.waveHeight
-    u.uShowRivers.value = settings.showRivers ? 1 : 0
-    u.uShowLakes.value = settings.showLakes ? 1 : 0
-    u.uDrainageView.value = settings.textureMode === 'drainage' && waterMask ? 1 : 0
+    const config: SurfaceConfig = {
+      exaggeration: settings.exaggeration,
+      textureMode: settings.textureMode,
+      wireframe: settings.wireframe,
+
+      snowLine,
+      treeLine: settings.treeLine,
+      aridity: settings.aridity,
+      strata: settings.strata,
+      riparian: settings.riparian,
+      riparianReach: settings.riparianReach,
+      groundWarmth: settings.groundWarmth,
+
+      forest: settings.forest,
+      vegTint: settings.vegTint,
+      vegSat: settings.vegSat,
+      treeNeed: settings.treeNeed,
+      treeLimit: settings.treeLimit,
+      treeSpread: settings.treeSpread,
+      treeFractal: settings.treeFractal,
+      treeRough: settings.treeRough,
+      treeRoughScale: settings.treeRoughScale,
+      corridorLeaf: settings.corridorLeaf,
+      showTrees: settings.showTrees,
+      showGrass: settings.showGrass,
+      showSnow: settings.showSnow,
+
+      rivers: settings.rivers,
+      riverThreshold: settings.riverThreshold,
+      waveHeight: settings.waveHeight,
+      showRivers: settings.showRivers,
+      showLakes: settings.showLakes,
+
+      showRoads: settings.showRoads,
+      roadDarkness: settings.roadDarkness,
+      roadClearing: settings.roadClearing,
+      roadTint: settings.roadTint,
+
+      // Each kind switches independently, and the toggle simply zeroes its weight —
+      // the mask is one texture, so there is nothing to rebuild when one goes off.
+      osmWater: settings.showOsmWater ? settings.osmWaterStrength : 0,
+      osmWood: settings.showOsmWood ? settings.osmWoodStrength : 0,
+      osmBuilt: settings.showOsmBuilt ? settings.osmBuiltStrength : 0,
+
+      textureRange: settings.textureRange,
+      shadows: settings.shadows,
+      aoStrength: settings.aoStrength,
+      microDetail: settings.microDetail,
+      fogDensity,
+    }
+    surface.setConfig(config)
   })
 
-  useFrame((_, delta) => {
-    uniforms.uTime.value += delta
-  })
+  useFrame((_, delta) => surface.update(delta))
 
-  // Named so the first-person drop-in can raycast against it without groping through
-  // the scene graph for whatever happens to be carrying the terrain material.
-  return (
-    <mesh name="terrain" geometry={build.geometry} frustumCulled={false}>
-      <shaderMaterial
-        ref={materialRef}
-        vertexShader={terrainVertexShader}
-        fragmentShader={terrainFragmentShader}
-        uniforms={uniforms}
-        wireframe={settings.wireframe}
-      />
-    </mesh>
-  )
+  return <primitive object={surface.mesh} />
 }

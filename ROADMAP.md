@@ -5,6 +5,132 @@ request; the rest are things measurement turned up along the way.
 
 ---
 
+## In progress: the engine / builder split **(asked)**
+
+Branch `engine-split`. Groundwork is being separated into three packages so the renderer
+and the authoring tool can each be wired into a future project independently, without
+dragging the other along.
+
+The thing that makes them independently usable is not the folder layout — it is that
+**the pack format is the contract**. The builder writes packs; the engine reads packs;
+neither imports the other. Get that right and a different builder, or a different
+renderer, would interoperate.
+
+```
+packages/core      data model, pack I/O, geodesy, sampling   deps: —
+packages/engine    renderer, materials, object registry      deps: three, core
+packages/builder   authoring UI, export                      deps: react, three, engine, core
+```
+
+Strictly one-directional. Rules that keep it that way:
+
+- **`core` imports nothing.** Not three, not react. Its `tsconfig` omits the DOM lib
+  entirely, so a browser API cannot be reached for by accident. This is what lets a
+  headless baker, a pack validator, or a consumer doing pathfinding over the terrain
+  arrays read pack data without pulling in a renderer.
+- **The engine bundles no assets.** Everything it needs arrives in the pack. If it needs
+  a file that is not in the pack, the split is wrong.
+- **The engine does no network and owns no workers.** Deriving data — hydrology, mask
+  rasterisation — is authoring work and stays in the builder. The engine consumes
+  finished layers.
+- **The engine owns neither the renderer nor the frame loop.** It hands back a
+  `THREE.Group` and an update function; the host owns `WebGLRenderer`, camera and rAF.
+  A `standalone()` wrapper covers the "just put it on screen" case without costing the
+  embeddable shape. For the same reason the engine is plain three.js, not R3F — R3F
+  would pin a React version onto every future consumer.
+- **The builder's only output is a pack**, and it must not know what consumes it.
+
+### Stages
+
+- [x] **1. `core`** — done. `packages/core` holds the pack format and `formatVersion`,
+      the geodesy, `HeightField` and its sampling, and the road/area/place vector model.
+      Wired into the app and verified rendering: `geo.ts`, `opentopo.ts` and `mesh.ts`
+      now re-export from the package rather than defining their own, so no call site had
+      to move. It imports nothing, and its tsconfig omits the DOM lib so it cannot start.
+
+      Two decisions worth knowing before building on it:
+
+      - **Vector coordinates are normalised to the box, `x` east and `y` south.**
+        South-down so a vector coordinate indexes the north-up row-major raster planes
+        directly; having the two disagree is a flip that costs an afternoon every time
+        somebody new reads the format. Normalised rather than metres so geometry
+        survives a re-bake at another resolution, and rather than lon/lat so a consumer
+        that only draws does not need a projection. `bounds` is in the manifest, so
+        georeferencing is never lost.
+      - **`attribution` is required and structured.** The licences involved (ODbL for
+        OpenStreetMap, CC BY for Köppen) require the credit to be *shown*, which means
+        something downstream has to render it — and it cannot render what it cannot
+        parse. `validateManifest` fails a pack that has none.
+
+- [~] **2. `engine`** — the terrain surface is across. `packages/engine` now holds the
+      terrain shader, the mesh builder and the sky model, and exposes `TerrainSurface`:
+      plain three.js, no React, no store. Groundwork's `Terrain.tsx` is now a thin
+      binding that maps `Settings` into `SurfaceConfig` and drives it — verified by
+      toggling a layer and watching the canopy come off, so the config genuinely
+      reaches the GPU rather than merely compiling.
+
+      `SurfaceConfig` is its own type rather than a slice of `Settings`, which is the
+      whole point: the engine takes final values in its own vocabulary and knows
+      nothing about sliders, presets or biome overrides. `Terrain.tsx` is the only file
+      that knows both sides. Anything reached for there that the engine does not offer
+      means the engine's config is missing something — not that the store should be
+      imported over there.
+
+      Two things carried across deliberately, both previously hard-won:
+
+      - The uniform object is built once and mutated in place, never replaced. three
+        caches its upload list against the objects present at compile time, so
+        replacing it leaves the renderer uploading stale values.
+      - The first program compiled for a fresh `ShaderMaterial` can latch stale uniform
+        locations, so one recompile is forced after a frame has actually gone through.
+        In the component this was a `requestAnimationFrame`; in the class it is a frame
+        counter in `update()`, which does the same thing without needing a DOM timer.
+
+      Still to move: `Water.tsx` and the water shader, `SkyDome.tsx`, and the pack
+      loader that lets the engine be fed something other than a live `HeightField`.
+
+- [ ] **2b. Water and sky** — `shaders/water.ts`, `Water.tsx`, `SkyDome.tsx`.
+- [ ] **2c. Pack loading in the engine** — `TerrainData` from a pack, so the engine can
+      render something the builder did not just produce in memory. This is the point at
+      which the engine stops depending on the builder having run.
+- [ ] **3. `builder`** — extract what is left around it.
+- [ ] **4. Two demos** — an engine page that loads a pack and renders it, and a builder
+      page running against a stub consumer that just prints the manifest. If either needs
+      one line from the other side, the boundary has leaked. These are the regression
+      test for portability.
+- [ ] **5. Export** — the builder writes a pack from what is already in the store.
+
+### Rules for the export
+
+**No network at export time.** Everything is already resident: `heightField`, the OSM
+payload (kept precisely so masks rebuild without a request — `store.ts`), the hydrology
+result, the biome field, settings. Both the DEM and the OSM response are also cached in
+IndexedDB keyed on bounds, so even a reload before exporting costs nothing. If the export
+needs something, it gets fetched at *load* time into the store, never at export.
+
+**Ship vectors, not masks.** `roadMask` and `areaMask` are rasterised at the builder's
+`maskResolution` — a display setting. Baking them into a pack would freeze a slider
+position into somebody else's data. The raw OSM geometry is resolution-independent and is
+what a consumer actually wants. Derived rasters that have no vector form — the hydrology
+water field — do ship as rasters, resampled to the target grid.
+
+**Version the format from the first write.** `formatVersion` in the manifest, day one.
+The lesson is already in this repo: `OSM_QUERY_VERSION` in `demcache.ts` exists because a
+cached entry that cannot say what shape it is has to be thrown away rather than migrated.
+A pack shipped by someone else cannot be thrown away.
+
+### Not yet
+
+- **npm publishing.** Structure as packages now — that is the part that is expensive to
+  retrofit — but consume locally. Publishing is a short job once the boundary is real,
+  and with two consumers on one machine a registry is pure friction. Revisit when a third
+  consumer appears, or one we do not control.
+- **A CI check for the `core` zero-import rule.** A grep over `packages/core/src` for
+  `from 'three'` / `from 'react'`. Not because we would do it by accident today, but
+  because in six months something will *almost* fit and the rule should be what says no.
+
+---
+
 ## Next
 
 ### 1. Snow slider on the viewport **(asked)**
