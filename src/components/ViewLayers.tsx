@@ -76,6 +76,7 @@ export default function ViewLayers() {
   const waterStats = useStore((s) => s.waterStats)
   const roadPhase = useStore((s) => s.roadPhase)
   const roadInfo = useStore((s) => s.roadInfo)
+  const imageryLoading = useStore((s) => s.imageryLoading)
   const set = useStore((s) => s.set)
   const loadImagery = useStore((s) => s.loadImagery)
   const winter = useStore((s) => s.winter)
@@ -88,23 +89,47 @@ export default function ViewLayers() {
   const setFlag = (k: OverlayDef['key']) => () =>
     set(k, !settings[k] as Settings[typeof k])
 
+  /**
+   * A layer's glyph, or a spinner while the data behind it is still arriving.
+   *
+   * Every layer here sits on something that streams in after the terrain does — the
+   * hydrology worker, a tile fetch, an Overpass query — and until this, a layer that was
+   * not ready simply looked switched off. The spinner is the difference between "there
+   * is no water here" and "the water has not been worked out yet", which are the two
+   * readings the button has to keep apart.
+   */
+  const glyph = (mark: string, pending: boolean) =>
+    pending ? <i className="tiny-spin" /> : mark
+
+  // The hydrology pass is what rivers, lakes and the drainage view all read.
+  const waterPending = !waterStats
+
   return (
     <div className="view-layers">
-      {BASES.map((l) => (
-        <button
-          key={l.id}
-          className={settings.textureMode === l.id ? 'on' : ''}
-          disabled={l.id === 'drainage' && !waterStats}
-          title={l.id === 'drainage' && !waterStats ? 'Still tracing drainage…' : l.hint}
-          onClick={() => {
-            set('textureMode', l.id)
-            if (l.id === 'satellite') void loadImagery()
-          }}
-        >
-          <span className="glyph">{l.glyph}</span>
-          {l.label}
-        </button>
-      ))}
+      {BASES.map((l) => {
+        const pending =
+          (l.id === 'drainage' && waterPending) || (l.id === 'satellite' && imageryLoading)
+        return (
+          <button
+            key={l.id}
+            className={settings.textureMode === l.id ? 'on' : ''}
+            title={
+              l.id === 'drainage' && waterPending
+                ? 'Still tracing drainage…'
+                : l.id === 'satellite' && imageryLoading
+                  ? 'Fetching imagery…'
+                  : l.hint
+            }
+            onClick={() => {
+              set('textureMode', l.id)
+              if (l.id === 'satellite') void loadImagery()
+            }}
+          >
+            <span className="glyph">{glyph(l.glyph, pending)}</span>
+            {l.label}
+          </button>
+        )
+      })}
 
       {/* Aerial perspective. Its own group because it is not a layer of the world but a
           property of the air in front of it — and because turning it off is how you see
@@ -202,11 +227,14 @@ export default function ViewLayers() {
             className={`road ${settings[l.key] && roadPhase === 'ready' ? 'on' : ''} ${
               roadPhase === 'error' ? 'failed' : ''
             }`}
-            disabled={roadPhase === 'loading'}
+            // Never disabled, including mid-fetch. These say whether you want the layer
+            // drawn, which is a question you can answer before the data lands — and an
+            // Overpass query over a city can run for half a minute, so disabling them
+            // meant four dead buttons for most of the wait.
             title={roadPhase === 'ready' ? l.hint : ROAD_HINT[roadPhase]}
             onClick={() => set(l.key, !settings[l.key])}
           >
-            <span className="glyph">{roadPhase === 'loading' ? '⋯' : l.glyph}</span>
+            <span className="glyph">{glyph(l.glyph, roadPhase === 'loading')}</span>
             {l.label}
             {roadPhase === 'empty' && <em>none</em>}
             {roadPhase === 'error' && <em>failed</em>}
@@ -221,20 +249,22 @@ export default function ViewLayers() {
 
       {/* Overlays, each independent of the base and of each other. */}
       <div className="overlay-group">
-        {OVERLAYS.map((o) => (
-          <button
-            key={o.key}
-            className={`water ${settings[o.key] ? 'on' : ''}`}
-            // Ocean comes from the sea plane and needs no hydrology pass; the other
-            // two are derived, so they wait for the worker.
-            disabled={o.key !== 'showOcean' && !waterStats}
-            title={o.key !== 'showOcean' && !waterStats ? 'Still tracing drainage…' : o.hint}
-            onClick={setFlag(o.key)}
-          >
-            <span className="glyph">{o.glyph}</span>
-            {o.label}
-          </button>
-        ))}
+        {OVERLAYS.map((o) => {
+          // Ocean comes from the sea plane and needs no hydrology pass; the other two
+          // are derived, so they wait for the worker.
+          const pending = o.key !== 'showOcean' && waterPending
+          return (
+            <button
+              key={o.key}
+              className={`water ${settings[o.key] ? 'on' : ''}`}
+              title={pending ? 'Still tracing drainage…' : o.hint}
+              onClick={setFlag(o.key)}
+            >
+              <span className="glyph">{glyph(o.glyph, pending)}</span>
+              {o.label}
+            </button>
+          )
+        })}
       </div>
     </div>
   )

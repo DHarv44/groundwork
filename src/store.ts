@@ -16,7 +16,7 @@ import {
   type RoadClass,
 } from './lib/overpass'
 import type { MaskOptions, Masks } from './lib/roadmask'
-import { roadCacheGet, roadCachePut } from './lib/demcache'
+import { roadCacheGet, roadCachePut, roadCacheSweep, snapBounds } from './lib/demcache'
 import { biomeOf, ensureKoppen, fetchNormals, profileFor, type Biome } from './lib/climate'
 import { buildBiomeField, type BiomeShare } from './lib/biomeMap'
 import { makeDemoHeightField } from './lib/demo'
@@ -346,6 +346,8 @@ interface State {
     drawMs: number
   } | null
   settings: Settings
+  /** True while satellite tiles are in flight, so the layer button can say so. */
+  imageryLoading: boolean
   /** Köppen class of the selected area, read from the bundled raster. */
   biome: Biome | null
   /**
@@ -807,7 +809,11 @@ export const useStore = create<State>((setState, getState) => {
     const { roads, settings } = getState()
     if (!roads) return
 
+    // Drawn for the terrain's box, not the data's. A cache hit can be any earlier fetch
+    // that contains this one, so the two are often different.
+    const renderBounds = getState().heightField?.bounds ?? roads.bounds
     const opts: MaskOptions = {
+      renderBounds,
       resolution: settings.roadResolution,
       widthScale: settings.roadWidth,
       vergeScale: settings.roadVerge,
@@ -1010,6 +1016,7 @@ export const useStore = create<State>((setState, getState) => {
   build: null,
   imagery: null,
   imageryZoom: 0,
+  imageryLoading: false,
   waterMask: null,
   waterStats: null,
   roads: null,
@@ -1198,6 +1205,7 @@ export const useStore = create<State>((setState, getState) => {
       build: null,
       imagery: null,
       imageryZoom: 0,
+      imageryLoading: false,
     })
   },
 
@@ -1235,6 +1243,7 @@ export const useStore = create<State>((setState, getState) => {
       heightField: null,
       imagery: null,
       imageryZoom: 0,
+      imageryLoading: false,
       waterMask: null,
       waterStats: null,
       message: `Requesting ${source.label} over ${area.toLocaleString()} km²…`,
@@ -1281,6 +1290,7 @@ export const useStore = create<State>((setState, getState) => {
       heightField: null,
       imagery: null,
       imageryZoom: 0,
+      imageryLoading: false,
       waterMask: null,
       waterStats: null,
       message: 'Generating synthetic massif…',
@@ -1294,16 +1304,25 @@ export const useStore = create<State>((setState, getState) => {
   },
 
   loadImagery: async (): Promise<void> => {
-    const { heightField, imagery } = getState()
-    if (!heightField || imagery) return
+    const { heightField, imagery, imageryLoading } = getState()
+    if (!heightField || imagery || imageryLoading) return
     try {
-      setState({ message: 'Fetching satellite imagery…' })
+      setState({ imageryLoading: true, message: 'Fetching satellite imagery…' })
       const result = await fetchImagery(heightField.bounds, (done, total) => {
         setState({ message: `Satellite tiles ${done}/${total}…` })
       })
-      setState({ imagery: result.canvas, imageryZoom: result.zoom, message: '' })
+      setState({
+        imagery: result.canvas,
+        imageryZoom: result.zoom,
+        imageryLoading: false,
+        message: '',
+      })
     } catch {
-      setState({ message: '', error: 'Satellite imagery unavailable for this area.' })
+      setState({
+        imageryLoading: false,
+        message: '',
+        error: 'Satellite imagery unavailable for this area.',
+      })
     }
   },
 
@@ -1326,7 +1345,11 @@ export const useStore = create<State>((setState, getState) => {
     }
 
     try {
-      const network = await fetchOsm(bounds, undefined, (note) => setState({ message: note }))
+      // Fetch the snapped box rather than the exact one, so the next small adjustment of
+      // the selection is answered from here instead of going back to Overpass.
+      const network = await fetchOsm(snapBounds(bounds), bounds, undefined, (note) =>
+        setState({ message: note }),
+      )
       // The area may have been rebuilt while Overpass was thinking.
       if (getState().heightField?.bounds !== bounds) return
 
@@ -1355,6 +1378,13 @@ export const useStore = create<State>((setState, getState) => {
 // Classify whatever area the last session left selected, so the panel and the overlay
 // are right before anything is built.
 useStore.getState().refreshBiome()
+
+// Clear out anything left by an older query schema. Version bumps orphan entries rather
+// than removing them, and each one holds every way in its box, so without this the store
+// grows by a full copy of the data every time the shape of the query changes.
+void roadCacheSweep().then((n) => {
+  if (n > 0) console.info(`[groundwork] dropped ${n} stale OSM cache ${n === 1 ? 'entry' : 'entries'}`)
+})
 
 // Dev hook: drive the whole pipeline from the console without touching the UI.
 if (import.meta.env.DEV) {

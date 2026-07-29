@@ -1037,6 +1037,35 @@ main {
   box-shadow: 0 2px 16px rgba(125, 211, 252, 0.3);
 }
 
+/* Each observed layer spins while the one query behind all of them is in flight. They
+   share a fetch, so they share the state — four spinners rather than one is the honest
+   picture: none of them has its data yet. */
+.view-layers .tiny-spin {
+  display: block;
+  width: 9px;
+  height: 9px;
+  margin: 0 auto;
+  border: 1.5px solid rgba(182, 193, 208, 0.28);
+  border-top-color: #cbd4e0;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+/* On a lit button the scrim behind the spinner has to invert too, or it disappears
+   into the light background. */
+.view-layers button.on .tiny-spin {
+  border-color: rgba(23, 19, 12, 0.25);
+  border-top-color: #17130c;
+}
+
+/* The glyph cell is centred text; a block spinner inside it needs the box to behave
+   like a box, or it sits off the baseline and the label jumps as it appears. */
+.view-layers button .glyph {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
 /* Roads read as built rather than natural, so they take the one warm neutral in the
    palette instead of joining the water or cover families. */
 .view-layers button.road.on {

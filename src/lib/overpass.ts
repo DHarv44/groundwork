@@ -154,10 +154,30 @@ export const MAX_ROAD_AREA_KM2 = 40000
  */
 const MAX_RESPONSE_BYTES = 120e6
 
+/**
+ * Public Overpass instances, tried in order.
+ *
+ * More than two because the failures are not interchangeable. The main instance can be
+ * unreachable from a given network entirely — a connection that never opens rather than
+ * a request that is refused — while a mirror answers fine, and vice versa. One dead host
+ * should cost a few seconds, not the whole feature.
+ */
 const ENDPOINTS = [
   'https://overpass-api.de/api/interpreter',
   'https://overpass.kumi.systems/api/interpreter',
+  'https://overpass.private.coffee/api/interpreter',
+  'https://overpass.osm.jp/api/interpreter',
 ]
+
+/**
+ * How long to wait on one endpoint before moving to the next.
+ *
+ * Without this a host that accepts nothing takes the operating system's connect timeout
+ * to fail — well over a minute on some networks — and the mirrors never get tried at
+ * all. Generous enough for a real query over a city, short enough that an unreachable
+ * host is not the end of it.
+ */
+const ATTEMPT_TIMEOUT_MS = 50000
 
 function tagsFor(classes: RoadClass[]): string[] {
   const want = new Set(classes)
@@ -310,13 +330,17 @@ async function postWithBackoff(
   signal: AbortSignal | undefined,
   onProgress?: (note: string) => void,
 ): Promise<Response> {
-  const send = () =>
-    fetch(endpoint, {
+  const send = () => {
+    // The caller's abort still wins; this only adds a ceiling so an endpoint that never
+    // answers cannot hold up the ones after it.
+    const timeout = AbortSignal.timeout(ATTEMPT_TIMEOUT_MS)
+    return fetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body,
-      signal,
+      signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
     })
+  }
 
   const first = await send()
   if (first.status !== 429 && first.status !== 504) return first
@@ -336,6 +360,7 @@ async function postWithBackoff(
  */
 export async function fetchOsm(
   bounds: Bounds,
+  detailFor?: Bounds,
   signal?: AbortSignal,
   onProgress?: (note: string) => void,
 ): Promise<OsmData> {
@@ -347,7 +372,15 @@ export async function fetchOsm(
     )
   }
 
-  const requested = classesFor(boxKm2)
+  // Detail is decided by the box the *user* asked for, not the one being fetched.
+  //
+  // The fetch box is grown outward to a cache grid, and that growth can push it across
+  // one of the class thresholds — a 3,770 km² selection qualifies for minor roads, and
+  // the 4,480 km² box it snaps to does not. Deciding from the snapped box meant the
+  // residential streets silently disappeared because of an internal caching choice, at
+  // a size where they are perfectly resolvable. Snapping may cost bandwidth; it must
+  // never cost detail.
+  const requested = classesFor(boundsAreaKm2(detailFor ?? bounds))
   const filtered = requested.length < ROAD_ORDER.length
   const body = `data=${encodeURIComponent(buildQuery(bounds, requested))}`
 
