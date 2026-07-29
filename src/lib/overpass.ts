@@ -434,10 +434,10 @@ function tagsFor(classes: RoadClass[]): string[] {
  * arrive behind them, the way the hydrology pass already streams in behind the terrain.
  * If the area query is slow, or fails, the roads are untouched by it.
  */
-function roadSelection(b: Bounds, cls: RoadClass): string {
+function roadSelection(b: Bounds, classes: RoadClass[]): string {
   // Overpass bbox order is (south, west, north, east).
   const bbox = `${b.south},${b.west},${b.north},${b.east}`
-  return `(way["highway"~"^(${tagsFor([cls]).join('|')})$"](${bbox});)`
+  return `(way["highway"~"^(${tagsFor(classes).join('|')})$"](${bbox});)`
 }
 
 /**
@@ -678,6 +678,11 @@ function assembleRings(segments: Float64Array[]): Float64Array[] {
   }
 
   return rings
+}
+
+/** Length of one way in km — for splitting a batched response back out by class. */
+export function wayLengthKm(pts: Float64Array): number {
+  return wayLength(pts) / 1000
 }
 
 /** Great-circle length of a way in metres, for the readout only. */
@@ -955,7 +960,7 @@ export interface RoadResult {
  */
 export async function fetchRoads(
   bounds: Bounds,
-  cls: RoadClass,
+  classes: RoadClass[],
   signal?: AbortSignal,
   onProgress?: (note: string) => void,
 ): Promise<RoadResult> {
@@ -966,16 +971,17 @@ export async function fetchRoads(
         `up to ${MAX_ROAD_AREA_KM2.toLocaleString()} km².`,
     )
   }
+  if (classes.length === 0) return { bounds, roads: [], lengthKm: 0 }
 
-  const label = ROAD_CLASSES[cls].label.toLowerCase()
+  const label = classes.length === 1 ? ROAD_CLASSES[classes[0]!].label.toLowerCase() : 'roads'
   const started = performance.now()
-  osmLog(`${cls}: ${Math.round(boxKm2).toLocaleString()} km²`)
+  osmLog(`roads: ${Math.round(boxKm2).toLocaleString()} km²`, { classes: classes.join(', ') })
 
   const got = await withEndpoints(signal, onProgress, (endpoint) =>
-    runSelection(endpoint, bounds, (b) => roadSelection(b, cls), label, signal, onProgress),
+    runSelection(endpoint, bounds, (b) => roadSelection(b, classes), label, signal, onProgress),
   )
 
-  osmLog(`${cls} done in ${ms(started)}`, {
+  osmLog(`roads done in ${ms(started)}`, {
     ways: got.roads.length,
     km: Math.round(got.metres / 1000),
   })

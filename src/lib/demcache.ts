@@ -204,8 +204,13 @@ const SNAP_STEPS = [0.005, 0.01, 0.02, 0.05, 0.1, 0.25]
 
 function snapStepFor(bounds: Bounds): number {
   const span = Math.max(bounds.north - bounds.south, bounds.east - bounds.west)
-  // A twelfth of the box, so snapping costs at most ~8% extra ground on a side.
-  const target = span / 12
+  // A fortieth of the box.
+  //
+  // This was a twelfth, which grew the fetched area by up to a third — paid on every
+  // first fetch, to save a request only if the box is later nudged. That is the wrong
+  // way round: the fetch is the slow part and the nudge is hypothetical. A fortieth
+  // still absorbs the small adjustments this exists for while costing a few per cent.
+  const target = span / 40
   for (let i = SNAP_STEPS.length - 1; i >= 0; i--) {
     if (SNAP_STEPS[i]! <= target) return SNAP_STEPS[i]!
   }

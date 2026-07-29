@@ -14,6 +14,7 @@ import {
   fetchAreas,
   fetchRoads,
   isAreaKind,
+  wayLengthKm,
   DEFAULT_ROAD_CLASSES,
   OSM_KINDS,
   ROAD_ORDER,
@@ -21,6 +22,7 @@ import {
   type OsmData,
   type OsmKind,
   type RoadClass,
+  type RoadWay,
 } from './lib/overpass'
 import type { MaskOptions, Masks } from './lib/roadmask'
 import { roadCacheGet, roadCachePut, roadCacheSweep, snapBounds } from './lib/demcache'
@@ -466,6 +468,8 @@ interface State {
   loadRoads: () => Promise<void>
   /** Fetch one layer, on its own. This is also the retry path after a failure. */
   loadOsmKind: (kind: OsmKind) => Promise<void>
+  /** Fetch several road classes in one query, splitting the answer between them. */
+  loadRoadClasses: (classes: RoadClass[]) => Promise<void>
 }
 
 let inflight: AbortController | null = null
@@ -1406,26 +1410,141 @@ export const useStore = create<State>((setState, getState) => {
    */
   loadRoads: async (): Promise<void> => {
     if (!getState().heightField) return
-    const { settings } = getState()
-    const queue: OsmKind[] = [
-      ...ROAD_ORDER.filter((c) => settings.roadClasses[c]),
-      ...(settings.fetchAreas ? (['water', 'wood', 'built'] as OsmKind[]) : []),
-    ]
+    const { settings, osmPhase } = getState()
 
-    // Two at a time, not all of them.
+    // Every ticked road class in ONE request.
     //
-    // Overpass counts concurrent query slots per client IP and allows very few, so
-    // firing nine at once does not make them nine times faster — it makes most of them
-    // queue behind the others and time out waiting, which is measurable: the
-    // connectivity diagnostic did precisely this to itself and reported every mirror as
-    // dead when they were merely busy.
+    // The checkboxes are per class; the query does not have to be, and it should not be.
+    // Overpass answers one regex over an indexed tag about as fast as it answers a
+    // narrower one — the cost is in the box, not the branch count — so asking per class
+    // turned a single round trip into one per class, each waiting its turn for a query
+    // slot. That is what made this slower than the very first version, which asked for
+    // the whole hierarchy at once and came back in seconds.
     //
-    // Two keeps a request in flight while another is being parsed, which is where the
-    // overlap actually pays, without asking a free service for more than it offers.
+    // Splitting the answer afterwards is free: every way carries its `highway` tag, so
+    // the classes fall out of the response without asking about them separately.
+    const wanted = ROAD_ORDER.filter(
+      (c) => settings.roadClasses[c] && osmPhase[c] !== 'ready' && osmPhase[c] !== 'empty',
+    )
+    const areas: OsmKind[] = settings.fetchAreas ? ['water', 'wood', 'built'] : []
+
+    // Roads first and alone, then the areas two at a time behind them. Overpass counts
+    // query slots per client IP and allows very few, so more in flight is not faster —
+    // it is the same work with everything queued behind everything else.
+    await getState().loadRoadClasses(wanted)
+
+    const queue = [...areas]
     const workers = Array.from({ length: Math.min(2, queue.length) }, async () => {
       while (queue.length) await getState().loadOsmKind(queue.shift()!)
     })
     await Promise.all(workers)
+  },
+
+  /**
+   * Fetch several road classes in one query and split the answer between them.
+   *
+   * Each class still gets its own cache entry and its own status, so the checkboxes and
+   * their retries work exactly as before — this only stops the request count scaling
+   * with how many boxes are ticked.
+   */
+  loadRoadClasses: async (classes: RoadClass[]): Promise<void> => {
+    const { heightField } = getState()
+    if (!heightField || classes.length === 0) return
+
+    const bounds = heightField.bounds
+    const fetchBox = snapBounds(bounds)
+    const current = () => getState().heightField?.bounds === bounds
+
+    const setPhases = (p: OsmPhase, error?: string, only?: RoadClass[]) =>
+      setState((s) => {
+        const phases = { ...s.osmPhase }
+        const errors = { ...s.osmError }
+        for (const c of only ?? classes) {
+          phases[c] = p
+          errors[c] = error
+        }
+        return { osmPhase: phases, osmError: errors }
+      })
+
+    // Claim these classes BEFORE anything is awaited.
+    //
+    // This is the whole ball game. Marking them loading after the cache lookup leaves an
+    // await-width hole through which a second call walks straight in, and the result is
+    // several copies of the same query in flight at once. Overpass gives one IP very few
+    // slots, so they do not run in parallel — they queue behind each other, and measured
+    // over Denver that turned a query into four overlapping ones taking 55, 63, 80 and 91
+    // seconds. The very first version of this file guarded against exactly that on its
+    // first line, and the guard was lost when the fetches were split up.
+    const claimed = classes.filter((c) => getState().osmPhase[c] !== 'loading')
+    if (claimed.length === 0) return
+    setPhases('loading', undefined, claimed)
+
+    // Anything already cached is taken from there; only the rest goes to the network.
+    const missing: RoadClass[] = []
+    const fromCache = new Map<RoadClass, { roads: RoadWay[]; lengthKm: number }>()
+    for (const c of claimed) {
+      const hit = await roadCacheGet(bounds, { kind: c })
+      if (hit) fromCache.set(c, { roads: hit.roads, lengthKm: hit.lengthKm })
+      else missing.push(c)
+    }
+    if (!current()) return
+
+    let fetched: RoadWay[] = []
+    try {
+      if (missing.length) {
+        const r = await fetchRoads(fetchBox, missing, undefined, (m) => setState({ message: m }))
+        if (!current()) return
+        fetched = r.roads
+      }
+    } catch (err) {
+      if ((err as Error)?.name === 'AbortError') return
+      setPhases(
+        'error',
+        err instanceof NoRoadDataError ? err.message : (err as Error).message,
+        missing,
+      )
+      // Whatever came from the cache is still perfectly good and has to be let out of
+      // `loading`, or a class that was already in hand is left spinning because a
+      // different one could not be fetched.
+      for (const c of claimed) {
+        if (missing.includes(c)) continue
+        setPhases(fromCache.get(c)?.roads.length ? 'ready' : 'empty', undefined, [c])
+      }
+      setState({ message: '' })
+      return
+    }
+
+    // Split what came back by the class each way already declares, so one response
+    // settles every class that was asked for.
+    for (const c of missing) {
+      const mine = fetched.filter((w) => w.cls === c)
+      const km = mine.reduce((n, w) => n + wayLengthKm(w.pts), 0)
+      fromCache.set(c, { roads: mine, lengthKm: km })
+      void roadCachePut(
+        { bounds: fetchBox, roads: mine, areas: [], lengthKm: km, fetchedAt: Date.now() },
+        { kind: c },
+      )
+    }
+
+    setState((s) => {
+      const base = s.roads ?? { bounds, roads: [], areas: [], lengthKm: 0, fetchedAt: Date.now() }
+      const kept = base.roads.filter((w) => !claimed.includes(w.cls))
+      const added = claimed.flatMap((c) => fromCache.get(c)?.roads ?? [])
+      return {
+        roads: {
+          ...base,
+          roads: [...kept, ...added],
+          lengthKm: [...kept, ...added].reduce((n, w) => n + wayLengthKm(w.pts), 0),
+        },
+        message: '',
+      }
+    })
+
+    for (const c of claimed) {
+      const got = fromCache.get(c)
+      setPhases(got && got.roads.length ? 'ready' : 'empty', undefined, [c])
+    }
+    rebuildRoadMask()
   },
 
   /**
@@ -1494,25 +1613,12 @@ export const useStore = create<State>((setState, getState) => {
         })
         phase(areas.length ? 'ready' : 'empty')
       } else {
-        const got = cached
-          ? { roads: cached.roads, lengthKm: cached.lengthKm }
-          : await fetchRoads(fetchBox, kind, undefined, note)
-        if (!current()) return
-        if (!cached) {
-          void roadCachePut(
-            { bounds: fetchBox, roads: got.roads, areas: [], lengthKm: got.lengthKm, fetchedAt: Date.now() },
-            req,
-          )
-        }
-        const b = base()
-        setState({
-          roads: {
-            ...b,
-            roads: [...b.roads.filter((w) => w.cls !== kind), ...got.roads],
-            lengthKm: b.lengthKm + got.lengthKm,
-          },
-        })
-        phase(got.roads.length ? 'ready' : 'empty')
+        // A single road class goes through the batch path, which is the same code with
+        // a list of one. Keeping one route in and out means the cache write, the split
+        // and the merge cannot drift apart between "retry this class" and "fetch what is
+        // ticked".
+        await getState().loadRoadClasses([kind])
+        return
       }
 
       setState({ message: '' })
