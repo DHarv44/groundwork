@@ -13,11 +13,14 @@ import {
   diagnose,
   fetchAreas,
   fetchRoads,
+  isAreaKind,
+  DEFAULT_ROAD_CLASSES,
+  OSM_KINDS,
+  ROAD_ORDER,
   type AreaKind,
   type OsmData,
-  type OsmRequest,
+  type OsmKind,
   type RoadClass,
-  type RoadDetail,
 } from './lib/overpass'
 import type { MaskOptions, Masks } from './lib/roadmask'
 import { roadCacheGet, roadCachePut, roadCacheSweep, snapBounds } from './lib/demcache'
@@ -29,6 +32,8 @@ import { buildTerrain, type TerrainBuild } from './lib/mesh'
 
 export type TextureMode = 'procedural' | 'satellite' | 'drainage'
 export type Phase = 'idle' | 'fetching' | 'building' | 'ready' | 'error'
+/** Where one OpenStreetMap layer's fetch has got to. */
+export type OsmPhase = 'idle' | 'loading' | 'ready' | 'empty' | 'error'
 
 export interface Settings {
   exaggeration: number
@@ -110,21 +115,24 @@ export interface Settings {
   /** Cleared corridor either side, as a multiple of the surface width. */
   roadVerge: number
   /**
-   * How much of the road hierarchy to fetch.
+   * Which road classes to fetch and draw, one checkbox each.
    *
-   * `auto` picks by area and is right most of the time. The override exists because area
-   * is only ever a guess at cost: over a metro, asking down to secondary pulls the whole
-   * tertiary street grid — measured at 34,601 elements and 36 MB for a ninth of Dallas —
-   * none of which resolves at that scale. Someone who wants the trunk network across a
-   * wide box should be able to say so and have it back in seconds.
+   * Each is its own request, so ticking one costs exactly that class and nothing else.
+   * That matters because the classes differ in cost by orders of magnitude — over a
+   * metro the residential streets are most of the payload and the motorways are a
+   * handful of long lines — and any rule that bundles them makes the cheap ones
+   * unavailable without the dear ones.
+   *
+   * Replaces an `auto` setting that picked by area. Every version of that table chose
+   * more than was wanted at some size, which is the wrong problem to keep tuning: the
+   * person looking at the map knows what they want on it.
    */
-  roadDetail: RoadDetail
+  roadClasses: Record<RoadClass, boolean>
   /**
    * Whether to fetch water, woodland and land use at all.
    *
-   * Separate from road detail because they are a large share of the response over a
-   * built-up area on their own, and they are the half you would drop first when what you
-   * want is the motorway network across a county.
+   * Kept as a master switch alongside the per-layer buttons, for when the terrain is the
+   * subject and none of it is wanted.
    */
   fetchAreas: boolean
   /** Longest side of the road mask, in pixels. */
@@ -243,7 +251,7 @@ export const DEFAULT_SETTINGS: Settings = {
   showRivers: true,
   showLakes: true,
   showRoads: true,
-  roadDetail: 'auto',
+  roadClasses: { ...DEFAULT_ROAD_CLASSES },
   fetchAreas: true,
   roadWidth: 1,
   roadVerge: 3,
@@ -354,23 +362,23 @@ interface State {
    * somewhere to say so, an empty box is indistinguishable from a fetch that fell over,
    * and you spend an hour debugging a map that simply has nothing on it.
    */
-  roadPhase: 'idle' | 'loading' | 'ready' | 'empty' | 'error'
-  roadError: string | null
   /**
-   * Where the *areas* fetch has got to, tracked separately from the roads.
+   * Where each of the four fetches has got to, tracked separately.
    *
-   * They are two requests now, with very different costs, so one status could not
-   * honestly describe both — roads are usually done while the areas are still going, and
-   * the areas failing does not mean the roads did.
+   * They are four requests running side by side, with very different costs, so a single
+   * status could not honestly describe them — the roads are usually drawn while built-up
+   * land is still arriving, and built-up land failing says nothing about the lakes.
+   *
+   * `empty` is deliberately its own state rather than an error. Open desert, ocean and
+   * genuine wilderness have nothing mapped, and that is the correct answer — without
+   * somewhere to say so, an empty box is indistinguishable from a fetch that fell over.
    */
-  areaPhase: 'idle' | 'loading' | 'ready' | 'empty' | 'error'
-  areaError: string | null
+  osmPhase: Record<OsmKind, OsmPhase>
+  osmError: Partial<Record<OsmKind, string>>
   roadInfo: {
     lengthKm: number
     byClass: Array<{ cls: RoadClass; km: number }>
     metresPerPixel: number
-    /** Classes dropped from the request because the box is too large to resolve them. */
-    filtered: boolean
     /** Classes drawn wider than life so they stay visible at this scale. */
     widened: RoadClass[]
     /** Rings drawn per kind. Zero is a fact about the place, not a failure. */
@@ -454,10 +462,10 @@ interface State {
   generate: () => Promise<void>
   generateDemo: () => Promise<void>
   loadImagery: () => Promise<void>
-  /** Fetch (or recall) the road network for the built area. Safe to call repeatedly. */
+  /** Start all four OpenStreetMap layers at once. Safe to call repeatedly. */
   loadRoads: () => Promise<void>
-  /** Fetch water, woodland and land use. Runs behind the roads, never in front. */
-  loadAreas: () => Promise<void>
+  /** Fetch one layer, on its own. This is also the retry path after a failure. */
+  loadOsmKind: (kind: OsmKind) => Promise<void>
 }
 
 let inflight: AbortController | null = null
@@ -515,7 +523,7 @@ const PERSISTED_SETTINGS = [
   'showRivers',
   'showLakes',
   'showRoads',
-  'roadDetail',
+  'roadClasses',
   'fetchAreas',
   'roadWidth',
   'roadVerge',
@@ -854,6 +862,7 @@ export const useStore = create<State>((setState, getState) => {
       resolution: settings.roadResolution,
       widthScale: settings.roadWidth,
       vergeScale: settings.roadVerge,
+      classes: settings.roadClasses,
     }
 
     // One worker, reused. Replacing it would throw away the held data and the warm
@@ -920,7 +929,6 @@ export const useStore = create<State>((setState, getState) => {
         lengthKm: roads.lengthKm,
         byClass: mask.byClass,
         metresPerPixel: mask.metresPerPixel,
-        filtered: roads.filtered,
         widened: mask.widened,
         areaCounts: mask.areaCounts,
         drawMs: mask.drawMs,
@@ -949,10 +957,8 @@ export const useStore = create<State>((setState, getState) => {
       roadMask: null,
       areaMask: null,
       roadInfo: null,
-      roadPhase: 'idle',
-      roadError: null,
-      areaPhase: 'idle',
-      areaError: null,
+      osmPhase: Object.fromEntries(OSM_KINDS.map((k) => [k, 'idle'])) as Record<OsmKind, OsmPhase>,
+      osmError: {},
     })
   }
 
@@ -1061,10 +1067,8 @@ export const useStore = create<State>((setState, getState) => {
   roads: null,
   roadMask: null,
   areaMask: null,
-  roadPhase: 'idle',
-  roadError: null,
-  areaPhase: 'idle',
-  areaError: null,
+  osmPhase: Object.fromEntries(OSM_KINDS.map((k) => [k, 'idle'])) as Record<OsmKind, OsmPhase>,
+  osmError: {},
   roadInfo: null,
   settings: { ...DEFAULT_SETTINGS, ...(restored.settings as Partial<Settings>) },
   biome: null,
@@ -1138,14 +1142,18 @@ export const useStore = create<State>((setState, getState) => {
     // is what fetches the imagery.
     if (key === 'showRoads' && value) void getState().loadRoads()
 
-    // These change *what was asked for*, so what is in hand no longer answers the
-    // question. Dropping it and asking again is the whole point of the control — the
-    // cache is keyed on the request too, so going back to a setting already fetched
-    // costs nothing.
-    if (key === 'roadDetail' || key === 'fetchAreas') {
-      clearRoads()
-      if (next.showRoads) void getState().loadRoads()
+    // Ticking a road class fetches exactly that class; unticking it just stops drawing
+    // it. Nothing is thrown away, so turning one back on afterwards is instant, and the
+    // classes already in hand are untouched either way.
+    if (key === 'roadClasses') {
+      const on = value as Record<RoadClass, boolean>
+      for (const cls of ROAD_ORDER) {
+        if (on[cls] && !settings.roadClasses[cls]) void getState().loadOsmKind(cls)
+      }
+      scheduleRoadMask()
     }
+
+    if (key === 'fetchAreas' && value) void getState().loadRoads()
   },
 
   /**
@@ -1385,106 +1393,136 @@ export const useStore = create<State>((setState, getState) => {
    * streams in behind the terrain — and their cost, which over a city is most of the
    * work, no longer holds the cheap half hostage.
    */
+  /**
+   * Start all four layers at once.
+   *
+   * Side by side rather than in sequence, because they are independent questions with
+   * very different costs — the roads are a single clause and land in seconds, built-up
+   * land over a metro is the slowest thing here — and nothing is gained by making the
+   * quick ones wait. Each draws the moment it arrives.
+   *
+   * Safe to call repeatedly, and worth doing: anything already in hand is skipped, and
+   * anything that failed last time is tried again.
+   */
   loadRoads: async (): Promise<void> => {
-    const { heightField, roads, roadPhase, settings } = getState()
+    if (!getState().heightField) return
+    const { settings } = getState()
+    const queue: OsmKind[] = [
+      ...ROAD_ORDER.filter((c) => settings.roadClasses[c]),
+      ...(settings.fetchAreas ? (['water', 'wood', 'built'] as OsmKind[]) : []),
+    ]
+
+    // Two at a time, not all of them.
+    //
+    // Overpass counts concurrent query slots per client IP and allows very few, so
+    // firing nine at once does not make them nine times faster — it makes most of them
+    // queue behind the others and time out waiting, which is measurable: the
+    // connectivity diagnostic did precisely this to itself and reported every mirror as
+    // dead when they were merely busy.
+    //
+    // Two keeps a request in flight while another is being parsed, which is where the
+    // overlap actually pays, without asking a free service for more than it offers.
+    const workers = Array.from({ length: Math.min(2, queue.length) }, async () => {
+      while (queue.length) await getState().loadOsmKind(queue.shift()!)
+    })
+    await Promise.all(workers)
+  },
+
+  /**
+   * Fetch one layer — one road class, or one kind of area.
+   *
+   * Also the retry path, and what a checkbox calls when it is ticked. Everything here is
+   * keyed on the kind: its own request, its own cache entry, its own status. So a
+   * failure is confined to the layer that had it, ticking a class costs exactly that
+   * class, and calling this again is all that is needed to have another go.
+   */
+  loadOsmKind: async (kind: OsmKind): Promise<void> => {
+    const { heightField, osmPhase } = getState()
     if (!heightField) return
-    // Already have them, or already asking.
-    if (roads || roadPhase === 'loading') return
+    if (osmPhase[kind] === 'loading') return
+    // Already answered. A layer that came back genuinely empty counts as answered —
+    // asking again would only produce the same nothing.
+    if (osmPhase[kind] === 'ready' || osmPhase[kind] === 'empty') return
 
     const bounds = heightField.bounds
-    const note = (m: string) => setState({ message: m })
     // Fetch the snapped box rather than the exact one, so the next small adjustment of
     // the selection is answered from cache instead of going back to Overpass.
     const fetchBox = snapBounds(bounds)
-    const roadReq: OsmRequest = { detail: settings.roadDetail, areas: false }
+    const req = { kind }
+    const note = (m: string) => setState({ message: m })
 
     /** Still looking at the same place? A rebuild mid-fetch invalidates everything. */
     const current = () => getState().heightField?.bounds === bounds
 
-    setState({ roadPhase: 'loading', roadError: null })
+    const phase = (p: OsmPhase, error?: string) =>
+      setState((s) => ({
+        osmPhase: { ...s.osmPhase, [kind]: p },
+        osmError: { ...s.osmError, [kind]: error },
+      }))
+
+    /** The running total, or an empty one — layers land in any order. */
+    const base = (): OsmData =>
+      getState().roads ?? {
+        bounds,
+        roads: [],
+        areas: [],
+        lengthKm: 0,
+        fetchedAt: Date.now(),
+      }
+
+    phase('loading')
 
     try {
       // Cached answers cost nothing, and Overpass is free shared infrastructure —
       // asking twice for the same box is the one thing that would actually be rude.
-      const cached = await roadCacheGet(bounds, roadReq)
-      let result: OsmData
-      if (cached) {
-        result = cached
-      } else {
-        const r = await fetchRoads(fetchBox, bounds, settings.roadDetail, undefined, note)
-        result = {
-          bounds: r.bounds,
-          roads: r.roads,
-          areas: [],
-          lengthKm: r.lengthKm,
-          requested: r.requested,
-          filtered: r.filtered,
-          fetchedAt: Date.now(),
+      const cached = await roadCacheGet(bounds, req)
+
+      if (isAreaKind(kind)) {
+        const areas = cached?.areas ?? (await fetchAreas(fetchBox, kind, undefined, note))
+        if (!current()) return
+        if (!cached) {
+          void roadCachePut(
+            { bounds: fetchBox, roads: [], areas, lengthKm: 0, fetchedAt: Date.now() },
+            req,
+          )
         }
+        // Merge rather than replace: the other layers are landing alongside this one, so
+        // the list has to grow by this kind without disturbing the rest.
+        const b = base()
+        setState({
+          roads: { ...b, areas: [...b.areas.filter((a) => a.kind !== kind), ...areas] },
+        })
+        phase(areas.length ? 'ready' : 'empty')
+      } else {
+        const got = cached
+          ? { roads: cached.roads, lengthKm: cached.lengthKm }
+          : await fetchRoads(fetchBox, kind, undefined, note)
+        if (!current()) return
+        if (!cached) {
+          void roadCachePut(
+            { bounds: fetchBox, roads: got.roads, areas: [], lengthKm: got.lengthKm, fetchedAt: Date.now() },
+            req,
+          )
+        }
+        const b = base()
+        setState({
+          roads: {
+            ...b,
+            roads: [...b.roads.filter((w) => w.cls !== kind), ...got.roads],
+            lengthKm: b.lengthKm + got.lengthKm,
+          },
+        })
+        phase(got.roads.length ? 'ready' : 'empty')
       }
-      if (!current()) return
 
-      if (!cached) void roadCachePut(result, roadReq)
-      setState({
-        roads: result,
-        roadPhase: result.roads.length ? 'ready' : 'empty',
-        message: '',
-      })
+      setState({ message: '' })
       rebuildRoadMask()
     } catch (err) {
       if ((err as Error)?.name === 'AbortError') return
-      setState({
-        roadPhase: 'error',
-        message: '',
-        // fetchRoads shapes its own messages — every path out of it is deliberate, so
-        // wrapping them again would only bury the useful half.
-        roadError: err instanceof NoRoadDataError ? err.message : (err as Error).message,
-      })
-      return
-    }
-
-    if (!getState().settings.fetchAreas) {
-      setState({ areaPhase: 'idle' })
-      return
-    }
-    void getState().loadAreas()
-  },
-
-  loadAreas: async (): Promise<void> => {
-    const { heightField, roads, areaPhase } = getState()
-    if (!heightField || !roads || areaPhase === 'loading') return
-    if (roads.areas.length > 0) return
-
-    const bounds = heightField.bounds
-    const areaReq: OsmRequest = { detail: 'auto', areas: true }
-    const current = () => getState().heightField?.bounds === bounds
-
-    setState({ areaPhase: 'loading', areaError: null })
-
-    try {
-      const cached = await roadCacheGet(bounds, areaReq)
-      const areas =
-        cached?.areas ??
-        (await fetchAreas(snapBounds(bounds), undefined, (m) => setState({ message: m })))
-      if (!current()) return
-
-      const merged = { ...getState().roads!, areas }
-      if (!cached) void roadCachePut(merged, areaReq)
-      setState({
-        roads: merged,
-        areaPhase: areas.length ? 'ready' : 'empty',
-        message: '',
-      })
-      rebuildRoadMask()
-    } catch (err) {
-      if ((err as Error)?.name === 'AbortError') return
-      // Deliberately not fatal to the roads: they are already drawn, and this failing
-      // means the map is missing its lakes, not that it is wrong.
-      setState({
-        areaPhase: 'error',
-        message: '',
-        areaError: err instanceof NoRoadDataError ? err.message : (err as Error).message,
-      })
+      // Confined to this layer. The others are unaffected, and this one can be retried
+      // by clicking its button — which is what the failed state on it means.
+      phase('error', err instanceof NoRoadDataError ? err.message : (err as Error).message)
+      setState({ message: '' })
     }
   },
   }

@@ -1,11 +1,17 @@
 import { useEffect, useMemo, useState } from 'react'
-import { DEFAULT_SETTINGS, useStore, type BiomeKey, type Settings } from '../store'
+import { DEFAULT_SETTINGS, useStore, type BiomeKey, type OsmPhase, type Settings } from '../store'
 import { KOPPEN_CODES, colorFor } from '../lib/koppen'
 import { FOREST_MAX, GROUND_WARMTH_MAX } from '../lib/biomeMap'
 import { DAILY_QUOTA, cacheClear, cacheStats, quotaUsed } from '../lib/demcache'
 import { decodePreset, deletePreset, encodePreset, loadPresets, savePreset } from '../lib/presets'
 import { DEM_SOURCES } from '../lib/opentopo'
-import { AREA_LABEL, ROAD_CLASSES, ROAD_DETAIL_LABEL } from '../lib/overpass'
+import {
+  AREA_LABEL,
+  OSM_KINDS,
+  ROAD_CLASSES,
+  ROAD_ORDER,
+  type RoadClass,
+} from '../lib/overpass'
 import { boundsAreaKm2, boundsExtentMetres, formatBounds } from '../lib/geo'
 import { captureScreenshot } from '../lib/capture'
 import { exportGLB, exportHeightmapPNG, exportSTL } from '../lib/exporters'
@@ -146,16 +152,27 @@ const DETAIL_STEPS = [256, 384, 512, 768, 1024, 1536, 2048]
 /** Road mask sizes. Above 4096 the texture costs more than the roads are worth. */
 const ROAD_RES_STEPS = [1024, 1536, 2048, 3072, 4096]
 
-type TabId = 'terrain' | 'surface' | 'water' | 'light' | 'render' | 'export'
+type TabId = 'terrain' | 'surface' | 'roads' | 'water' | 'light' | 'render' | 'export'
 
 const TABS: { id: TabId; label: string }[] = [
   { id: 'terrain', label: 'Terrain' },
   { id: 'surface', label: 'Surface' },
+  { id: 'roads', label: 'Roads' },
   { id: 'water', label: 'Water' },
   { id: 'light', label: 'Light' },
   { id: 'render', label: 'Render' },
   { id: 'export', label: 'Export' },
 ]
+
+/** How each class reads on the panel, coarsest first — the order you would enable them. */
+const CLASS_NOTE: Record<RoadClass, string> = {
+  motorway: 'Motorways and trunk routes',
+  primary: 'A-roads and their equivalents',
+  secondary: 'Routes between towns',
+  tertiary: 'Arterial streets — the bulk of a town',
+  minor: 'Residential and service streets',
+  track: 'Farm and forest tracks',
+}
 
 export default function Controls() {
   const {
@@ -185,11 +202,27 @@ export default function Controls() {
     editingBiome,
     setEditingBiome,
     resetBiome,
-    roadPhase,
-    roadError,
+    osmPhase,
+    osmError,
     roadInfo,
     loadRoads,
+    loadOsmKind,
   } = useStore()
+
+  // The panel summarises four fetches. Worst-case wins, because that is the state worth
+  // acting on: one layer still going means the picture is incomplete, and one failed
+  // means something needs retrying.
+  const anyOsm = (p: OsmPhase) => OSM_KINDS.some((k) => osmPhase[k] === p)
+  const roadPhase: OsmPhase = anyOsm('error')
+    ? 'error'
+    : anyOsm('loading')
+      ? 'loading'
+      : anyOsm('ready')
+        ? 'ready'
+        : anyOsm('empty')
+          ? 'empty'
+          : 'idle'
+  const roadError = OSM_KINDS.map((k) => osmError[k]).find(Boolean) ?? null
 
   // The class the sliders act on: your pick, falling back to the dominant one.
   const editing =
@@ -841,24 +874,9 @@ export default function Controls() {
                 )
               }
             >
-              {/* What to ask for, above what to do with it. Both of these decide how
-                  long the fetch takes and whether it succeeds at all, which makes them
-                  the first thing worth reaching for on a wide box. */}
-              <label className="field">
-                <span>Road detail</span>
-                <select
-                  value={settings.roadDetail}
-                  onChange={(e) => set('roadDetail', e.target.value as Settings['roadDetail'])}
-                >
-                  {(Object.keys(ROAD_DETAIL_LABEL) as Array<keyof typeof ROAD_DETAIL_LABEL>).map(
-                    (k) => (
-                      <option key={k} value={k}>
-                        {ROAD_DETAIL_LABEL[k]}
-                      </option>
-                    ),
-                  )}
-                </select>
-              </label>
+              {/* Roads have their own tab — six classes, each its own request. What is
+                  left here is the ground: what was found, and how far it is allowed to
+                  override what the terrain derived for itself. */}
               <Toggle
                 label="Fetch water, woodland and land use"
                 value={settings.fetchAreas}
@@ -879,45 +897,99 @@ export default function Controls() {
                 </>
               )}
 
-              {roadInfo && roadPhase === 'ready' && (
-                <>
-                  <div className="metrics wide">
-                    {roadInfo.byClass.map((c) => (
-                      <span key={c.cls} title={ROAD_CLASSES[c.cls].label}>
-                        {ROAD_CLASSES[c.cls].label} {Math.round(c.km).toLocaleString()} km
-                      </span>
-                    ))}
-                    <span title="Ground metres per pixel of the road mask">
-                      {roadInfo.metresPerPixel.toFixed(1)} m/px
+              {roadInfo && (
+                <div className="metrics wide">
+                  {(['water', 'wood', 'built'] as const).map((k) => (
+                    <span key={k} title={`${AREA_LABEL[k]} polygons found`}>
+                      {AREA_LABEL[k]} {roadInfo.areaCounts[k].toLocaleString()}
                     </span>
-                    <span title="Rasterised in a worker, so this is cost rather than stutter">
-                      {roadInfo.drawMs} ms draw
-                    </span>
-                    {(['water', 'wood', 'built'] as const).map((k) => (
-                      <span key={k} title={`${AREA_LABEL[k]} polygons found`}>
-                        {AREA_LABEL[k]} {roadInfo.areaCounts[k].toLocaleString()}
-                      </span>
-                    ))}
-                  </div>
-                  {/* Both of these are places the render is knowingly not telling the
-                      truth, so they are stated rather than left to be discovered. */}
-                  {roadInfo.filtered && (
-                    <div className="status">
-                      Minor roads and tracks were not requested — at this size they are
-                      narrower than one mask pixel.
-                    </div>
-                  )}
-                  {roadInfo.widened.length > 0 && (
-                    <div className="status">
-                      Drawn wider than life to stay visible:{' '}
-                      {roadInfo.widened.map((c) => ROAD_CLASSES[c].label.toLowerCase()).join(', ')}.
-                    </div>
-                  )}
-                </>
+                  ))}
+                </div>
               )}
 
-              {/* Goes below 1 now that the visibility floor scales with it, so this can
-                  thin the network down as well as fatten it. */}
+              {/* How much each observed layer is allowed to override what was derived.
+                  Water at full strength because a surveyed shoreline is simply better
+                  evidence than a depression fill; woodland lower, because it is a
+                  correction to a model that knows things the polygon does not. */}
+              <Slider
+                label="Mapped water"
+                value={settings.osmWaterStrength}
+                min={0}
+                max={1}
+                step={0.01}
+                onChange={setSetting('osmWaterStrength')}
+              />
+              <Slider
+                label="Mapped woodland"
+                value={settings.osmWoodStrength}
+                min={0}
+                max={1}
+                step={0.01}
+                onChange={setSetting('osmWoodStrength')}
+              />
+              <Slider
+                label="Built-up ground"
+                value={settings.osmBuiltStrength}
+                min={0}
+                max={1}
+                step={0.01}
+                onChange={setSetting('osmBuiltStrength')}
+              />
+            </Group>
+          </section>
+        )}
+
+        {tab === 'roads' && (
+          <section>
+            <h3>Roads</h3>
+            <p className="note">
+              Each class is fetched on its own when you tick it, and nothing else is
+              requested. They differ in size by orders of magnitude — over a city the
+              residential streets are most of the download and the motorways are a handful
+              of long lines — so the coarse ones come back in seconds whatever the box.
+            </p>
+
+            <Group title="Classes to fetch">
+              {/* Coarsest first: the order you would turn them on, and the order they
+                  cost you. Each row carries its own status, because each is its own
+                  request — one failing says nothing about the others. */}
+              {ROAD_ORDER.slice()
+                .reverse()
+                .map((cls) => {
+                  const phase = osmPhase[cls]
+                  const km = roadInfo?.byClass.find((c) => c.cls === cls)?.km
+                  return (
+                    <div className="class-row" key={cls}>
+                      <Toggle
+                        label={ROAD_CLASSES[cls].label}
+                        value={settings.roadClasses[cls]}
+                        onChange={(v) =>
+                          set('roadClasses', { ...settings.roadClasses, [cls]: v })
+                        }
+                      />
+                      <span className="class-note">{CLASS_NOTE[cls]}</span>
+                      <span className={`class-state ${phase}`}>
+                        {phase === 'loading'
+                          ? 'fetching…'
+                          : phase === 'error'
+                            ? 'failed'
+                            : phase === 'empty'
+                              ? 'none here'
+                              : km !== undefined
+                                ? `${Math.round(km).toLocaleString()} km`
+                                : ''}
+                      </span>
+                      {phase === 'error' && (
+                        <button className="wide" onClick={() => void loadOsmKind(cls)}>
+                          Retry {ROAD_CLASSES[cls].label.toLowerCase()}
+                        </button>
+                      )}
+                    </div>
+                  )
+                })}
+            </Group>
+
+            <Group title="Drawing">
               <Slider
                 label="Road width"
                 value={settings.roadWidth}
@@ -964,6 +1036,22 @@ export default function Controls() {
                 step={0.01}
                 onChange={setSetting('roadDarkness')}
               />
+              {roadInfo && (
+                <div className="metrics wide">
+                  <span title="Ground metres per pixel of the road mask">
+                    {roadInfo.metresPerPixel.toFixed(1)} m/px
+                  </span>
+                  <span title="Rasterised in a worker, so this is cost rather than stutter">
+                    {roadInfo.drawMs} ms draw
+                  </span>
+                </div>
+              )}
+              {roadInfo && roadInfo.widened.length > 0 && (
+                <div className="status">
+                  Drawn wider than life to stay visible:{' '}
+                  {roadInfo.widened.map((c) => ROAD_CLASSES[c].label.toLowerCase()).join(', ')}.
+                </div>
+              )}
               <label className="slider">
                 <span className="slider-head">
                   <span>Mask resolution</span>
@@ -980,35 +1068,6 @@ export default function Controls() {
                   }
                 />
               </label>
-
-              {/* How much each observed layer is allowed to override what was derived.
-                  Water at full strength because a surveyed shoreline is simply better
-                  evidence than a depression fill; woodland lower, because it is a
-                  correction to a model that knows things the polygon does not. */}
-              <Slider
-                label="Mapped water"
-                value={settings.osmWaterStrength}
-                min={0}
-                max={1}
-                step={0.01}
-                onChange={setSetting('osmWaterStrength')}
-              />
-              <Slider
-                label="Mapped woodland"
-                value={settings.osmWoodStrength}
-                min={0}
-                max={1}
-                step={0.01}
-                onChange={setSetting('osmWoodStrength')}
-              />
-              <Slider
-                label="Built-up ground"
-                value={settings.osmBuiltStrength}
-                min={0}
-                max={1}
-                step={0.01}
-                onChange={setSetting('osmBuiltStrength')}
-              />
             </Group>
           </section>
         )}

@@ -182,8 +182,12 @@ interface CachedRoads {
  * v4 folded tertiary roads in with secondary. Entries from then label the whole arterial
  * street grid as secondary, so they would be drawn at the wrong width and — worse —
  * would satisfy a request for secondary-only with a payload full of tertiary.
+ *
+ * v5 stored roads and every area kind under one key. Each layer is fetched separately
+ * now and keyed by which layer it holds, so the old entries answer a question nothing
+ * asks any more.
  */
-const OSM_QUERY_VERSION = 5
+const OSM_QUERY_VERSION = 6
 
 /**
  * Grid steps the fetch box snaps to, in degrees.
@@ -230,7 +234,7 @@ export function snapBounds(bounds: Bounds): Bounds {
 function roadKey(bounds: Bounds, req: OsmRequest): string {
   const f = (n: number) => n.toFixed(5)
   return (
-    `${KEY_PREFIX}${req.detail}|${req.areas ? 'a' : 'r'}|` +
+    `${KEY_PREFIX}${req.kind}|` +
     `${f(bounds.south)}|${f(bounds.north)}|${f(bounds.west)}|${f(bounds.east)}`
   )
 }
@@ -246,12 +250,12 @@ const KEY_PREFIX = `v${OSM_QUERY_VERSION}|`
 function fromKey(key: string): { bounds: Bounds; req: OsmRequest } | null {
   if (!key.startsWith(KEY_PREFIX)) return null
   const parts = key.slice(KEY_PREFIX.length).split('|')
-  if (parts.length !== 6) return null
-  const p = parts.slice(2).map(Number)
+  if (parts.length !== 5) return null
+  const p = parts.slice(1).map(Number)
   if (p.some((n) => !Number.isFinite(n))) return null
   return {
     bounds: { south: p[0]!, north: p[1]!, west: p[2]!, east: p[3]! },
-    req: { detail: parts[0] as OsmRequest['detail'], areas: parts[1] === 'a' },
+    req: { kind: parts[0] as OsmRequest['kind'] },
   }
 }
 
@@ -299,7 +303,7 @@ export async function roadCacheGet(bounds: Bounds, want: OsmRequest): Promise<Os
       const key = String(raw)
       const entry = fromKey(key)
       if (!entry) continue
-      if (entry.req.detail !== want.detail || entry.req.areas !== want.areas) continue
+      if (entry.req.kind !== want.kind) continue
       const b = entry.bounds
       if (!contains(b, bounds)) continue
       const area = boundsArea(b)

@@ -134,13 +134,36 @@ export interface OsmArea {
   inner: Float64Array[]
 }
 
-/** What to ask for. Both change the answer, so both are part of the cache identity. */
-export interface OsmRequest {
-  detail: RoadDetail
-  areas: boolean
+/**
+ * Everything that can be fetched, each on its own request, status and cache entry.
+ *
+ * One per road class rather than one for "roads". A motorway query and a residential
+ * query differ by orders of magnitude in cost — over a metro the residential streets are
+ * most of the payload and the motorways are a handful of long lines — so bundling them
+ * meant the cheap ones could never be had without the dear ones. Separately, each is
+ * asked for only when it is wanted, and a box can carry motorways in seconds while
+ * residential streets are still arriving or never requested at all.
+ */
+export type OsmKind = RoadClass | AreaKind
+
+export const AREA_KINDS: AreaKind[] = ['water', 'wood', 'built']
+export const OSM_KINDS: OsmKind[] = [...ROAD_ORDER, ...AREA_KINDS]
+
+export function isAreaKind(k: OsmKind): k is AreaKind {
+  return k === 'water' || k === 'wood' || k === 'built'
 }
 
-export const DEFAULT_OSM_REQUEST: OsmRequest = { detail: 'auto', areas: true }
+/**
+ * What was asked for, which is part of the cache identity as much as where.
+ *
+ * `detail` only means anything for roads; an entry of lakes is the same lakes whatever
+ * the road setting was at the time. Carrying it regardless keeps one key format for all
+ * four, and costs a redundant refetch of areas only if the road detail changes — which
+ * `detailOf` avoids by pinning it for the area kinds.
+ */
+export interface OsmRequest {
+  kind: OsmKind
+}
 
 export interface OsmData {
   bounds: Bounds
@@ -148,87 +171,24 @@ export interface OsmData {
   areas: OsmArea[]
   /** Road centreline length in km — the readout, and how you tell a city from a moor. */
   lengthKm: number
-  /** Which road classes were actually requested. See `classesFor`. */
-  requested: RoadClass[]
-  /** True when the class filter dropped detail the box was too big to resolve. */
-  filtered: boolean
   fetchedAt: number
 }
 
 /**
- * Which road classes to ask for, by how much ground the box covers.
+ * Which classes a freshly-drawn box starts with.
  *
- * Not a bandwidth optimisation — a resolution one. A residential street is 6 m wide; on
- * a 100 km box the mask has one texel per 50 m, so every street in Denver would land in
- * the same handful of pixels and paint the whole city solid. Asking for them would cost
- * tens of megabytes to produce a grey smear.
- *
- * The cutoffs are where each class stops being separable at a plausible mask resolution.
- * Whatever is dropped is reported rather than quietly omitted — see `filtered`.
- *
- * Areas are not filtered this way. A lake or a forest block stays legible at any scale
- * precisely because it is an area — shrinking the box does not make it thinner.
+ * Only a starting point now that each class is its own checkbox — nothing is inferred
+ * once you have chosen. The default is the trunk network at every size, because the road
+ * network here is context for the terrain rather than the subject, and because that is
+ * the one setting that is quick everywhere.
  */
-/**
- * How much of the road hierarchy to ask for.
- *
- * `auto` picks by area. The rest override it, because area is only ever a guess at cost
- * and the person looking at the map knows what they want from it — a wide box wanting
- * only the motorway network is a perfectly reasonable thing to ask for, and inferring
- * otherwise makes them wait minutes for streets they cannot see.
- */
-export type RoadDetail = 'auto' | 'major' | 'secondary' | 'tertiary' | 'minor' | 'all'
-
-export const ROAD_DETAIL_LABEL: Record<RoadDetail, string> = {
-  auto: 'Automatic (by area)',
-  major: 'Motorways and primary',
-  secondary: 'Down to secondary routes',
-  tertiary: 'Down to tertiary streets',
-  minor: 'Down to residential streets',
-  all: 'Everything, including tracks',
-}
-
-const DETAIL_CLASSES: Record<Exclude<RoadDetail, 'auto'>, RoadClass[]> = {
-  major: ['primary', 'motorway'],
-  secondary: ['secondary', 'primary', 'motorway'],
-  tertiary: ['tertiary', 'secondary', 'primary', 'motorway'],
-  minor: ['minor', 'tertiary', 'secondary', 'primary', 'motorway'],
-  all: ['track', 'minor', 'tertiary', 'secondary', 'primary', 'motorway'],
-}
-
-/**
- * How much of the hierarchy a box of this size can actually show.
- *
- * The thresholds come from resolution, not from taste. The mask is at most 2048 px on
- * its longest side, so a 90 km box is about 44 m per pixel and a 9 m secondary road is a
- * fifth of one — it appears only because the rasteriser holds every road to a minimum
- * width, which means it is drawn several times wider than it is. That is a fair trade
- * for a route you would navigate by and a poor one for a residential street, of which
- * there are twenty times as many and which together are most of the bytes.
- *
- * So each tier is roughly where a class stops being a line you could follow and starts
- * being texture. Above the top one the honest answer is the trunk network, which is what
- * a map of a whole region shows anyway.
- */
-export function classesFor(areaKm2: number, detail: RoadDetail = 'auto'): RoadClass[] {
-  if (detail !== 'auto') return DETAIL_CLASSES[detail]
-
-  // Deliberately sparse. Earlier versions of this table were set by what Overpass would
-  // tolerate, which is the wrong question — the right one is what the picture can carry.
-  //
-  // The rasteriser holds every road to a minimum of 1.4 mask pixels so it stays visible,
-  // which on a wide box means drawing it five to ten times wider than it is. One class
-  // too many and the network stops reading as roads and becomes a grey mesh over the
-  // terrain, and it does that long before it stops being fetchable. So each threshold is
-  // roughly where a class turns from a line you could follow into texture.
-  //
-  // A 7,900 km² box over Denver lands on the trunk network, which is what is legible at
-  // that size anyway — and it was 36 MB of mostly-invisible secondary roads before.
-  if (areaKm2 <= 150) return DETAIL_CLASSES.all
-  if (areaKm2 <= 600) return DETAIL_CLASSES.minor
-  if (areaKm2 <= 2000) return DETAIL_CLASSES.tertiary
-  if (areaKm2 <= 6000) return DETAIL_CLASSES.secondary
-  return DETAIL_CLASSES.major
+export const DEFAULT_ROAD_CLASSES: Record<RoadClass, boolean> = {
+  motorway: true,
+  primary: true,
+  secondary: false,
+  tertiary: false,
+  minor: false,
+  track: false,
 }
 
 /** Past this there is no sensible answer to give, so say so rather than hanging. */
@@ -356,7 +316,33 @@ const ms = (t0: number) => `${Math.round(performance.now() - t0)}ms`
  * somewhere to fail over to. If none answer the full list is returned anyway: a probe
  * failing is evidence, not proof, and it would be worse to refuse to try at all.
  */
+/**
+ * The last probe result, reused briefly.
+ *
+ * Four layers are fetched side by side and each would otherwise probe every instance for
+ * itself — four rounds of the same question, and on a network where one host is dead
+ * that is four five-second waits rather than one. Reachability does not change on that
+ * timescale, so the answer is shared.
+ *
+ * The promise is cached rather than the value, so requests that start together share the
+ * one in flight instead of racing to each make their own.
+ */
+let probeCache: { at: number; result: Promise<string[]> } | null = null
+const PROBE_CACHE_MS = 60000
+
 async function reachableEndpoints(signal?: AbortSignal): Promise<string[]> {
+  const now = performance.now()
+  if (probeCache && now - probeCache.at < PROBE_CACHE_MS) return probeCache.result
+  const result = probeEndpoints(signal)
+  probeCache = { at: now, result }
+  // A probe that throws must not be remembered as the answer for the next minute.
+  result.catch(() => {
+    if (probeCache?.result === result) probeCache = null
+  })
+  return result
+}
+
+async function probeEndpoints(signal?: AbortSignal): Promise<string[]> {
   const ordered = orderedEndpoints()
 
   const probe = async (endpoint: string): Promise<string | null> => {
@@ -448,29 +434,55 @@ function tagsFor(classes: RoadClass[]): string[] {
  * arrive behind them, the way the hydrology pass already streams in behind the terrain.
  * If the area query is slow, or fails, the roads are untouched by it.
  */
-function roadSelection(b: Bounds, classes: RoadClass[]): string {
+function roadSelection(b: Bounds, cls: RoadClass): string {
   // Overpass bbox order is (south, west, north, east).
   const bbox = `${b.south},${b.west},${b.north},${b.east}`
-  return `(way["highway"~"^(${tagsFor(classes).join('|')})$"](${bbox});)`
+  return `(way["highway"~"^(${tagsFor([cls]).join('|')})$"](${bbox});)`
 }
 
-function areaSelection(b: Bounds): string {
-  const bbox = `${b.south},${b.west},${b.north},${b.east}`
-  const landuse = 'forest|reservoir|basin|residential|industrial|commercial|retail'
-
-  // Relations are asked for on the area tags only. A big lake with islands, or a forest
-  // that wraps a village, is a multipolygon rather than a closed way, and leaving them
-  // out would silently drop exactly the largest features in the box. Route relations on
-  // roads carry no geometry of their own and are not wanted.
-  return (
+/**
+ * One selection per layer, so each can be asked for on its own.
+ *
+ * Four small queries rather than one large one. Each is a couple of clauses over an
+ * indexed tag and comes back quickly; bundled, they were six clauses including
+ * `landuse=residential`, which over a metro is among the largest things in
+ * OpenStreetMap and dragged everything else down with it.
+ *
+ * Separately, they also fail separately. A built-up query that times out no longer
+ * takes the lakes with it, and each layer can be retried on its own rather than the set
+ * being all-or-nothing.
+ *
+ * Relations are asked for on the area tags only. A big lake with islands, or a forest
+ * wrapping a village, is a multipolygon rather than a closed way, and leaving them out
+ * would silently drop exactly the largest features in the box. Route relations on roads
+ * carry no geometry of their own and are not wanted.
+ */
+const AREA_SELECTION: Record<AreaKind, (bbox: string) => string> = {
+  water: (bbox) =>
     `(` +
-    `way["natural"~"^(water|wood)$"](${bbox});` +
-    `way["landuse"~"^(${landuse})$"](${bbox});` +
+    `way["natural"="water"](${bbox});` +
+    `way["landuse"~"^(reservoir|basin)$"](${bbox});` +
     `way["waterway"~"^(riverbank|dock)$"](${bbox});` +
-    `relation["natural"~"^(water|wood)$"](${bbox});` +
-    `relation["landuse"~"^(${landuse})$"](${bbox});` +
-    `)`
-  )
+    `relation["natural"="water"](${bbox});` +
+    `relation["landuse"~"^(reservoir|basin)$"](${bbox});` +
+    `)`,
+  wood: (bbox) =>
+    `(` +
+    `way["natural"="wood"](${bbox});` +
+    `way["landuse"="forest"](${bbox});` +
+    `relation["natural"="wood"](${bbox});` +
+    `relation["landuse"="forest"](${bbox});` +
+    `)`,
+  built: (bbox) =>
+    `(` +
+    `way["landuse"~"^(residential|industrial|commercial|retail)$"](${bbox});` +
+    `relation["landuse"~"^(residential|industrial|commercial|retail)$"](${bbox});` +
+    `)`,
+}
+
+/** No trailing semicolon — `wrap` adds the one that terminates the statement. */
+function areaSelection(b: Bounds, kind: AreaKind): string {
+  return AREA_SELECTION[kind](`${b.south},${b.west},${b.north},${b.east}`)
 }
 
 /** `out geom` inlines coordinates, so one request needs no second pass for node ids. */
@@ -930,8 +942,6 @@ export interface RoadResult {
   bounds: Bounds
   roads: RoadWay[]
   lengthKm: number
-  requested: RoadClass[]
-  filtered: boolean
 }
 
 /**
@@ -945,8 +955,7 @@ export interface RoadResult {
  */
 export async function fetchRoads(
   bounds: Bounds,
-  detailFor?: Bounds,
-  detail: RoadDetail = 'auto',
+  cls: RoadClass,
   signal?: AbortSignal,
   onProgress?: (note: string) => void,
 ): Promise<RoadResult> {
@@ -958,30 +967,20 @@ export async function fetchRoads(
     )
   }
 
-  const classes = classesFor(boundsAreaKm2(detailFor ?? bounds), detail)
+  const label = ROAD_CLASSES[cls].label.toLowerCase()
   const started = performance.now()
-  osmLog(`roads: ${Math.round(boxKm2).toLocaleString()} km²`, {
-    detail,
-    classes: classes.join(', '),
-  })
+  osmLog(`${cls}: ${Math.round(boxKm2).toLocaleString()} km²`)
 
-  const got = await withEndpoints(signal, onProgress, (endpoint) => {
-    onProgress?.('Fetching roads…')
-    return runSelection(endpoint, bounds, (b) => roadSelection(b, classes), 'roads', signal, onProgress)
-  })
+  const got = await withEndpoints(signal, onProgress, (endpoint) =>
+    runSelection(endpoint, bounds, (b) => roadSelection(b, cls), label, signal, onProgress),
+  )
 
-  osmLog(`roads done in ${ms(started)}`, {
+  osmLog(`${cls} done in ${ms(started)}`, {
     ways: got.roads.length,
     km: Math.round(got.metres / 1000),
   })
 
-  return {
-    bounds,
-    roads: got.roads,
-    lengthKm: got.metres / 1000,
-    requested: classes,
-    filtered: classes.length < ROAD_ORDER.length,
-  }
+  return { bounds, roads: got.roads, lengthKm: got.metres / 1000 }
 }
 
 /**
@@ -993,18 +992,23 @@ export async function fetchRoads(
  */
 export async function fetchAreas(
   bounds: Bounds,
+  kind: AreaKind,
   signal?: AbortSignal,
   onProgress?: (note: string) => void,
 ): Promise<OsmArea[]> {
   const started = performance.now()
-  osmLog(`areas: ${Math.round(boundsAreaKm2(bounds)).toLocaleString()} km²`)
+  const label = AREA_LABEL[kind].toLowerCase()
+  osmLog(`${kind}: ${Math.round(boundsAreaKm2(bounds)).toLocaleString()} km²`)
 
-  const got = await withEndpoints(signal, onProgress, (endpoint) => {
-    onProgress?.('Fetching water and woodland…')
-    return runSelection(endpoint, bounds, areaSelection, 'areas', signal, onProgress)
-  })
+  const got = await withEndpoints(signal, onProgress, (endpoint) =>
+    runSelection(endpoint, bounds, (b) => areaSelection(b, kind), label, signal, onProgress),
+  )
 
-  const holes = got.areas.reduce((n, a) => n + a.inner.length, 0)
-  osmLog(`areas done in ${ms(started)}`, { areas: got.areas.length, holes })
-  return got.areas
+  // Everything from this query is of the kind that was asked for, so the tag-sniffing
+  // in `harvest` cannot mislabel it — but it also cannot tell `landuse=reservoir` from
+  // `natural=water` and does not need to. Stamping the kind here keeps the two in step.
+  const areas = got.areas.map((a) => ({ ...a, kind }))
+  const holes = areas.reduce((n, a) => n + a.inner.length, 0)
+  osmLog(`${kind} done in ${ms(started)}`, { areas: areas.length, holes })
+  return areas
 }
