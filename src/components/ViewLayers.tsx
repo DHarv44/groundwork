@@ -266,8 +266,9 @@ export default function ViewLayers() {
                     : ROAD_HINT[phase]
               }
               // A failed layer retries on click rather than toggling something invisible.
-              // The button already says so; pressing it should mean "try again", and
-              // until this there was no way to ask for one at all.
+              // Otherwise the flag decides everything: turning a mapped layer on is what
+              // fetches it, so there is no state where pressing this looks like it did
+              // nothing.
               onClick={() =>
                 failed
                   ? kinds.forEach((k) => void loadOsmKind(k))

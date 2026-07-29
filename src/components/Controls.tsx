@@ -205,7 +205,6 @@ export default function Controls() {
     osmPhase,
     osmError,
     roadInfo,
-    loadRoads,
     loadOsmKind,
   } = useStore()
 
@@ -875,37 +874,40 @@ export default function Controls() {
               }
             >
               {/* Roads have their own tab — six classes, each its own request. What is
-                  left here is the ground: what was found, and how far it is allowed to
-                  override what the terrain derived for itself. */}
-              <Toggle
-                label="Fetch water, woodland and land use"
-                value={settings.fetchAreas}
-                onChange={(v) => set('fetchAreas', v)}
-              />
-
-              {roadPhase === 'idle' && (
-                <button className="wide" onClick={() => void loadRoads()}>
-                  Fetch map features for this area
-                </button>
-              )}
-              {roadPhase === 'error' && (
-                <>
-                  <div className="error">{roadError}</div>
-                  <button className="wide" onClick={() => void loadRoads()}>
-                    Try again
-                  </button>
-                </>
-              )}
-
-              {roadInfo && (
-                <div className="metrics wide">
-                  {(['water', 'wood', 'built'] as const).map((k) => (
-                    <span key={k} title={`${AREA_LABEL[k]} polygons found`}>
-                      {AREA_LABEL[k]} {roadInfo.areaCounts[k].toLocaleString()}
+                  left here is the ground: one switch per layer, which both fetches and
+                  draws it, and how far each is allowed to override what the terrain
+                  derived for itself. */}
+              {(['water', 'wood', 'built'] as const).map((k) => {
+                const flag = ({ water: 'showOsmWater', wood: 'showOsmWood', built: 'showOsmBuilt' } as const)[k]
+                const phase = osmPhase[k]
+                return (
+                  <div className="class-row" key={k}>
+                    <Toggle
+                      label={AREA_LABEL[k]}
+                      value={settings[flag]}
+                      onChange={(v) => set(flag, v)}
+                    />
+                    <span className={`class-state ${phase}`}>
+                      {phase === 'loading'
+                        ? 'fetching…'
+                        : phase === 'error'
+                          ? 'failed'
+                          : phase === 'empty'
+                            ? 'none here'
+                            : roadInfo
+                              ? `${roadInfo.areaCounts[k].toLocaleString()} areas`
+                              : ''}
                     </span>
-                  ))}
-                </div>
-              )}
+                    {phase === 'error' && (
+                      <button className="wide" onClick={() => void loadOsmKind(k)}>
+                        Retry {AREA_LABEL[k].toLowerCase()}
+                      </button>
+                    )}
+                  </div>
+                )
+              })}
+
+              {roadPhase === 'error' && <div className="error">{roadError}</div>}
 
               {/* How much each observed layer is allowed to override what was derived.
                   Water at full strength because a surveyed shoreline is simply better

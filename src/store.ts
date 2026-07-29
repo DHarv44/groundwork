@@ -130,13 +130,6 @@ export interface Settings {
    * person looking at the map knows what they want on it.
    */
   roadClasses: Record<RoadClass, boolean>
-  /**
-   * Whether to fetch water, woodland and land use at all.
-   *
-   * Kept as a master switch alongside the per-layer buttons, for when the terrain is the
-   * subject and none of it is wanted.
-   */
-  fetchAreas: boolean
   /** Longest side of the road mask, in pixels. */
   roadResolution: number
   /** How dark a metalled surface reads against the ground. */
@@ -152,6 +145,11 @@ export interface Settings {
    * would pond given the DEM, which is a reasonable guess in a closed basin and a poor
    * one anywhere a dam or a drain decides the answer instead — so where OSM has a real
    * lake, it wins.
+   *
+   * Turning this on is what *fetches* it, as well as what draws it. There used to be a
+   * second switch — a `fetchAreas` checkbox on another tab — deciding whether the data
+   * was ever requested, so with that off this one did nothing at all and said nothing
+   * about why. One layer, one control, and it means what it says.
    */
   showOsmWater: boolean
   /** How completely a mapped lake overrides the derived guess. */
@@ -254,7 +252,6 @@ export const DEFAULT_SETTINGS: Settings = {
   showLakes: true,
   showRoads: true,
   roadClasses: { ...DEFAULT_ROAD_CLASSES },
-  fetchAreas: true,
   roadWidth: 1,
   roadVerge: 3,
   roadResolution: 2048,
@@ -487,6 +484,31 @@ let roadWorker: Worker | null = null
 let roadToken = 0
 let roadSent = -1
 
+/**
+ * At most two OpenStreetMap queries in flight, wherever they were started from.
+ *
+ * The pool has to live here rather than inside whichever function happens to launch a
+ * batch. A per-caller limit does nothing when three layers are switched on one after
+ * another and each starts its own fetch — which is exactly what happens when the mapped
+ * layers each became their own control. Overpass gives one IP very few slots, so extra
+ * requests do not run alongside each other, they queue behind each other and time out;
+ * measured earlier as four of our own queries taking 56, 63, 81 and 92 seconds where one
+ * would have taken a fraction of that.
+ */
+let osmInFlight = 0
+const osmQueue: Array<() => void> = []
+
+async function withOsmSlot<T>(run: () => Promise<T>): Promise<T> {
+  if (osmInFlight >= 2) await new Promise<void>((resolve) => osmQueue.push(resolve))
+  osmInFlight++
+  try {
+    return await run()
+  } finally {
+    osmInFlight--
+    osmQueue.shift()?.()
+  }
+}
+
 const restored = loadSession()
 
 /**
@@ -528,7 +550,6 @@ const PERSISTED_SETTINGS = [
   'showLakes',
   'showRoads',
   'roadClasses',
-  'fetchAreas',
   'roadWidth',
   'roadVerge',
   'roadResolution',
@@ -570,6 +591,40 @@ const PERSISTED_SETTINGS = [
 ] as const
 
 export type BiomeOverrides = Record<string, Partial<Record<BiomeKey, number>>>
+
+/**
+ * Which setting switches each mapped layer on — the single control for it.
+ *
+ * One flag per layer, and it both fetches and draws. Splitting those apart is what let a
+ * layer sit silently unrequested while its button looked merely switched off, with the
+ * control that would have fixed it on another tab.
+ */
+export const AREA_FLAG: Record<string, AreaKind | undefined> = {
+  showOsmWater: 'water',
+  showOsmWood: 'wood',
+  showOsmBuilt: 'built',
+}
+
+/** The reverse, for deciding what to fetch on a fresh build. */
+const FLAG_FOR: Record<AreaKind, keyof Settings> = {
+  water: 'showOsmWater',
+  wood: 'showOsmWood',
+  built: 'showOsmBuilt',
+}
+
+/**
+ * Settings from the last session.
+ *
+ * No migration for the three mapped-layer flags, though their meaning did change from
+ * "draw this" to "fetch and draw this". The only marker that could have told an old
+ * session from a new one was the `fetchAreas` key, and dropping that from the persisted
+ * list is what removes it — so by the time anything looked, it was already gone. A
+ * migration that cannot detect what it is migrating is worse than none, because it
+ * reads as a guarantee.
+ */
+function restoredSettings(): Partial<Settings> {
+  return (restored.settings ?? {}) as Partial<Settings>
+}
 
 function persistSettings(settings: Settings, biomeOverrides?: BiomeOverrides): void {
   const slice: Record<string, unknown> = {}
@@ -1074,7 +1129,7 @@ export const useStore = create<State>((setState, getState) => {
   osmPhase: Object.fromEntries(OSM_KINDS.map((k) => [k, 'idle'])) as Record<OsmKind, OsmPhase>,
   osmError: {},
   roadInfo: null,
-  settings: { ...DEFAULT_SETTINGS, ...(restored.settings as Partial<Settings>) },
+  settings: { ...DEFAULT_SETTINGS, ...restoredSettings() },
   biome: null,
   biomeMap: null,
   biomeComposition: [],
@@ -1157,7 +1212,10 @@ export const useStore = create<State>((setState, getState) => {
       scheduleRoadMask()
     }
 
-    if (key === 'fetchAreas' && value) void getState().loadRoads()
+    // Turning a mapped layer on is what asks for it. Turning it off only stops it being
+    // drawn — what was fetched stays, so switching back is instant.
+    const areaOf = AREA_FLAG[key as string]
+    if (areaOf && value) void getState().loadOsmKind(areaOf)
   },
 
   /**
@@ -1426,7 +1484,9 @@ export const useStore = create<State>((setState, getState) => {
     const wanted = ROAD_ORDER.filter(
       (c) => settings.roadClasses[c] && osmPhase[c] !== 'ready' && osmPhase[c] !== 'empty',
     )
-    const areas: OsmKind[] = settings.fetchAreas ? ['water', 'wood', 'built'] : []
+    const areas: OsmKind[] = (['water', 'wood', 'built'] as AreaKind[]).filter(
+      (k) => settings[FLAG_FOR[k]],
+    )
 
     // Roads first and alone, then the areas two at a time behind them. Overpass counts
     // query slots per client IP and allows very few, so more in flight is not faster —
@@ -1492,7 +1552,9 @@ export const useStore = create<State>((setState, getState) => {
     let fetched: RoadWay[] = []
     try {
       if (missing.length) {
-        const r = await fetchRoads(fetchBox, missing, undefined, (m) => setState({ message: m }))
+        const r = await withOsmSlot(() =>
+          fetchRoads(fetchBox, missing, undefined, (m) => setState({ message: m })),
+        )
         if (!current()) return
         fetched = r.roads
       }
@@ -1597,7 +1659,8 @@ export const useStore = create<State>((setState, getState) => {
       const cached = await roadCacheGet(bounds, req)
 
       if (isAreaKind(kind)) {
-        const areas = cached?.areas ?? (await fetchAreas(fetchBox, kind, undefined, note))
+        const areas =
+          cached?.areas ?? (await withOsmSlot(() => fetchAreas(fetchBox, kind, undefined, note)))
         if (!current()) return
         if (!cached) {
           void roadCachePut(
