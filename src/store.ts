@@ -11,6 +11,8 @@ import { fetchImagery } from './lib/imagery'
 import {
   NoRoadDataError,
   fetchOsm,
+  DEFAULT_ROAD_CLASSES,
+  ROAD_ORDER,
   type AreaKind,
   type OsmData,
   type RoadClass,
@@ -95,6 +97,19 @@ export interface Settings {
    * it off keeps the network in memory; it does not throw the fetch away.
    */
   showRoads: boolean
+  /**
+   * Which road classes to fetch and draw, one checkbox each.
+   *
+   * Explicit rather than inferred from the box size. Every by-area rule chose more than
+   * was wanted at some scale — the classes differ in cost by orders of magnitude, and at
+   * fifty metres a pixel a residential street is a fifth of one and only appears because
+   * the rasteriser holds it to a visible minimum. The person looking at the map knows
+   * what they want on it.
+   *
+   * They all travel in the same single query, so ticking another costs a slightly larger
+   * response rather than another round trip.
+   */
+  roadClasses: Record<RoadClass, boolean>
   /**
    * Multiplies the true metric width of every road class.
    *
@@ -221,6 +236,7 @@ export const DEFAULT_SETTINGS: Settings = {
   showRivers: true,
   showLakes: true,
   showRoads: true,
+  roadClasses: { ...DEFAULT_ROAD_CLASSES },
   roadWidth: 1,
   roadVerge: 3,
   roadResolution: 2048,
@@ -309,6 +325,8 @@ interface State {
   build: TerrainBuild | null
   imagery: HTMLCanvasElement | null
   imageryZoom: number
+  /** True while satellite tiles are in flight, so the layer button can say so. */
+  imageryLoading: boolean
   /** RGBA water mask from the hydrology pass: coverage, lake flag, log drainage. */
   waterMask: THREE.DataTexture | null
   waterStats: {
@@ -478,6 +496,7 @@ const PERSISTED_SETTINGS = [
   'showRivers',
   'showLakes',
   'showRoads',
+  'roadClasses',
   'roadWidth',
   'roadVerge',
   'roadResolution',
@@ -1010,6 +1029,7 @@ export const useStore = create<State>((setState, getState) => {
   build: null,
   imagery: null,
   imageryZoom: 0,
+  imageryLoading: false,
   waterMask: null,
   waterStats: null,
   roads: null,
@@ -1089,6 +1109,25 @@ export const useStore = create<State>((setState, getState) => {
     // Checking the layer is what asks for the data, the same way switching to satellite
     // is what fetches the imagery.
     if (key === 'showRoads' && value) void getState().loadRoads()
+
+    // Ticking a class needs data we do not have, so it re-asks. Unticking one does not —
+    // the ways are already in hand and simply stop being drawn, which costs a redraw
+    // rather than a round trip. Getting that the wrong way round would make hiding a
+    // layer more expensive than showing it.
+    if (key === 'roadClasses') {
+      const now = value as Record<RoadClass, boolean>
+      const added = ROAD_ORDER.some((c) => now[c] && !settings.roadClasses[c])
+      if (added) {
+        clearRoads()
+        if (next.showRoads) void getState().loadRoads()
+      } else {
+        const roads = getState().roads
+        if (roads) {
+          setState({ roads: { ...roads, roads: roads.roads.filter((w) => now[w.cls]) } })
+        }
+        scheduleRoadMask()
+      }
+    }
   },
 
   /**
@@ -1198,6 +1237,7 @@ export const useStore = create<State>((setState, getState) => {
       build: null,
       imagery: null,
       imageryZoom: 0,
+      imageryLoading: false,
     })
   },
 
@@ -1235,6 +1275,7 @@ export const useStore = create<State>((setState, getState) => {
       heightField: null,
       imagery: null,
       imageryZoom: 0,
+      imageryLoading: false,
       waterMask: null,
       waterStats: null,
       message: `Requesting ${source.label} over ${area.toLocaleString()} km²…`,
@@ -1281,6 +1322,7 @@ export const useStore = create<State>((setState, getState) => {
       heightField: null,
       imagery: null,
       imageryZoom: 0,
+      imageryLoading: false,
       waterMask: null,
       waterStats: null,
       message: 'Generating synthetic massif…',
@@ -1294,31 +1336,44 @@ export const useStore = create<State>((setState, getState) => {
   },
 
   loadImagery: async (): Promise<void> => {
-    const { heightField, imagery } = getState()
-    if (!heightField || imagery) return
+    const { heightField, imagery, imageryLoading } = getState()
+    if (!heightField || imagery || imageryLoading) return
     try {
-      setState({ message: 'Fetching satellite imagery…' })
+      setState({ imageryLoading: true, message: 'Fetching satellite imagery…' })
       const result = await fetchImagery(heightField.bounds, (done, total) => {
         setState({ message: `Satellite tiles ${done}/${total}…` })
       })
-      setState({ imagery: result.canvas, imageryZoom: result.zoom, message: '' })
+      setState({
+        imagery: result.canvas,
+        imageryZoom: result.zoom,
+        imageryLoading: false,
+        message: '',
+      })
     } catch {
-      setState({ message: '', error: 'Satellite imagery unavailable for this area.' })
+      setState({
+        imageryLoading: false,
+        message: '',
+        error: 'Satellite imagery unavailable for this area.',
+      })
     }
   },
 
   loadRoads: async (): Promise<void> => {
-    const { heightField, roads, roadPhase } = getState()
+    const { heightField, roads, roadPhase, settings } = getState()
     if (!heightField) return
-    // Already have them, or already asking.
+    // Already have them, or already asking. Synchronous, and before any await — this is
+    // the guard that keeps one query from becoming several copies of itself in flight.
     if (roads || roadPhase === 'loading') return
 
     const bounds = heightField.bounds
+    const classes = ROAD_ORDER.filter((c) => settings.roadClasses[c])
     setState({ roadPhase: 'loading', roadError: null })
 
     // Cached answers cost nothing, and Overpass is free shared infrastructure — asking
-    // it twice for the same box is the one thing that would actually be rude.
-    const hit = await roadCacheGet(bounds)
+    // it twice for the same box is the one thing that would actually be rude. The class
+    // set is part of what identifies an answer, so a box fetched for motorways alone
+    // does not satisfy a request that also wants residential streets.
+    const hit = await roadCacheGet(bounds, classes)
     if (hit) {
       setState({ roads: hit, roadPhase: hit.roads.length || hit.areas.length ? 'ready' : 'empty' })
       rebuildRoadMask()
@@ -1326,11 +1381,13 @@ export const useStore = create<State>((setState, getState) => {
     }
 
     try {
-      const network = await fetchOsm(bounds, undefined, (note) => setState({ message: note }))
+      const network = await fetchOsm(bounds, classes, undefined, (note) =>
+        setState({ message: note }),
+      )
       // The area may have been rebuilt while Overpass was thinking.
       if (getState().heightField?.bounds !== bounds) return
 
-      void roadCachePut(network)
+      void roadCachePut(network, classes)
       setState({
         roads: network,
         roadPhase: network.roads.length || network.areas.length ? 'ready' : 'empty',

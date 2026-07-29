@@ -1,6 +1,6 @@
 import type { Bounds } from './geo'
 import type { HeightField } from './opentopo'
-import type { OsmData } from './overpass'
+import type { OsmData, RoadClass } from './overpass'
 
 /**
  * Persistent cache of decoded DEMs.
@@ -178,20 +178,37 @@ interface CachedRoads {
  * v3 stitched them into rings correctly but still dropped inner ones, so an island was
  * flooded and a clearing filled in. Those entries hold no hole information at all, which
  * cannot be recovered without asking again.
+ *
+ * v4 chose road classes by box size. They are checkboxes now, so which ones an entry
+ * holds is a property of that entry rather than something recomputable from the bounds.
  */
-const OSM_QUERY_VERSION = 4
+const OSM_QUERY_VERSION = 5
 
-function roadKey(bounds: Bounds): string {
+/**
+ * The key carries which classes were asked for as well as where.
+ *
+ * An answer fetched for motorways alone does not satisfy a request that also wants
+ * residential streets — it would look like a place with no streets in it. Sorted so the
+ * same set always produces the same key whatever order the checkboxes were ticked in.
+ */
+function roadKey(bounds: Bounds, classes: RoadClass[]): string {
   const f = (n: number) => n.toFixed(5)
-  return `v${OSM_QUERY_VERSION}|${f(bounds.south)}|${f(bounds.north)}|${f(bounds.west)}|${f(bounds.east)}`
+  const cls = [...classes].sort().join('+') || 'none'
+  return (
+    `v${OSM_QUERY_VERSION}|${cls}|` +
+    `${f(bounds.south)}|${f(bounds.north)}|${f(bounds.west)}|${f(bounds.east)}`
+  )
 }
 
-export async function roadCacheGet(bounds: Bounds): Promise<OsmData | null> {
+export async function roadCacheGet(
+  bounds: Bounds,
+  classes: RoadClass[],
+): Promise<OsmData | null> {
   try {
     const db = await openDb()
     const entry = await new Promise<CachedRoads | undefined>((resolve, reject) => {
       const tx = db.transaction(ROAD_STORE, 'readonly')
-      const req = tx.objectStore(ROAD_STORE).get(roadKey(bounds))
+      const req = tx.objectStore(ROAD_STORE).get(roadKey(bounds, classes))
       req.onsuccess = () => resolve(req.result as CachedRoads | undefined)
       req.onerror = () => reject(req.error)
     })
@@ -202,12 +219,12 @@ export async function roadCacheGet(bounds: Bounds): Promise<OsmData | null> {
   }
 }
 
-export async function roadCachePut(network: OsmData): Promise<void> {
+export async function roadCachePut(network: OsmData, classes: RoadClass[]): Promise<void> {
   try {
     const db = await openDb()
     await new Promise<void>((resolve, reject) => {
       const tx = db.transaction(ROAD_STORE, 'readwrite')
-      tx.objectStore(ROAD_STORE).put({ key: roadKey(network.bounds), network })
+      tx.objectStore(ROAD_STORE).put({ key: roadKey(network.bounds, classes), network })
       tx.oncomplete = () => resolve()
       tx.onerror = () => reject(tx.error)
     })

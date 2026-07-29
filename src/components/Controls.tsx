@@ -5,7 +5,7 @@ import { FOREST_MAX, GROUND_WARMTH_MAX } from '../lib/biomeMap'
 import { DAILY_QUOTA, cacheClear, cacheStats, quotaUsed } from '../lib/demcache'
 import { decodePreset, deletePreset, encodePreset, loadPresets, savePreset } from '../lib/presets'
 import { DEM_SOURCES } from '../lib/opentopo'
-import { AREA_LABEL, ROAD_CLASSES } from '../lib/overpass'
+import { AREA_LABEL, ROAD_CLASSES, ROAD_CLASS_NOTE, ROAD_ORDER } from '../lib/overpass'
 import { boundsAreaKm2, boundsExtentMetres, formatBounds } from '../lib/geo'
 import { captureScreenshot } from '../lib/capture'
 import { exportGLB, exportHeightmapPNG, exportSTL } from '../lib/exporters'
@@ -146,11 +146,12 @@ const DETAIL_STEPS = [256, 384, 512, 768, 1024, 1536, 2048]
 /** Road mask sizes. Above 4096 the texture costs more than the roads are worth. */
 const ROAD_RES_STEPS = [1024, 1536, 2048, 3072, 4096]
 
-type TabId = 'terrain' | 'surface' | 'water' | 'light' | 'render' | 'export'
+type TabId = 'terrain' | 'surface' | 'roads' | 'water' | 'light' | 'render' | 'export'
 
 const TABS: { id: TabId; label: string }[] = [
   { id: 'terrain', label: 'Terrain' },
   { id: 'surface', label: 'Surface' },
+  { id: 'roads', label: 'Roads' },
   { id: 'water', label: 'Water' },
   { id: 'light', label: 'Light' },
   { id: 'render', label: 'Render' },
@@ -983,6 +984,138 @@ export default function Controls() {
                 step={0.01}
                 onChange={setSetting('osmBuiltStrength')}
               />
+            </Group>
+          </section>
+        )}
+
+        {tab === 'roads' && (
+          <section>
+            <h3>Roads</h3>
+            <p className="note">
+              Which classes to ask OpenStreetMap for. They all travel in the same single
+              request, so ticking another makes the response larger rather than costing a
+              second round trip — but they differ in size by orders of magnitude. Over a
+              city the residential streets are most of the download and the motorways are
+              a handful of long lines.
+            </p>
+
+            <Group
+              title="Classes to fetch"
+              badge={
+                roadPhase === 'loading' ? (
+                  <b className="pending">querying OSM…</b>
+                ) : roadInfo ? (
+                  <b>{Math.round(roadInfo.lengthKm).toLocaleString()} km</b>
+                ) : null
+              }
+            >
+              {/* Coarsest first: the order you would turn them on, and the order they
+                  cost you. Changing any of them re-asks, so the readout below always
+                  describes what is currently ticked. */}
+              {ROAD_ORDER.slice()
+                .reverse()
+                .map((cls) => {
+                  const km = roadInfo?.byClass.find((c) => c.cls === cls)?.km
+                  return (
+                    <div className="class-row" key={cls}>
+                      <Toggle
+                        label={ROAD_CLASSES[cls].label}
+                        value={settings.roadClasses[cls]}
+                        onChange={(v) =>
+                          set('roadClasses', { ...settings.roadClasses, [cls]: v })
+                        }
+                      />
+                      <span className="class-note">{ROAD_CLASS_NOTE[cls]}</span>
+                      <span className="class-state">
+                        {settings.roadClasses[cls] && km !== undefined
+                          ? `${Math.round(km).toLocaleString()} km`
+                          : ''}
+                      </span>
+                    </div>
+                  )
+                })}
+              {roadPhase === 'error' && <div className="error">{roadError}</div>}
+            </Group>
+
+            <Group title="Drawing">
+              {/* The visibility floor scales with this, so it thins the network as well
+                  as fattening it — on a wide box every class sits at the floor, and
+                  without that the slider could only ever make roads thicker. */}
+              <Slider
+                label="Road width"
+                value={settings.roadWidth}
+                min={0.1}
+                max={12}
+                step={0.05}
+                suffix="×"
+                decimals={2}
+                onChange={setSetting('roadWidth')}
+              />
+              <Slider
+                label="Cleared verge"
+                value={settings.roadVerge}
+                min={0}
+                max={12}
+                step={0.1}
+                suffix="× width"
+                decimals={1}
+                onChange={setSetting('roadVerge')}
+              />
+              <Slider
+                label="Clearing strength"
+                value={settings.roadClearing}
+                min={0}
+                max={1}
+                step={0.01}
+                tag={biomeTag('roadClearing')}
+                onChange={setSetting('roadClearing')}
+              />
+              <Slider
+                label="Unsealed"
+                value={settings.roadTint}
+                min={0}
+                max={1}
+                step={0.01}
+                tag={biomeTag('roadTint')}
+                onChange={setSetting('roadTint')}
+              />
+              <Slider
+                label="Surface darkness"
+                value={settings.roadDarkness}
+                min={0}
+                max={1}
+                step={0.01}
+                onChange={setSetting('roadDarkness')}
+              />
+              <label className="slider">
+                <span className="slider-head">
+                  <span>Mask resolution</span>
+                  <b>{settings.roadResolution}</b>
+                </span>
+                <input
+                  type="range"
+                  min={0}
+                  max={ROAD_RES_STEPS.length - 1}
+                  step={1}
+                  value={Math.max(0, ROAD_RES_STEPS.indexOf(settings.roadResolution))}
+                  onChange={(e) =>
+                    set('roadResolution', ROAD_RES_STEPS[parseInt(e.target.value, 10)])
+                  }
+                />
+              </label>
+              {roadInfo && (
+                <div className="metrics wide">
+                  <span title="Ground metres per pixel of the road mask">
+                    {roadInfo.metresPerPixel.toFixed(1)} m/px
+                  </span>
+                  {roadInfo.widened.length > 0 && (
+                    <span title="Below one mask pixel at this scale, so held to a visible minimum">
+                      widened:{' '}
+                      {roadInfo.widened.map((c) => ROAD_CLASSES[c].label.toLowerCase()).join(', ')}
+                    </span>
+                  )}
+                </div>
+              )}
             </Group>
           </section>
         )}

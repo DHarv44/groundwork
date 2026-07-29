@@ -142,6 +142,31 @@ export function classesFor(areaKm2: number): RoadClass[] {
   return ['secondary', 'primary', 'motorway']
 }
 
+/**
+ * Which classes a box starts with, before anyone touches the checkboxes.
+ *
+ * The trunk network at every size. A road network here is context for the terrain rather
+ * than the subject, and this is the one setting that is quick everywhere — a residential
+ * query over a metro is orders of magnitude larger than a motorway one, and at fifty
+ * metres a pixel none of those streets resolves anyway.
+ */
+export const DEFAULT_ROAD_CLASSES: Record<RoadClass, boolean> = {
+  motorway: true,
+  primary: true,
+  secondary: false,
+  minor: false,
+  track: false,
+}
+
+/** How each class reads on the panel — what you are actually asking for. */
+export const ROAD_CLASS_NOTE: Record<RoadClass, string> = {
+  motorway: 'Motorways and trunk routes',
+  primary: 'A-roads and their equivalents',
+  secondary: 'Secondary and tertiary — most of a town',
+  minor: 'Residential and service streets',
+  track: 'Farm and forest tracks',
+}
+
 /** Past this there is no sensible answer to give, so say so rather than hanging. */
 export const MAX_ROAD_AREA_KM2 = 40000
 
@@ -336,6 +361,7 @@ async function postWithBackoff(
  */
 export async function fetchOsm(
   bounds: Bounds,
+  classes: RoadClass[],
   signal?: AbortSignal,
   onProgress?: (note: string) => void,
 ): Promise<OsmData> {
@@ -347,7 +373,13 @@ export async function fetchOsm(
     )
   }
 
-  const requested = classesFor(boxKm2)
+  // Which classes come back is now the checkboxes' business, not this function's — but
+  // they still travel in ONE query alongside the water, woodland and land use. Overpass
+  // charges by the request, not the byte: an IP gets very few query slots and acquiring
+  // one means queueing, while streaming the answer back once you have it costs little.
+  // Ticking three more classes makes the response larger; it must not make it three
+  // requests.
+  const requested = classes
   const filtered = requested.length < ROAD_ORDER.length
   const body = `data=${encodeURIComponent(buildQuery(bounds, requested))}`
 
