@@ -93,10 +93,20 @@ export interface RoadWay {
   pts: Float64Array
 }
 
+/**
+ * One mapped area: its outline, and anything cut out of it.
+ *
+ * A feature rather than a ring, because holes only mean anything relative to the outline
+ * they belong to. A lake with an island is one area with one outer ring and one inner;
+ * keeping them together is what lets the rasteriser fill the pair with an even-odd rule
+ * and get the island back, instead of flooding it.
+ */
 export interface OsmArea {
   kind: AreaKind
-  /** One closed ring, flat [lon, lat, …]. Holes are not represented — see `fetchOsm`. */
-  ring: Float64Array
+  /** Closed rings, flat [lon, lat, …]. Usually one; a relation may have several. */
+  outer: Float64Array[]
+  /** Rings cut out of the outer ones — islands, clearings, courtyards. */
+  inner: Float64Array[]
 }
 
 export interface OsmData {
@@ -284,16 +294,45 @@ function wayLength(pts: Float64Array): number {
 export class NoRoadDataError extends Error {}
 
 /**
+ * POST, retrying once through a short wait when the server says it is busy.
+ *
+ * A public Overpass instance answers 429 when every query slot for your IP is taken and
+ * 504 when one timed out under load. Both clear on their own within seconds, and both
+ * are far more likely than an outage — so a single patient retry converts most of them
+ * into a successful request instead of an error the user has to act on.
+ *
+ * Only one retry, and only for those two codes: anything else is a real failure and
+ * should surface immediately rather than being sat on.
+ */
+async function postWithBackoff(
+  endpoint: string,
+  body: string,
+  signal: AbortSignal | undefined,
+  onProgress?: (note: string) => void,
+): Promise<Response> {
+  const send = () =>
+    fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body,
+      signal,
+    })
+
+  const first = await send()
+  if (first.status !== 429 && first.status !== 504) return first
+
+  onProgress?.('OpenStreetMap is busy — waiting for a slot…')
+  await new Promise((r) => setTimeout(r, 4000))
+  if (signal?.aborted) throw new DOMException('aborted', 'AbortError')
+  return send()
+}
+
+/**
  * Fetch everything mapped in the box.
  *
  * Returns empty lists rather than throwing when the area genuinely has nothing — open
  * desert, ocean and wilderness are correct answers, not failures, and the caller needs
  * to be able to tell them apart from a fetch that fell over.
- *
- * Known simplification: inner rings are dropped. A lake with an island is drawn as a
- * lake, and a forest with a clearing cut out of it is drawn as unbroken forest. Holes
- * would need even-odd fill across a ring set rather than one ring at a time, and at the
- * resolutions this is drawn at they are mostly below a pixel.
  */
 export async function fetchOsm(
   bounds: Bounds,
@@ -318,13 +357,22 @@ export async function fetchOsm(
       onProgress?.(
         endpoint === ENDPOINTS[0] ? 'Querying OpenStreetMap…' : 'Retrying on a mirror…',
       )
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body,
-        signal,
-      })
-      if (!res.ok) throw new Error(`Overpass HTTP ${res.status}`)
+      const res = await postWithBackoff(endpoint, body, signal, onProgress)
+      if (!res.ok) {
+        // 429 and 504 are what a public Overpass instance says when it is busy, and they
+        // are worth naming rather than reporting as a generic failure: the request was
+        // fine, the server simply has no slot free. Slots are counted per client IP, so
+        // two tabs on the same machine compete with each other — which is exactly the
+        // shape of "it works over there and not over here".
+        if (res.status === 429 || res.status === 504) {
+          throw new NoRoadDataError(
+            'OpenStreetMap is rate-limiting this connection (all query slots busy). ' +
+              'Wait a minute and try again — the limit is per IP, so another tab or app ' +
+              'querying Overpass from this machine counts against the same allowance.',
+          )
+        }
+        throw new Error(`Overpass HTTP ${res.status}`)
+      }
 
       // Read as text and check the size before parsing.
       //
@@ -365,19 +413,24 @@ export async function fetchOsm(
         if (!kind) continue
 
         if (el.type === 'way' && el.geometry && el.geometry.length >= 4) {
-          areas.push({ kind, ring: toFlat(el.geometry) })
+          areas.push({ kind, outer: [toFlat(el.geometry)], inner: [] })
         } else if (el.type === 'relation' && el.members) {
-          // Outer members only — see the note on holes above — stitched into rings
-          // rather than taken one at a time. A relation's boundary is split across many
-          // ways and only becomes a polygon once they are joined.
-          const outer: Float64Array[] = []
+          // Members are stitched into rings rather than taken one at a time: a
+          // relation's boundary is split across many ways and only becomes a polygon
+          // once they are joined.
+          //
+          // Inner members are kept and travel with their outer ones, so an island stays
+          // an island. A member with no role at all is treated as outer, which is what
+          // the tagging convention means by omitting it.
+          const outerParts: Float64Array[] = []
+          const innerParts: Float64Array[] = []
           for (const m of el.members) {
-            if (m.type !== 'way') continue
-            if (m.role && m.role !== 'outer') continue
-            if (!m.geometry || m.geometry.length < 2) continue
-            outer.push(toFlat(m.geometry))
+            if (m.type !== 'way' || !m.geometry || m.geometry.length < 2) continue
+            if (m.role === 'inner') innerParts.push(toFlat(m.geometry))
+            else if (!m.role || m.role === 'outer') outerParts.push(toFlat(m.geometry))
           }
-          for (const ring of assembleRings(outer)) areas.push({ kind, ring })
+          const outer = assembleRings(outerParts)
+          if (outer.length) areas.push({ kind, outer, inner: assembleRings(innerParts) })
         }
       }
 

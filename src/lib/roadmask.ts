@@ -95,7 +95,21 @@ const MIN_VERTEX_STEP = 0.7
 interface Geometry {
   paths: Map<RoadClass, Path2D>
   lengths: Map<RoadClass, number>
+  /** Every hole-free area of a kind, batched into one path and filled nonzero. */
   areas: Map<AreaKind, Path2D>
+  /**
+   * Areas that have something cut out of them, one path each.
+   *
+   * They cannot join the batch because holes need an even-odd fill, and even-odd across
+   * the whole batch would make every *overlap* between separate features a hole too —
+   * two adjacent forest blocks sharing an edge would erase each other. Drawn separately,
+   * even-odd is confined to the one feature it belongs to, and the additive compositing
+   * still unions them with everything else.
+   *
+   * Worth the extra fill calls only because holes are rare: on north Houston, 21 of
+   * 7,700 areas.
+   */
+  holed: Array<{ kind: AreaKind; path: Path2D }>
   areaCounts: Record<AreaKind, number>
 }
 
@@ -130,6 +144,7 @@ function geometryFor(
   const paths = new Map<RoadClass, Path2D>()
   const lengths = new Map<RoadClass, number>()
   const areas = new Map<AreaKind, Path2D>()
+  const holed: Geometry['holed'] = []
   const areaCounts: Record<AreaKind, number> = { water: 0, wood: 0, built: 0 }
   // Squared, so the inner loops compare without a square root.
   const minStep = MIN_VERTEX_STEP * MIN_VERTEX_STEP
@@ -220,16 +235,27 @@ function geometryFor(
   }
 
   for (const area of data.areas) {
+    areaCounts[area.kind]++
+
+    if (area.inner.length > 0) {
+      // Its own path, so the even-odd rule that cuts the island out cannot reach any
+      // other feature. Winding is irrelevant under even-odd, so it is left alone here.
+      const p = new Path2D()
+      for (const ring of area.outer) trace(p, ring, true)
+      for (const ring of area.inner) trace(p, ring, true)
+      holed.push({ kind: area.kind, path: p })
+      continue
+    }
+
     let p = areas.get(area.kind)
     if (!p) {
       p = new Path2D()
       areas.set(area.kind, p)
     }
-    trace(p, area.ring, true)
-    areaCounts[area.kind]++
+    for (const ring of area.outer) trace(p, ring, true)
   }
 
-  const geo: Geometry = { paths, lengths, areas, areaCounts }
+  const geo: Geometry = { paths, lengths, areas, holed, areaCounts }
   geoCache = { data, w, h, geo }
   return geo
 }
@@ -295,6 +321,11 @@ export function buildMasks(data: OsmData, opts: MaskOptions): Masks {
     if (!p) continue
     actx.fillStyle = AREA_COLOR[kind]
     actx.fill(p, 'nonzero')
+  }
+  // Features with holes, one at a time and even-odd, so an island survives.
+  for (const { kind, path } of geo.holed) {
+    actx.fillStyle = AREA_COLOR[kind]
+    actx.fill(path, 'evenodd')
   }
   actx.globalCompositeOperation = 'source-over'
 

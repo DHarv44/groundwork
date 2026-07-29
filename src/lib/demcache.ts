@@ -174,8 +174,12 @@ interface CachedRoads {
  * v2 added areas but stored each relation member as its own ring, which is not what a
  * multipolygon means — the geometry in those entries is wrong rather than merely
  * incomplete, so they have to be re-fetched rather than reinterpreted.
+ *
+ * v3 stitched them into rings correctly but still dropped inner ones, so an island was
+ * flooded and a clearing filled in. Those entries hold no hole information at all, which
+ * cannot be recovered without asking again.
  */
-const OSM_QUERY_VERSION = 3
+const OSM_QUERY_VERSION = 4
 
 function roadKey(bounds: Bounds): string {
   const f = (n: number) => n.toFixed(5)

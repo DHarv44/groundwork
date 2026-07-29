@@ -544,6 +544,18 @@ void main() {
     }
   }
 
+  // A surveyed wood is closed ground, not just ground with a higher tree ratio.
+  //
+  // Raising the canopy alone left mapped woodland looking washed out, because canopy
+  // decides *which* cover gets painted while veg decides how much of the ground is
+  // covered at all — and on dry, thin or broken ground veg is low, so the conifer had
+  // almost nothing to land on. Both have to move together.
+  //
+  // Raised rather than replaced, so this can only ever add cover: where the model
+  // already has closed forest the polygon changes nothing, and where it has bare rock
+  // on a slope too steep to hold trees, steepVeg still takes it back below.
+  veg = clamp(max(veg, osmWood * 0.92), 0.0, 1.0);
+
   albedo = mix(albedo, soil, clamp(veg * 1.3, 0.0, 1.0) * 0.55);
 
   // Grass or trees. Closed conifer is one of the darkest surfaces there is — the
