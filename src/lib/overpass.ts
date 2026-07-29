@@ -349,7 +349,8 @@ function tagsFor(classes: RoadClass[]): string[] {
   return Object.keys(TAG_CLASS).filter((t) => want.has(TAG_CLASS[t]!))
 }
 
-function buildQuery(b: Bounds, classes: RoadClass[], serverTimeout: number): string {
+/** The union of everything we want, without the statement that emits it. */
+function selection(b: Bounds, classes: RoadClass[]): string {
   // Overpass bbox order is (south, west, north, east).
   const bbox = `${b.south},${b.west},${b.north},${b.east}`
   const roads = tagsFor(classes).join('|')
@@ -363,15 +364,73 @@ function buildQuery(b: Bounds, classes: RoadClass[], serverTimeout: number): str
   // out would silently drop exactly the largest features in the box. Route relations on
   // roads carry no geometry of their own and are not wanted.
   return (
-    `[out:json][timeout:${serverTimeout}];(` +
+    `(` +
     `way["highway"~"^(${roads})$"](${bbox});` +
     `way["natural"~"^(water|wood)$"](${bbox});` +
     `way["landuse"~"^(${landuse})$"](${bbox});` +
     `way["waterway"~"^(riverbank|dock)$"](${bbox});` +
     `relation["natural"~"^(water|wood)$"](${bbox});` +
     `relation["landuse"~"^(${landuse})$"](${bbox});` +
-    `);out geom;`
+    `)`
   )
+}
+
+function buildQuery(b: Bounds, classes: RoadClass[], serverTimeout: number): string {
+  return `[out:json][timeout:${serverTimeout}];${selection(b, classes)};out geom;`
+}
+
+/**
+ * The same selection, counted rather than returned.
+ *
+ * `out count` skips assembling and serialising geometry, which is the expensive half of
+ * a real request — so this answers in a fraction of the time and says exactly how much
+ * work the real one would be. It is what turns "this box feels too big" into a number,
+ * and the number is what decides how far to split it.
+ */
+function buildCountQuery(b: Bounds, classes: RoadClass[], serverTimeout: number): string {
+  return `[out:json][timeout:${serverTimeout}];${selection(b, classes)};out count;`
+}
+
+/**
+ * Ground area one query should cover, in km².
+ *
+ * Overpass cost tracks the area scanned as much as the features returned, and public
+ * instances have their own timeout well before ours. Measured on a free mirror: a
+ * 10,800 km² box over Dallas–Fort Worth is refused with a 504 after 106 seconds, while
+ * boxes of a couple of thousand come back in tens of seconds. This is set below where
+ * that wall was found, with room for somewhere denser than DFW.
+ */
+const TILE_TARGET_KM2 = 2200
+
+/** Never split further than this. 16 sequential requests is already a lot to ask. */
+const MAX_TILES_PER_AXIS = 4
+
+/**
+ * Elements above which a box is split even if its area alone would not warrant it.
+ *
+ * Area is a poor proxy for cost on its own — nine thousand square kilometres of west
+ * Texas is nothing and the same area over a metro is enormous — which is exactly why
+ * the count is asked for first.
+ */
+const TILE_TARGET_ELEMENTS = 25000
+
+/** Divide a box into an n×n grid, row-major from the north-west. */
+function tileBounds(b: Bounds, n: number): Bounds[] {
+  if (n <= 1) return [b]
+  const dLat = (b.north - b.south) / n
+  const dLon = (b.east - b.west) / n
+  const out: Bounds[] = []
+  for (let row = 0; row < n; row++) {
+    for (let col = 0; col < n; col++) {
+      out.push({
+        north: b.north - row * dLat,
+        south: b.north - (row + 1) * dLat,
+        west: b.west + col * dLon,
+        east: b.west + (col + 1) * dLon,
+      })
+    }
+  }
+  return out
 }
 
 interface OverpassGeom {
@@ -381,9 +440,76 @@ interface OverpassGeom {
 
 interface OverpassElement {
   type: 'way' | 'relation' | string
+  id?: number
   tags?: Record<string, string>
   geometry?: OverpassGeom[]
   members?: Array<{ type: string; role?: string; geometry?: OverpassGeom[] }>
+}
+
+/** What one tile's response contributes, before it is merged with the others. */
+interface Harvest {
+  roads: RoadWay[]
+  areas: OsmArea[]
+  metres: number
+  /** `type/id` of everything taken, so a feature spanning a tile edge is taken once. */
+  seen: Set<string>
+}
+
+/**
+ * Fold one response into the running result.
+ *
+ * Overpass returns any feature *intersecting* the bounding box, complete — which is what
+ * makes tiling work at all, because a road crossing a tile edge arrives whole rather
+ * than clipped. It also means it arrives whole in both tiles, so identity has to be
+ * tracked: without it a motorway through a 4×4 grid is drawn several times over, and
+ * every duplicate is another full path to stroke.
+ */
+function harvest(elements: OverpassElement[], into: Harvest): void {
+  for (const el of elements) {
+    const tags = el.tags
+    if (!tags) continue
+
+    // `type/id` rather than id alone: way 42 and relation 42 are different things.
+    const key = el.id !== undefined ? `${el.type}/${el.id}` : null
+    if (key !== null) {
+      if (into.seen.has(key)) continue
+      into.seen.add(key)
+    }
+
+    const highway = tags.highway
+    if (highway) {
+      const cls = TAG_CLASS[highway]
+      if (!cls || !el.geometry || el.geometry.length < 2) continue
+      const pts = toFlat(el.geometry)
+      into.metres += wayLength(pts)
+      into.roads.push({ cls, pts })
+      continue
+    }
+
+    const kind = areaKindOf(tags)
+    if (!kind) continue
+
+    if (el.type === 'way' && el.geometry && el.geometry.length >= 4) {
+      into.areas.push({ kind, outer: [toFlat(el.geometry)], inner: [] })
+    } else if (el.type === 'relation' && el.members) {
+      // Members are stitched into rings rather than taken one at a time: a relation's
+      // boundary is split across many ways and only becomes a polygon once they are
+      // joined.
+      //
+      // Inner members are kept and travel with their outer ones, so an island stays an
+      // island. A member with no role at all is treated as outer, which is what the
+      // tagging convention means by omitting it.
+      const outerParts: Float64Array[] = []
+      const innerParts: Float64Array[] = []
+      for (const m of el.members) {
+        if (m.type !== 'way' || !m.geometry || m.geometry.length < 2) continue
+        if (m.role === 'inner') innerParts.push(toFlat(m.geometry))
+        else if (!m.role || m.role === 'outer') outerParts.push(toFlat(m.geometry))
+      }
+      const outer = assembleRings(outerParts)
+      if (outer.length) into.areas.push({ kind, outer, inner: assembleRings(innerParts) })
+    }
+  }
 }
 
 function toFlat(geom: OverpassGeom[]): Float64Array {
@@ -601,6 +727,80 @@ async function postWithBackoff(
  * desert, ocean and wilderness are correct answers, not failures, and the caller needs
  * to be able to tell them apart from a fetch that fell over.
  */
+/**
+ * Ask how much is in the box without asking for it.
+ *
+ * Returns null rather than throwing: this is an optimisation, and a count that fails
+ * must never be the reason the real fetch does not happen. When it fails the caller
+ * falls back to splitting on area alone, which is a worse guess but a safe one.
+ */
+async function countFeatures(
+  endpoint: string,
+  bounds: Bounds,
+  classes: RoadClass[],
+  signal: AbortSignal | undefined,
+): Promise<number | null> {
+  const t0 = performance.now()
+  try {
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      // Short, because this only ever runs on a box that area already judged small
+      // enough for one request. If it cannot answer quickly the honest conclusion is
+      // that the box is not small after all — and one request will be attempted anyway,
+      // which is no worse than the guess it replaces.
+      body: `data=${encodeURIComponent(buildCountQuery(bounds, classes, 25))}`,
+      signal: signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(20000)])
+        : AbortSignal.timeout(20000),
+    })
+    if (!res.ok) {
+      osmLog(`count -> ${res.status} (${ms(t0)}) — falling back to area`)
+      return null
+    }
+    const json = (await res.json()) as { elements?: Array<{ tags?: Record<string, string> }> }
+    const total = Number(json.elements?.[0]?.tags?.total)
+    if (!Number.isFinite(total)) return null
+    osmLog(`count ${total.toLocaleString()} elements (${ms(t0)})`)
+    return total
+  } catch (err) {
+    osmLog(`count failed (${ms(t0)}, ${(err as Error).name}) — falling back to area`)
+    return null
+  }
+}
+
+/**
+ * How many tiles per axis this box should be fetched in.
+ *
+ * Area decides first, and the count is only asked for when area says a single request
+ * would do. That ordering is not an optimisation, it is the only one that works:
+ * measured on a free mirror, `out count` over 10,800 km² of Dallas–Fort Worth times out
+ * at sixty seconds just like the real query, because Overpass cost is dominated by the
+ * ground scanned rather than by the geometry serialised. Asking "is this too big?" was
+ * itself too big.
+ *
+ * So the count is kept for the case it is actually good at and cheap at: a box small
+ * enough to fetch in one request by area, which is nonetheless dense enough that it
+ * should not be. That is the gap area alone cannot see — nine thousand square kilometres
+ * of west Texas and of metro Dallas look identical to it.
+ */
+async function tilesPerAxis(
+  endpoint: string,
+  bounds: Bounds,
+  areaKm2: number,
+  classes: RoadClass[],
+  signal: AbortSignal | undefined,
+  onProgress?: (note: string) => void,
+): Promise<number> {
+  const byArea = Math.ceil(Math.sqrt(areaKm2 / TILE_TARGET_KM2))
+  if (byArea > 1) return Math.min(MAX_TILES_PER_AXIS, byArea)
+
+  onProgress?.('Sizing the area…')
+  const count = await countFeatures(endpoint, bounds, classes, signal)
+  if (count === null) return 1
+  return Math.min(MAX_TILES_PER_AXIS, Math.max(1, Math.ceil(Math.sqrt(count / TILE_TARGET_ELEMENTS))))
+}
+
 export async function fetchOsm(
   bounds: Bounds,
   detailFor?: Bounds,
@@ -625,8 +825,6 @@ export async function fetchOsm(
   // never cost detail.
   const requested = classesFor(boundsAreaKm2(detailFor ?? bounds))
   const filtered = requested.length < ROAD_ORDER.length
-  const { server, client } = timeoutsFor(boxKm2)
-  const body = `data=${encodeURIComponent(buildQuery(bounds, requested, server))}`
 
   const started = performance.now()
   osmLog(
@@ -636,14 +834,22 @@ export async function fetchOsm(
       box: `S${bounds.south.toFixed(4)} N${bounds.north.toFixed(4)} W${bounds.west.toFixed(4)} E${bounds.east.toFixed(4)}`,
       roadClasses: requested.join(', '),
       classFilterApplied: filtered,
-      serverTimeout: `${server}s`,
-      clientTimeout: `${Math.round(client / 1000)}s`,
     },
   )
 
   onProgress?.('Finding an OpenStreetMap server…')
   const endpoints = await reachableEndpoints(signal)
   osmLog(`will try ${endpoints.length}: ${endpoints.map((e) => new URL(e).host).join(' → ')}`)
+
+  const n = await tilesPerAxis(endpoints[0]!, bounds, boxKm2, requested, signal, onProgress)
+  const tiles = tileBounds(bounds, n)
+  if (n > 1) {
+    osmLog(
+      `splitting into ${tiles.length} tiles (${n}×${n}) — ` +
+        `${Math.round(boxKm2 / tiles.length).toLocaleString()} km² each`,
+    )
+  }
+
   let lastError: Error | null = null
   let busy = 0
 
@@ -651,101 +857,24 @@ export async function fetchOsm(
     const endpoint = endpoints[i]!
     try {
       onProgress?.(i === 0 ? 'Querying OpenStreetMap…' : 'Trying another mirror…')
-      const res = await postWithBackoff(endpoint, body, client, signal, onProgress)
-      if (!res.ok) {
-        // 429 and 504 mean the instance is busy rather than broken, so move to the next
-        // one instead of giving up — but remember that it happened, because if *every*
-        // instance says busy the answer to give the user is quite different from a host
-        // being unreachable.
-        if (res.status === 429 || res.status === 504) {
-          busy++
-          throw new Error(`Overpass busy (HTTP ${res.status})`)
-        }
-        throw new Error(`Overpass HTTP ${res.status}`)
-      }
-
-      // Read as text and check the size before parsing.
-      //
-      // `out geom` inlines every coordinate, so a dense box produces a very large body,
-      // and JSON.parse on hundreds of megabytes takes the tab down rather than throwing
-      // something catchable. Checking first turns an out-of-memory crash into a message.
-      const tRead = performance.now()
-      const text = await res.text()
-      osmLog(`body ${(text.length / 1e6).toFixed(1)} MB read in ${ms(tRead)}`)
-      if (text.length > MAX_RESPONSE_BYTES) {
-        throw new NoRoadDataError(
-          `OpenStreetMap returned ${(text.length / 1e6).toFixed(0)} MB for this area, which ` +
-            `is more than can be drawn. Try a smaller box.`,
-        )
-      }
-
-      const tParse = performance.now()
-      const json = JSON.parse(text) as { elements?: OverpassElement[]; remark?: string }
-      osmLog(`parsed ${(json.elements?.length ?? 0).toLocaleString()} elements in ${ms(tParse)}`)
-      // Overpass reports its own failures inside a 200 response. A remark alongside real
-      // elements is usually a truncation warning, which is worth seeing either way.
-      if (json.remark) osmLog(`server remark: ${json.remark}`)
-      if (json.remark && !json.elements?.length) throw new Error(json.remark)
-
-      const roads: RoadWay[] = []
-      const areas: OsmArea[] = []
-      let metres = 0
-
-      for (const el of json.elements ?? []) {
-        const tags = el.tags
-        if (!tags) continue
-
-        const highway = tags.highway
-        if (highway) {
-          const cls = TAG_CLASS[highway]
-          if (!cls || !el.geometry || el.geometry.length < 2) continue
-          const pts = toFlat(el.geometry)
-          metres += wayLength(pts)
-          roads.push({ cls, pts })
-          continue
-        }
-
-        const kind = areaKindOf(tags)
-        if (!kind) continue
-
-        if (el.type === 'way' && el.geometry && el.geometry.length >= 4) {
-          areas.push({ kind, outer: [toFlat(el.geometry)], inner: [] })
-        } else if (el.type === 'relation' && el.members) {
-          // Members are stitched into rings rather than taken one at a time: a
-          // relation's boundary is split across many ways and only becomes a polygon
-          // once they are joined.
-          //
-          // Inner members are kept and travel with their outer ones, so an island stays
-          // an island. A member with no role at all is treated as outer, which is what
-          // the tagging convention means by omitting it.
-          const outerParts: Float64Array[] = []
-          const innerParts: Float64Array[] = []
-          for (const m of el.members) {
-            if (m.type !== 'way' || !m.geometry || m.geometry.length < 2) continue
-            if (m.role === 'inner') innerParts.push(toFlat(m.geometry))
-            else if (!m.role || m.role === 'outer') outerParts.push(toFlat(m.geometry))
-          }
-          const outer = assembleRings(outerParts)
-          if (outer.length) areas.push({ kind, outer, inner: assembleRings(innerParts) })
-        }
-      }
-
+      const got = await fetchTiles(endpoint, tiles, requested, signal, onProgress)
       rememberEndpoint(endpoint)
-      const holes = areas.reduce((n, a) => n + a.inner.length, 0)
-      osmLog(
-        `done in ${ms(started)} via ${new URL(endpoint).host}`,
-        {
-          roads: roads.length,
-          roadKm: Math.round(metres / 1000),
-          areas: areas.length,
-          holes,
-        },
-      )
+
+      const holes = got.areas.reduce((acc, a) => acc + a.inner.length, 0)
+      osmLog(`done in ${ms(started)} via ${new URL(endpoint).host}`, {
+        tiles: tiles.length,
+        roads: got.roads.length,
+        roadKm: Math.round(got.metres / 1000),
+        areas: got.areas.length,
+        holes,
+        deduped: got.seen.size,
+      })
+
       return {
         bounds,
-        roads,
-        areas,
-        lengthKm: metres / 1000,
+        roads: got.roads,
+        areas: got.areas,
+        lengthKm: got.metres / 1000,
         requested,
         filtered,
         fetchedAt: Date.now(),
@@ -754,8 +883,9 @@ export async function fetchOsm(
       if ((err as Error)?.name === 'AbortError') throw err
       osmLog(`FAILED on ${new URL(endpoint).host}: ${(err as Error).message}`)
       // A body too large for this box will be too large from every mirror, so there is
-      // nothing to gain by asking three more servers the same impossible question.
+      // nothing to gain by asking the others the same impossible question.
       if (err instanceof NoRoadDataError) throw err
+      if (/busy/.test((err as Error).message)) busy++
       lastError = err as Error
     }
   }
@@ -775,4 +905,70 @@ export async function fetchOsm(
       `was: ${lastError?.message ?? 'unknown'}. If this persists, the network is blocking ` +
       `outbound connections to these hosts rather than the request being rejected.`,
   )
+}
+
+/**
+ * Fetch every tile from one instance, in sequence, merging as they arrive.
+ *
+ * Sequential on purpose. Overpass counts concurrent slots per client IP, so firing
+ * sixteen tiles at once would have them queue behind each other and time out — the same
+ * mistake the diagnostic made. It is slower in wall-clock and it is the only version
+ * that finishes.
+ */
+async function fetchTiles(
+  endpoint: string,
+  tiles: Bounds[],
+  classes: RoadClass[],
+  signal: AbortSignal | undefined,
+  onProgress?: (note: string) => void,
+): Promise<Harvest> {
+  const into: Harvest = { roads: [], areas: [], metres: 0, seen: new Set() }
+
+  for (let t = 0; t < tiles.length; t++) {
+    const tile = tiles[t]!
+    const { server, client } = timeoutsFor(boundsAreaKm2(tile))
+    const body = `data=${encodeURIComponent(buildQuery(tile, classes, server))}`
+
+    if (tiles.length > 1) onProgress?.(`Fetching map features ${t + 1}/${tiles.length}…`)
+    const res = await postWithBackoff(endpoint, body, client, signal, onProgress)
+    if (!res.ok) {
+      // 429 and 504 mean the instance is busy rather than broken. Failing the whole
+      // tile run moves to the next mirror, which is right: a half-fetched box would be
+      // a map with a rectangular hole in it.
+      if (res.status === 429 || res.status === 504) {
+        throw new Error(`Overpass busy (HTTP ${res.status})`)
+      }
+      throw new Error(`Overpass HTTP ${res.status}`)
+    }
+
+    // Read as text and check the size before parsing.
+    //
+    // `out geom` inlines every coordinate, so a dense box produces a very large body,
+    // and JSON.parse on hundreds of megabytes takes the tab down rather than throwing
+    // something catchable. Checking first turns an out-of-memory crash into a message.
+    const tRead = performance.now()
+    const text = await res.text()
+    if (text.length > MAX_RESPONSE_BYTES) {
+      throw new NoRoadDataError(
+        `OpenStreetMap returned ${(text.length / 1e6).toFixed(0)} MB for one tile, which is ` +
+          `more than can be drawn. Try a smaller box.`,
+      )
+    }
+
+    const json = JSON.parse(text) as { elements?: OverpassElement[]; remark?: string }
+    // Overpass reports its own failures inside a 200 response. A remark alongside real
+    // elements is usually a truncation warning, which is worth seeing either way.
+    if (json.remark) osmLog(`server remark: ${json.remark}`)
+    if (json.remark && !json.elements?.length) throw new Error(json.remark)
+
+    const before = into.seen.size
+    harvest(json.elements ?? [], into)
+    osmLog(
+      `tile ${t + 1}/${tiles.length}: ${(json.elements?.length ?? 0).toLocaleString()} elements, ` +
+        `${(into.seen.size - before).toLocaleString()} new, ` +
+        `${(text.length / 1e6).toFixed(1)} MB in ${ms(tRead)}`,
+    )
+  }
+
+  return into
 }
