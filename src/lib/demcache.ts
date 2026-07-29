@@ -1,6 +1,6 @@
 import type { Bounds } from './geo'
 import type { HeightField } from './opentopo'
-import type { OsmData } from './overpass'
+import type { OsmData, OsmRequest } from './overpass'
 
 /**
  * Persistent cache of decoded DEMs.
@@ -178,8 +178,12 @@ interface CachedRoads {
  * v3 stitched them into rings correctly but still dropped inner ones, so an island was
  * flooded and a clearing filled in. Those entries hold no hole information at all, which
  * cannot be recovered without asking again.
+ *
+ * v4 folded tertiary roads in with secondary. Entries from then label the whole arterial
+ * street grid as secondary, so they would be drawn at the wrong width and — worse —
+ * would satisfy a request for secondary-only with a payload full of tertiary.
  */
-const OSM_QUERY_VERSION = 4
+const OSM_QUERY_VERSION = 5
 
 /**
  * Grid steps the fetch box snaps to, in degrees.
@@ -215,19 +219,40 @@ export function snapBounds(bounds: Bounds): Bounds {
   }
 }
 
-function roadKey(bounds: Bounds): string {
+/**
+ * The key carries what was asked for as well as where.
+ *
+ * A fetch of motorways alone is not interchangeable with one that went down to
+ * residential streets, and neither is one that skipped the landuse polygons. Keying on
+ * the box alone would serve the thin answer to a request for the thick one, and the
+ * missing detail would look like a place with no streets in it.
+ */
+function roadKey(bounds: Bounds, req: OsmRequest): string {
   const f = (n: number) => n.toFixed(5)
-  return `v${OSM_QUERY_VERSION}|${f(bounds.south)}|${f(bounds.north)}|${f(bounds.west)}|${f(bounds.east)}`
+  return (
+    `${KEY_PREFIX}${req.detail}|${req.areas ? 'a' : 'r'}|` +
+    `${f(bounds.south)}|${f(bounds.north)}|${f(bounds.west)}|${f(bounds.east)}`
+  )
 }
 
 const KEY_PREFIX = `v${OSM_QUERY_VERSION}|`
 
-/** Recover the bounds a key was written for, or null if it is from an older schema. */
-function boundsFromKey(key: string): Bounds | null {
+/**
+ * Recover what a key was written for, or null if it is from an older schema.
+ *
+ * Returns the request alongside the bounds because containment is not enough on its own:
+ * an entry covering this box is only usable if it was also asked the same question.
+ */
+function fromKey(key: string): { bounds: Bounds; req: OsmRequest } | null {
   if (!key.startsWith(KEY_PREFIX)) return null
-  const p = key.slice(KEY_PREFIX.length).split('|').map(Number)
-  if (p.length !== 4 || p.some((n) => !Number.isFinite(n))) return null
-  return { south: p[0]!, north: p[1]!, west: p[2]!, east: p[3]! }
+  const parts = key.slice(KEY_PREFIX.length).split('|')
+  if (parts.length !== 6) return null
+  const p = parts.slice(2).map(Number)
+  if (p.some((n) => !Number.isFinite(n))) return null
+  return {
+    bounds: { south: p[0]!, north: p[1]!, west: p[2]!, east: p[3]! },
+    req: { detail: parts[0] as OsmRequest['detail'], areas: parts[1] === 'a' },
+  }
 }
 
 function contains(outer: Bounds, inner: Bounds): boolean {
@@ -258,7 +283,7 @@ function boundsArea(b: Bounds): number {
  * box, so pulling them all in to compare bounds would mean deserialising tens of
  * megabytes to answer a question the key already contains.
  */
-export async function roadCacheGet(bounds: Bounds): Promise<OsmData | null> {
+export async function roadCacheGet(bounds: Bounds, want: OsmRequest): Promise<OsmData | null> {
   try {
     const db = await openDb()
 
@@ -272,8 +297,11 @@ export async function roadCacheGet(bounds: Bounds): Promise<OsmData | null> {
     let best: { key: string; area: number } | null = null
     for (const raw of keys) {
       const key = String(raw)
-      const b = boundsFromKey(key)
-      if (!b || !contains(b, bounds)) continue
+      const entry = fromKey(key)
+      if (!entry) continue
+      if (entry.req.detail !== want.detail || entry.req.areas !== want.areas) continue
+      const b = entry.bounds
+      if (!contains(b, bounds)) continue
       const area = boundsArea(b)
       // Smallest containing box, so a tight fetch is preferred over a sprawling one and
       // the mask keeps as much of its resolution as possible on the ground being drawn.
@@ -297,12 +325,12 @@ export async function roadCacheGet(bounds: Bounds): Promise<OsmData | null> {
   }
 }
 
-export async function roadCachePut(network: OsmData): Promise<void> {
+export async function roadCachePut(network: OsmData, req: OsmRequest): Promise<void> {
   try {
     const db = await openDb()
     await new Promise<void>((resolve, reject) => {
       const tx = db.transaction(ROAD_STORE, 'readwrite')
-      tx.objectStore(ROAD_STORE).put({ key: roadKey(network.bounds), network })
+      tx.objectStore(ROAD_STORE).put({ key: roadKey(network.bounds, req), network })
       tx.oncomplete = () => resolve()
       tx.onerror = () => reject(tx.error)
     })

@@ -2,6 +2,7 @@ import type { Bounds } from './geo'
 import { boundsExtentMetres } from './geo'
 import {
   ROAD_ORDER,
+  ROAD_ORDER_MAX,
   ROAD_CLASSES,
   type AreaKind,
   type OsmData,
@@ -310,7 +311,14 @@ export function buildMasks(data: OsmData, opts: MaskOptions): Masks {
     const metres = ROAD_CLASSES[cls].width * opts.widthScale * multiplier
     const px = metres * pxPerMetre
     if (px < MIN_PIXELS && multiplier === 1 && present.has(cls)) widened.add(cls)
-    return Math.max(MIN_PIXELS * multiplier, px)
+    // The floor scales with the width setting too.
+    //
+    // Otherwise it silently overrides it in exactly the case where it matters: on a wide
+    // box every class is below the floor, so all of them sit at 1.4 px and the slider
+    // can only ever make roads thicker. Scaling the floor keeps roads visible by default
+    // while leaving a way to thin the network down when it reads as a mesh rather than
+    // as roads.
+    return Math.max(MIN_PIXELS * multiplier * opts.widthScale, px)
   }
 
   // ---- areas -------------------------------------------------------------------
@@ -390,7 +398,9 @@ export function buildMasks(data: OsmData, opts: MaskOptions): Masks {
   for (const cls of ROAD_ORDER) {
     const p = geo.paths.get(cls)
     if (!p) continue
-    const g = Math.round((ROAD_CLASSES[cls].order / 4) * 255)
+    // Normalised against the top of the hierarchy rather than a hardcoded divisor, so
+    // adding a class cannot silently rescale what the shader reads out of this channel.
+    const g = Math.round((ROAD_CLASSES[cls].order / ROAD_ORDER_MAX) * 255)
     ctx.strokeStyle = `rgb(255,${g},255)`
     ctx.lineWidth = strokeWidth(cls, 1)
     ctx.stroke(p)

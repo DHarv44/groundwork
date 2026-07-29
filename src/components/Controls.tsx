@@ -5,7 +5,7 @@ import { FOREST_MAX, GROUND_WARMTH_MAX } from '../lib/biomeMap'
 import { DAILY_QUOTA, cacheClear, cacheStats, quotaUsed } from '../lib/demcache'
 import { decodePreset, deletePreset, encodePreset, loadPresets, savePreset } from '../lib/presets'
 import { DEM_SOURCES } from '../lib/opentopo'
-import { AREA_LABEL, ROAD_CLASSES } from '../lib/overpass'
+import { AREA_LABEL, ROAD_CLASSES, ROAD_DETAIL_LABEL } from '../lib/overpass'
 import { boundsAreaKm2, boundsExtentMetres, formatBounds } from '../lib/geo'
 import { captureScreenshot } from '../lib/capture'
 import { exportGLB, exportHeightmapPNG, exportSTL } from '../lib/exporters'
@@ -841,6 +841,30 @@ export default function Controls() {
                 )
               }
             >
+              {/* What to ask for, above what to do with it. Both of these decide how
+                  long the fetch takes and whether it succeeds at all, which makes them
+                  the first thing worth reaching for on a wide box. */}
+              <label className="field">
+                <span>Road detail</span>
+                <select
+                  value={settings.roadDetail}
+                  onChange={(e) => set('roadDetail', e.target.value as Settings['roadDetail'])}
+                >
+                  {(Object.keys(ROAD_DETAIL_LABEL) as Array<keyof typeof ROAD_DETAIL_LABEL>).map(
+                    (k) => (
+                      <option key={k} value={k}>
+                        {ROAD_DETAIL_LABEL[k]}
+                      </option>
+                    ),
+                  )}
+                </select>
+              </label>
+              <Toggle
+                label="Fetch water, woodland and land use"
+                value={settings.fetchAreas}
+                onChange={(v) => set('fetchAreas', v)}
+              />
+
               {roadPhase === 'idle' && (
                 <button className="wide" onClick={() => void loadRoads()}>
                   Fetch map features for this area
@@ -892,14 +916,16 @@ export default function Controls() {
                 </>
               )}
 
+              {/* Goes below 1 now that the visibility floor scales with it, so this can
+                  thin the network down as well as fatten it. */}
               <Slider
                 label="Road width"
                 value={settings.roadWidth}
-                min={0.2}
+                min={0.1}
                 max={12}
-                step={0.1}
+                step={0.05}
                 suffix="×"
-                decimals={1}
+                decimals={2}
                 onChange={setSetting('roadWidth')}
               />
               <Slider

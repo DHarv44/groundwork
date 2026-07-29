@@ -382,6 +382,19 @@ button:disabled {
   cursor: default;
 }
 
+/* A labelled control that is not a slider — a select with its caption above it. */
+.field {
+  display: block;
+  margin: 10px 0;
+}
+
+.field > span {
+  display: block;
+  margin-bottom: 5px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
 /* A button that stands on its own line inside a group rather than in a row. */
 button.wide {
   display: block;

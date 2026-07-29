@@ -75,6 +75,7 @@ export default function ViewLayers() {
   const build = useStore((s) => s.build)
   const waterStats = useStore((s) => s.waterStats)
   const roadPhase = useStore((s) => s.roadPhase)
+  const areaPhase = useStore((s) => s.areaPhase)
   const roadInfo = useStore((s) => s.roadInfo)
   const imageryLoading = useStore((s) => s.imageryLoading)
   const set = useStore((s) => s.set)
@@ -221,30 +222,34 @@ export default function ViewLayers() {
           have no mapped anything — and it has to stay distinguishable from a fetch that
           fell over. All four come from one query, so they share a phase. */}
       <div className="overlay-group">
-        {OSM_LAYERS.map((l) => (
+        {OSM_LAYERS.map((l) => {
+          // Roads and areas are two fetches with very different costs, so each button
+          // follows the one it actually waits on. Roads are usually drawn while the
+          // areas are still arriving, and the areas failing says nothing about the roads.
+          const phase = l.kind ? areaPhase : roadPhase
+          return (
           <button
             key={l.key}
-            className={`road ${settings[l.key] && roadPhase === 'ready' ? 'on' : ''} ${
-              roadPhase === 'error' ? 'failed' : ''
+            className={`road ${settings[l.key] && phase === 'ready' ? 'on' : ''} ${
+              phase === 'error' ? 'failed' : ''
             }`}
             // Never disabled, including mid-fetch. These say whether you want the layer
             // drawn, which is a question you can answer before the data lands — and an
             // Overpass query over a city can run for half a minute, so disabling them
             // meant four dead buttons for most of the wait.
-            title={roadPhase === 'ready' ? l.hint : ROAD_HINT[roadPhase]}
+            title={phase === 'ready' ? l.hint : ROAD_HINT[phase]}
             onClick={() => set(l.key, !settings[l.key])}
           >
-            <span className="glyph">{glyph(l.glyph, roadPhase === 'loading')}</span>
+            <span className="glyph">{glyph(l.glyph, phase === 'loading')}</span>
             {l.label}
-            {roadPhase === 'empty' && <em>none</em>}
-            {roadPhase === 'error' && <em>failed</em>}
+            {phase === 'empty' && <em>none</em>}
+            {phase === 'error' && <em>failed</em>}
             {/* Zero rings is a fact about the place, not a failure — a moor really has
                 no woodland polygons — so it is stated rather than left ambiguous. */}
-            {roadPhase === 'ready' && l.kind && roadInfo?.areaCounts[l.kind] === 0 && (
-              <em>none</em>
-            )}
+            {phase === 'ready' && l.kind && roadInfo?.areaCounts[l.kind] === 0 && <em>none</em>}
           </button>
-        ))}
+          )
+        })}
       </div>
 
       {/* Overlays, each independent of the base and of each other. */}

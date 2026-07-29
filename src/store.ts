@@ -11,10 +11,13 @@ import { fetchImagery } from './lib/imagery'
 import {
   NoRoadDataError,
   diagnose,
-  fetchOsm,
+  fetchAreas,
+  fetchRoads,
   type AreaKind,
   type OsmData,
+  type OsmRequest,
   type RoadClass,
+  type RoadDetail,
 } from './lib/overpass'
 import type { MaskOptions, Masks } from './lib/roadmask'
 import { roadCacheGet, roadCachePut, roadCacheSweep, snapBounds } from './lib/demcache'
@@ -106,6 +109,24 @@ export interface Settings {
   roadWidth: number
   /** Cleared corridor either side, as a multiple of the surface width. */
   roadVerge: number
+  /**
+   * How much of the road hierarchy to fetch.
+   *
+   * `auto` picks by area and is right most of the time. The override exists because area
+   * is only ever a guess at cost: over a metro, asking down to secondary pulls the whole
+   * tertiary street grid — measured at 34,601 elements and 36 MB for a ninth of Dallas —
+   * none of which resolves at that scale. Someone who wants the trunk network across a
+   * wide box should be able to say so and have it back in seconds.
+   */
+  roadDetail: RoadDetail
+  /**
+   * Whether to fetch water, woodland and land use at all.
+   *
+   * Separate from road detail because they are a large share of the response over a
+   * built-up area on their own, and they are the half you would drop first when what you
+   * want is the motorway network across a county.
+   */
+  fetchAreas: boolean
   /** Longest side of the road mask, in pixels. */
   roadResolution: number
   /** How dark a metalled surface reads against the ground. */
@@ -222,6 +243,8 @@ export const DEFAULT_SETTINGS: Settings = {
   showRivers: true,
   showLakes: true,
   showRoads: true,
+  roadDetail: 'auto',
+  fetchAreas: true,
   roadWidth: 1,
   roadVerge: 3,
   roadResolution: 2048,
@@ -333,6 +356,15 @@ interface State {
    */
   roadPhase: 'idle' | 'loading' | 'ready' | 'empty' | 'error'
   roadError: string | null
+  /**
+   * Where the *areas* fetch has got to, tracked separately from the roads.
+   *
+   * They are two requests now, with very different costs, so one status could not
+   * honestly describe both — roads are usually done while the areas are still going, and
+   * the areas failing does not mean the roads did.
+   */
+  areaPhase: 'idle' | 'loading' | 'ready' | 'empty' | 'error'
+  areaError: string | null
   roadInfo: {
     lengthKm: number
     byClass: Array<{ cls: RoadClass; km: number }>
@@ -424,6 +456,8 @@ interface State {
   loadImagery: () => Promise<void>
   /** Fetch (or recall) the road network for the built area. Safe to call repeatedly. */
   loadRoads: () => Promise<void>
+  /** Fetch water, woodland and land use. Runs behind the roads, never in front. */
+  loadAreas: () => Promise<void>
 }
 
 let inflight: AbortController | null = null
@@ -481,6 +515,8 @@ const PERSISTED_SETTINGS = [
   'showRivers',
   'showLakes',
   'showRoads',
+  'roadDetail',
+  'fetchAreas',
   'roadWidth',
   'roadVerge',
   'roadResolution',
@@ -915,6 +951,8 @@ export const useStore = create<State>((setState, getState) => {
       roadInfo: null,
       roadPhase: 'idle',
       roadError: null,
+      areaPhase: 'idle',
+      areaError: null,
     })
   }
 
@@ -1025,6 +1063,8 @@ export const useStore = create<State>((setState, getState) => {
   areaMask: null,
   roadPhase: 'idle',
   roadError: null,
+  areaPhase: 'idle',
+  areaError: null,
   roadInfo: null,
   settings: { ...DEFAULT_SETTINGS, ...(restored.settings as Partial<Settings>) },
   biome: null,
@@ -1097,6 +1137,15 @@ export const useStore = create<State>((setState, getState) => {
     // Checking the layer is what asks for the data, the same way switching to satellite
     // is what fetches the imagery.
     if (key === 'showRoads' && value) void getState().loadRoads()
+
+    // These change *what was asked for*, so what is in hand no longer answers the
+    // question. Dropping it and asking again is the whole point of the control — the
+    // cache is keyed on the request too, so going back to a setting already fetched
+    // costs nothing.
+    if (key === 'roadDetail' || key === 'fetchAreas') {
+      clearRoads()
+      if (next.showRoads) void getState().loadRoads()
+    }
   },
 
   /**
@@ -1327,37 +1376,58 @@ export const useStore = create<State>((setState, getState) => {
     }
   },
 
+  /**
+   * Roads first, then everything else.
+   *
+   * Two fetches rather than one, and the order matters: the road query is a single
+   * clause and comes back in seconds, so the network is on screen almost immediately.
+   * Water, woodland and land use follow behind it — the same way the hydrology pass
+   * streams in behind the terrain — and their cost, which over a city is most of the
+   * work, no longer holds the cheap half hostage.
+   */
   loadRoads: async (): Promise<void> => {
-    const { heightField, roads, roadPhase } = getState()
+    const { heightField, roads, roadPhase, settings } = getState()
     if (!heightField) return
     // Already have them, or already asking.
     if (roads || roadPhase === 'loading') return
 
     const bounds = heightField.bounds
+    const note = (m: string) => setState({ message: m })
+    // Fetch the snapped box rather than the exact one, so the next small adjustment of
+    // the selection is answered from cache instead of going back to Overpass.
+    const fetchBox = snapBounds(bounds)
+    const roadReq: OsmRequest = { detail: settings.roadDetail, areas: false }
+
+    /** Still looking at the same place? A rebuild mid-fetch invalidates everything. */
+    const current = () => getState().heightField?.bounds === bounds
+
     setState({ roadPhase: 'loading', roadError: null })
 
-    // Cached answers cost nothing, and Overpass is free shared infrastructure — asking
-    // it twice for the same box is the one thing that would actually be rude.
-    const hit = await roadCacheGet(bounds)
-    if (hit) {
-      setState({ roads: hit, roadPhase: hit.roads.length || hit.areas.length ? 'ready' : 'empty' })
-      rebuildRoadMask()
-      return
-    }
-
     try {
-      // Fetch the snapped box rather than the exact one, so the next small adjustment of
-      // the selection is answered from here instead of going back to Overpass.
-      const network = await fetchOsm(snapBounds(bounds), bounds, undefined, (note) =>
-        setState({ message: note }),
-      )
-      // The area may have been rebuilt while Overpass was thinking.
-      if (getState().heightField?.bounds !== bounds) return
+      // Cached answers cost nothing, and Overpass is free shared infrastructure —
+      // asking twice for the same box is the one thing that would actually be rude.
+      const cached = await roadCacheGet(bounds, roadReq)
+      let result: OsmData
+      if (cached) {
+        result = cached
+      } else {
+        const r = await fetchRoads(fetchBox, bounds, settings.roadDetail, undefined, note)
+        result = {
+          bounds: r.bounds,
+          roads: r.roads,
+          areas: [],
+          lengthKm: r.lengthKm,
+          requested: r.requested,
+          filtered: r.filtered,
+          fetchedAt: Date.now(),
+        }
+      }
+      if (!current()) return
 
-      void roadCachePut(network)
+      if (!cached) void roadCachePut(result, roadReq)
       setState({
-        roads: network,
-        roadPhase: network.roads.length || network.areas.length ? 'ready' : 'empty',
+        roads: result,
+        roadPhase: result.roads.length ? 'ready' : 'empty',
         message: '',
       })
       rebuildRoadMask()
@@ -1366,10 +1436,54 @@ export const useStore = create<State>((setState, getState) => {
       setState({
         roadPhase: 'error',
         message: '',
-        // fetchOsm now shapes its own messages — every path out of it is deliberate,
-        // so wrapping them again would only bury the useful half.
-        roadError:
-          err instanceof NoRoadDataError ? err.message : (err as Error).message,
+        // fetchRoads shapes its own messages — every path out of it is deliberate, so
+        // wrapping them again would only bury the useful half.
+        roadError: err instanceof NoRoadDataError ? err.message : (err as Error).message,
+      })
+      return
+    }
+
+    if (!getState().settings.fetchAreas) {
+      setState({ areaPhase: 'idle' })
+      return
+    }
+    void getState().loadAreas()
+  },
+
+  loadAreas: async (): Promise<void> => {
+    const { heightField, roads, areaPhase } = getState()
+    if (!heightField || !roads || areaPhase === 'loading') return
+    if (roads.areas.length > 0) return
+
+    const bounds = heightField.bounds
+    const areaReq: OsmRequest = { detail: 'auto', areas: true }
+    const current = () => getState().heightField?.bounds === bounds
+
+    setState({ areaPhase: 'loading', areaError: null })
+
+    try {
+      const cached = await roadCacheGet(bounds, areaReq)
+      const areas =
+        cached?.areas ??
+        (await fetchAreas(snapBounds(bounds), undefined, (m) => setState({ message: m })))
+      if (!current()) return
+
+      const merged = { ...getState().roads!, areas }
+      if (!cached) void roadCachePut(merged, areaReq)
+      setState({
+        roads: merged,
+        areaPhase: areas.length ? 'ready' : 'empty',
+        message: '',
+      })
+      rebuildRoadMask()
+    } catch (err) {
+      if ((err as Error)?.name === 'AbortError') return
+      // Deliberately not fatal to the roads: they are already drawn, and this failing
+      // means the map is missing its lakes, not that it is wrong.
+      setState({
+        areaPhase: 'error',
+        message: '',
+        areaError: err instanceof NoRoadDataError ? err.message : (err as Error).message,
       })
     }
   },
