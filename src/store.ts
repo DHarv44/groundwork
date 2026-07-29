@@ -7,6 +7,9 @@ import { DEFAULT_BOUNDS, boundsAreaKm2, climaticSnowLine, climaticTreeLine } fro
 import type { HeightField } from './lib/opentopo'
 import { DEM_SOURCES, fetchHeightField, validateRequest } from './lib/opentopo'
 import { fetchImagery } from './lib/imagery'
+import { NoRoadDataError, fetchRoads, type RoadClass, type RoadNetwork } from './lib/overpass'
+import { buildRoadMask } from './lib/roadmask'
+import { roadCacheGet, roadCachePut } from './lib/demcache'
 import { biomeOf, ensureKoppen, fetchNormals, profileFor, type Biome } from './lib/climate'
 import { buildBiomeField, type BiomeShare } from './lib/biomeMap'
 import { makeDemoHeightField } from './lib/demo'
@@ -77,6 +80,32 @@ export interface Settings {
   showOcean: boolean
   showRivers: boolean
   showLakes: boolean
+  /**
+   * Roads, from OpenStreetMap.
+   *
+   * Unlike every other layer here these are *observed* rather than derived, so the
+   * toggle also decides whether the data is fetched at all — see `loadRoads`. Turning
+   * it off keeps the network in memory; it does not throw the fetch away.
+   */
+  showRoads: boolean
+  /**
+   * Multiplies the true metric width of every road class.
+   *
+   * Needed because roads are narrower than the mask can resolve on any large box: at
+   * 100 km across, a two-lane road is a fifth of a texel. The mask holds them at a
+   * legibility floor regardless, and this is how you push them past it deliberately.
+   */
+  roadWidth: number
+  /** Cleared corridor either side, as a multiple of the surface width. */
+  roadVerge: number
+  /** Longest side of the road mask, in pixels. */
+  roadResolution: number
+  /** How dark a metalled surface reads against the ground. */
+  roadDarkness: number
+  /** How strongly the corridor suppresses timber. Biome-owned. */
+  roadClearing: number
+  /** How far the surface takes the local ground colour rather than asphalt. Biome-owned. */
+  roadTint: number
   /** Sea surface. All shader-side, so these respond without re-deriving anything. */
   seaLevel: number
   shoreCutoff: number
@@ -158,6 +187,15 @@ export const DEFAULT_SETTINGS: Settings = {
   showOcean: true,
   showRivers: true,
   showLakes: true,
+  showRoads: true,
+  roadWidth: 1,
+  roadVerge: 3,
+  roadResolution: 2048,
+  roadDarkness: 0.55,
+  // Kept identical to BASE in climate.ts, for the same reason as the block above: these
+  // are the values in force for the moment before a class is known.
+  roadClearing: 0.6,
+  roadTint: 0.35,
   seaLevel: 0,
   shoreCutoff: 0.25,
   shoreFeather: 0,
@@ -204,6 +242,11 @@ export const BIOME_KEYS = [
   'treeRoughScale',
   'corridorLeaf',
   'strata',
+  // Roads are observed rather than derived, but how the ground *responds* to one is not.
+  // Boreal forest is felled back many times the width of the road; a desert track has no
+  // verge because there is nothing to clear, and its surface is simply the ground.
+  'roadClearing',
+  'roadTint',
 ] as const
 
 export type BiomeKey = (typeof BIOME_KEYS)[number]
@@ -232,6 +275,29 @@ interface State {
     rivers: number
     lakes: number
     maxDrainageKm2: number
+  } | null
+  /** The road network as fetched, kept so the mask can be rebuilt without a request. */
+  roads: RoadNetwork | null
+  /** RGBA road mask: surface, class, cleared corridor. */
+  roadMask: THREE.CanvasTexture | null
+  /**
+   * Where the road fetch has got to.
+   *
+   * `empty` is deliberately its own state rather than an error. Open desert, ocean and
+   * genuine wilderness have no roads, and that is the correct answer — without somewhere
+   * to say so, an empty box is indistinguishable from a fetch that fell over, and you
+   * spend an hour debugging a map that simply has nothing on it.
+   */
+  roadPhase: 'idle' | 'loading' | 'ready' | 'empty' | 'error'
+  roadError: string | null
+  roadInfo: {
+    lengthKm: number
+    byClass: Array<{ cls: RoadClass; km: number }>
+    metresPerPixel: number
+    /** Classes dropped from the request because the box is too large to resolve them. */
+    filtered: boolean
+    /** Classes drawn wider than life so they stay visible at this scale. */
+    widened: RoadClass[]
   } | null
   settings: Settings
   /** Köppen class of the selected area, read from the bundled raster. */
@@ -307,6 +373,8 @@ interface State {
   generate: () => Promise<void>
   generateDemo: () => Promise<void>
   loadImagery: () => Promise<void>
+  /** Fetch (or recall) the road network for the built area. Safe to call repeatedly. */
+  loadRoads: () => Promise<void>
 }
 
 let inflight: AbortController | null = null
@@ -352,6 +420,13 @@ const PERSISTED_SETTINGS = [
   'showOcean',
   'showRivers',
   'showLakes',
+  'showRoads',
+  'roadWidth',
+  'roadVerge',
+  'roadResolution',
+  'roadDarkness',
+  'roadClearing',
+  'roadTint',
   'seaLevel',
   'shoreCutoff',
   'shoreFeather',
@@ -654,6 +729,70 @@ export const useStore = create<State>((setState, getState) => {
     }, 220)
   }
 
+  /**
+   * Redraw the road mask from the network already in memory.
+   *
+   * Separate from the fetch on purpose: width, verge and resolution are all painting
+   * decisions, so dragging any of them has to be free. Only moving the box costs a
+   * request.
+   */
+  function rebuildRoadMask(): void {
+    const { roads, settings, roadMask } = getState()
+    if (!roads) return
+
+    const mask = buildRoadMask(roads, {
+      resolution: settings.roadResolution,
+      widthScale: settings.roadWidth,
+      vergeScale: settings.roadVerge,
+    })
+
+    const tex = new THREE.CanvasTexture(mask.canvas)
+    // Row 0 is the north edge, as with every other field over the tile.
+    tex.flipY = false
+    tex.minFilter = THREE.LinearMipmapLinearFilter
+    tex.magFilter = THREE.LinearFilter
+    tex.generateMipmaps = true
+    // Roads are thin, near-horizontal lines seen at a shallow angle — the exact case
+    // that smears to nothing without it.
+    tex.anisotropy = 16
+    tex.wrapS = THREE.ClampToEdgeWrapping
+    tex.wrapT = THREE.ClampToEdgeWrapping
+    tex.needsUpdate = true
+
+    roadMask?.dispose()
+    setState({
+      roadMask: tex,
+      roadInfo: {
+        lengthKm: roads.lengthKm,
+        byClass: mask.byClass,
+        metresPerPixel: mask.metresPerPixel,
+        filtered: roads.filtered,
+        widened: mask.widened,
+      },
+    })
+  }
+
+  let roadTimer: ReturnType<typeof setTimeout> | null = null
+  function scheduleRoadMask(): void {
+    if (roadTimer !== null) clearTimeout(roadTimer)
+    roadTimer = setTimeout(() => {
+      roadTimer = null
+      rebuildRoadMask()
+    }, 160)
+  }
+
+  /** Drop the road network and its mask — called whenever the area changes under us. */
+  function clearRoads(): void {
+    getState().roadMask?.dispose()
+    setState({
+      roads: null,
+      roadMask: null,
+      roadInfo: null,
+      roadPhase: 'idle',
+      roadError: null,
+    })
+  }
+
   /** Coalesce rapid geometry changes into one rebuild once the slider settles. */
   function scheduleRebuild(): void {
     if (rebuildTimer !== null) clearTimeout(rebuildTimer)
@@ -714,6 +853,11 @@ export const useStore = create<State>((setState, getState) => {
     }))
 
     if (getState().settings.textureMode === 'satellite') void getState().loadImagery()
+    // The demo's bounds are invented, so asking OSM about them would burn a request to
+    // be told, correctly, that there is nothing there.
+    if (getState().settings.showRoads && heightField.demtype !== 'DEMO') {
+      void getState().loadRoads()
+    }
 
     // The lines just set above are the bare latitude curve. Re-deriving puts the
     // biome's correction back on top — without this the build silently undoes it, and
@@ -750,6 +894,11 @@ export const useStore = create<State>((setState, getState) => {
   imageryZoom: 0,
   waterMask: null,
   waterStats: null,
+  roads: null,
+  roadMask: null,
+  roadPhase: 'idle',
+  roadError: null,
+  roadInfo: null,
   settings: { ...DEFAULT_SETTINGS, ...(restored.settings as Partial<Settings>) },
   biome: null,
   biomeMap: null,
@@ -814,6 +963,13 @@ export const useStore = create<State>((setState, getState) => {
     // vertices, so coalesce them instead of rebuilding per event.
     if (key === 'exaggeration' || key === 'detail') scheduleRebuild()
     if (key in DEFAULT_TUNING) scheduleWater()
+    // Painting decisions, not data ones — redraw the mask, never re-request it.
+    if (key === 'roadWidth' || key === 'roadVerge' || key === 'roadResolution') {
+      scheduleRoadMask()
+    }
+    // Checking the layer is what asks for the data, the same way switching to satellite
+    // is what fetches the imagery.
+    if (key === 'showRoads' && value) void getState().loadRoads()
   },
 
   /**
@@ -912,6 +1068,7 @@ export const useStore = create<State>((setState, getState) => {
     hydroWorker = null
     disposeBuild(getState().build)
     getState().waterMask?.dispose()
+    clearRoads()
     setState({
       waterMask: null,
       waterStats: null,
@@ -947,6 +1104,9 @@ export const useStore = create<State>((setState, getState) => {
     hydroWorker = null
     disposeBuild(getState().build)
     getState().waterMask?.dispose()
+    // The roads belong to the old box. Keeping them would drape another town's street
+    // plan over this one until the new fetch landed.
+    clearRoads()
 
     const area = Math.round(boundsAreaKm2(bounds))
     setState({
@@ -993,6 +1153,7 @@ export const useStore = create<State>((setState, getState) => {
     hydroWorker = null
     disposeBuild(getState().build)
     getState().waterMask?.dispose()
+    clearRoads()
 
     setState({
       phase: 'building',
@@ -1024,6 +1185,49 @@ export const useStore = create<State>((setState, getState) => {
       setState({ imagery: result.canvas, imageryZoom: result.zoom, message: '' })
     } catch {
       setState({ message: '', error: 'Satellite imagery unavailable for this area.' })
+    }
+  },
+
+  loadRoads: async (): Promise<void> => {
+    const { heightField, roads, roadPhase } = getState()
+    if (!heightField) return
+    // Already have them, or already asking.
+    if (roads || roadPhase === 'loading') return
+
+    const bounds = heightField.bounds
+    setState({ roadPhase: 'loading', roadError: null })
+
+    // Cached answers cost nothing, and Overpass is free shared infrastructure — asking
+    // it twice for the same box is the one thing that would actually be rude.
+    const hit = await roadCacheGet(bounds)
+    if (hit) {
+      setState({ roads: hit, roadPhase: hit.ways.length ? 'ready' : 'empty' })
+      rebuildRoadMask()
+      return
+    }
+
+    try {
+      const network = await fetchRoads(bounds, undefined, (note) => setState({ message: note }))
+      // The area may have been rebuilt while Overpass was thinking.
+      if (getState().heightField?.bounds !== bounds) return
+
+      void roadCachePut(network)
+      setState({
+        roads: network,
+        roadPhase: network.ways.length ? 'ready' : 'empty',
+        message: '',
+      })
+      rebuildRoadMask()
+    } catch (err) {
+      if ((err as Error)?.name === 'AbortError') return
+      setState({
+        roadPhase: 'error',
+        message: '',
+        roadError:
+          err instanceof NoRoadDataError
+            ? err.message
+            : `Could not reach OpenStreetMap: ${(err as Error).message}`,
+      })
     }
   },
   }

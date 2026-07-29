@@ -5,6 +5,7 @@ import { FOREST_MAX, GROUND_WARMTH_MAX } from '../lib/biomeMap'
 import { DAILY_QUOTA, cacheClear, cacheStats, quotaUsed } from '../lib/demcache'
 import { decodePreset, deletePreset, encodePreset, loadPresets, savePreset } from '../lib/presets'
 import { DEM_SOURCES } from '../lib/opentopo'
+import { ROAD_CLASSES } from '../lib/overpass'
 import { boundsAreaKm2, boundsExtentMetres, formatBounds } from '../lib/geo'
 import { captureScreenshot } from '../lib/capture'
 import { exportGLB, exportHeightmapPNG, exportSTL } from '../lib/exporters'
@@ -142,6 +143,9 @@ function swatch(code: string): string {
 
 const DETAIL_STEPS = [256, 384, 512, 768, 1024, 1536, 2048]
 
+/** Road mask sizes. Above 4096 the texture costs more than the roads are worth. */
+const ROAD_RES_STEPS = [1024, 1536, 2048, 3072, 4096]
+
 type TabId = 'terrain' | 'surface' | 'water' | 'light' | 'render' | 'export'
 
 const TABS: { id: TabId; label: string }[] = [
@@ -181,6 +185,10 @@ export default function Controls() {
     editingBiome,
     setEditingBiome,
     resetBiome,
+    roadPhase,
+    roadError,
+    roadInfo,
+    loadRoads,
   } = useStore()
 
   // The class the sliders act on: your pick, falling back to the dominant one.
@@ -813,6 +821,137 @@ export default function Controls() {
                 decimals={1}
                 onChange={setSetting('textureRange')}
               />
+            </Group>
+
+            {/* Roads. The only layer here that is measured rather than modelled, so the
+                badge reports what came back rather than what was computed. */}
+            <Group
+              title="Roads"
+              badge={
+                roadPhase === 'loading' ? (
+                  <b className="pending">querying OSM…</b>
+                ) : roadInfo && roadPhase === 'ready' ? (
+                  <b>{Math.round(roadInfo.lengthKm).toLocaleString()} km</b>
+                ) : roadPhase === 'empty' ? (
+                  <b className="pending">none mapped</b>
+                ) : roadPhase === 'error' ? (
+                  <b className="pending">unavailable</b>
+                ) : (
+                  <b className="pending">not fetched</b>
+                )
+              }
+            >
+              <Toggle
+                label="Show roads"
+                value={settings.showRoads}
+                onChange={(v) => set('showRoads', v)}
+              />
+
+              {roadPhase === 'idle' && (
+                <button className="wide" onClick={() => void loadRoads()}>
+                  Fetch roads for this area
+                </button>
+              )}
+              {roadPhase === 'error' && (
+                <>
+                  <div className="error">{roadError}</div>
+                  <button className="wide" onClick={() => void loadRoads()}>
+                    Try again
+                  </button>
+                </>
+              )}
+
+              {roadInfo && roadPhase === 'ready' && (
+                <>
+                  <div className="metrics wide">
+                    {roadInfo.byClass.map((c) => (
+                      <span key={c.cls} title={ROAD_CLASSES[c.cls].label}>
+                        {ROAD_CLASSES[c.cls].label} {Math.round(c.km).toLocaleString()} km
+                      </span>
+                    ))}
+                    <span title="Ground metres per pixel of the road mask">
+                      {roadInfo.metresPerPixel.toFixed(1)} m/px
+                    </span>
+                  </div>
+                  {/* Both of these are places the render is knowingly not telling the
+                      truth, so they are stated rather than left to be discovered. */}
+                  {roadInfo.filtered && (
+                    <div className="status">
+                      Minor roads and tracks were not requested — at this size they are
+                      narrower than one mask pixel.
+                    </div>
+                  )}
+                  {roadInfo.widened.length > 0 && (
+                    <div className="status">
+                      Drawn wider than life to stay visible:{' '}
+                      {roadInfo.widened.map((c) => ROAD_CLASSES[c].label.toLowerCase()).join(', ')}.
+                    </div>
+                  )}
+                </>
+              )}
+
+              <Slider
+                label="Road width"
+                value={settings.roadWidth}
+                min={0.2}
+                max={12}
+                step={0.1}
+                suffix="×"
+                decimals={1}
+                onChange={setSetting('roadWidth')}
+              />
+              <Slider
+                label="Cleared verge"
+                value={settings.roadVerge}
+                min={0}
+                max={12}
+                step={0.1}
+                suffix="× width"
+                decimals={1}
+                onChange={setSetting('roadVerge')}
+              />
+              <Slider
+                label="Clearing strength"
+                value={settings.roadClearing}
+                min={0}
+                max={1}
+                step={0.01}
+                tag={biomeTag('roadClearing')}
+                onChange={setSetting('roadClearing')}
+              />
+              <Slider
+                label="Unsealed"
+                value={settings.roadTint}
+                min={0}
+                max={1}
+                step={0.01}
+                tag={biomeTag('roadTint')}
+                onChange={setSetting('roadTint')}
+              />
+              <Slider
+                label="Surface darkness"
+                value={settings.roadDarkness}
+                min={0}
+                max={1}
+                step={0.01}
+                onChange={setSetting('roadDarkness')}
+              />
+              <label className="slider">
+                <span className="slider-head">
+                  <span>Mask resolution</span>
+                  <b>{settings.roadResolution}</b>
+                </span>
+                <input
+                  type="range"
+                  min={0}
+                  max={ROAD_RES_STEPS.length - 1}
+                  step={1}
+                  value={Math.max(0, ROAD_RES_STEPS.indexOf(settings.roadResolution))}
+                  onChange={(e) =>
+                    set('roadResolution', ROAD_RES_STEPS[parseInt(e.target.value, 10)])
+                  }
+                />
+              </label>
             </Group>
           </section>
         )}

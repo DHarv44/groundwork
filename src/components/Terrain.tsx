@@ -21,6 +21,7 @@ export default function Terrain({ build, sky, fogDensity, snowLine }: Props) {
   const imagery = useStore((s) => s.imagery)
   const waterMask = useStore((s) => s.waterMask)
   const biomeMap = useStore((s) => s.biomeMap)
+  const roadMask = useStore((s) => s.roadMask)
   const materialRef = useRef<THREE.ShaderMaterial>(null)
 
   const satTexture = useMemo(() => {
@@ -87,6 +88,12 @@ export default function Terrain({ build, sky, fogDensity, snowLine }: Props) {
       uShowSnow: { value: 1 },
       uBiomeMap: { value: WHITE },
       uHasBiomeMap: { value: 0 },
+      uRoadMap: { value: WHITE },
+      uHasRoads: { value: 0 },
+      uShowRoads: { value: 1 },
+      uRoadDarkness: { value: settings.roadDarkness },
+      uRoadClearing: { value: settings.roadClearing },
+      uRoadTint: { value: settings.roadTint },
       uTextureRange: { value: settings.textureRange },
       uShadows: { value: settings.shadows ? 1 : 0 },
       uAoStrength: { value: settings.aoStrength },
@@ -154,6 +161,12 @@ export default function Terrain({ build, sky, fogDensity, snowLine }: Props) {
     u.uShowSnow.value = settings.showSnow ? 1 : 0
     u.uBiomeMap.value = biomeMap ?? WHITE
     u.uHasBiomeMap.value = biomeMap ? 1 : 0
+    u.uRoadMap.value = roadMask ?? WHITE
+    u.uHasRoads.value = roadMask ? 1 : 0
+    u.uShowRoads.value = settings.showRoads ? 1 : 0
+    u.uRoadDarkness.value = settings.roadDarkness
+    u.uRoadClearing.value = settings.roadClearing
+    u.uRoadTint.value = settings.roadTint
     u.uTextureRange.value = settings.textureRange
     u.uShadows.value = settings.shadows ? 1 : 0
     u.uAoStrength.value = settings.aoStrength

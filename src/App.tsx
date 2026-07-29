@@ -46,8 +46,15 @@ export default function App() {
         </header>
         <MapPicker />
         <Controls />
+        {/* Roads are listed separately from the basemap on purpose. The basemap is a
+            picture we display; the roads are OSM *data* we redistribute in derived form,
+            which is what ODbL actually attaches to. */}
         <footer>
-          DEM © OpenTopography · basemap © OpenStreetMap · imagery © Esri
+          DEM © OpenTopography · imagery © Esri · basemap and roads ©{' '}
+          <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">
+            OpenStreetMap
+          </a>{' '}
+          contributors, ODbL
         </footer>
       </aside>
 

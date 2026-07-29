@@ -382,6 +382,13 @@ button:disabled {
   cursor: default;
 }
 
+/* A button that stands on its own line inside a group rather than in a row. */
+button.wide {
+  display: block;
+  width: 100%;
+  margin: 8px 0 4px;
+}
+
 button.primary {
   flex: 1;
   background: var(--accent);
@@ -1028,6 +1035,30 @@ main {
   background: #7dd3fc;
   border-color: #7dd3fc;
   box-shadow: 0 2px 16px rgba(125, 211, 252, 0.3);
+}
+
+/* Roads read as built rather than natural, so they take the one warm neutral in the
+   palette instead of joining the water or cover families. */
+.view-layers button.road.on {
+  color: #17130c;
+  background: #d6c6ab;
+  border-color: #d6c6ab;
+  box-shadow: 0 2px 16px rgba(214, 198, 171, 0.26);
+}
+
+/* The two states a derived layer never has: fetched-but-empty, and could-not-fetch.
+   Both stay legible while clearly not being "on". */
+.view-layers button.road em {
+  font-style: normal;
+  font-size: 9.5px;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  opacity: 0.7;
+}
+
+.view-layers button.road.failed {
+  color: #f0a89a;
+  border-color: rgba(220, 120, 100, 0.5);
 }
 
 /* First person. The hint sits low and centred, out of the eyeline. */

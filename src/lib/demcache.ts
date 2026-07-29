@@ -1,5 +1,6 @@
 import type { Bounds } from './geo'
 import type { HeightField } from './opentopo'
+import type { RoadNetwork } from './overpass'
 
 /**
  * Persistent cache of decoded DEMs.
@@ -15,8 +16,12 @@ import type { HeightField } from './opentopo'
 // tidy is not worth spending someone's daily allowance twice. The same goes for the
 // localStorage keys elsewhere: they are internal, and nothing reads them but us.
 const DB_NAME = 'terrain-builder'
-const DB_VERSION = 1
+// v2 added the road store. Bumping the version runs the upgrade, which only *creates*
+// the missing store — the cached DEMs are left untouched, which matters because they
+// cost API allowance to refetch and this app is opened with a nearly-full cache.
+const DB_VERSION = 2
 const STORE = 'dem'
+const ROAD_STORE = 'roads'
 
 interface CachedEntry {
   key: string
@@ -42,6 +47,9 @@ function openDb(): Promise<IDBDatabase> {
     req.onupgradeneeded = () => {
       if (!req.result.objectStoreNames.contains(STORE)) {
         req.result.createObjectStore(STORE, { keyPath: 'key' })
+      }
+      if (!req.result.objectStoreNames.contains(ROAD_STORE)) {
+        req.result.createObjectStore(ROAD_STORE, { keyPath: 'key' })
       }
     }
     req.onsuccess = () => resolve(req.result)
@@ -127,14 +135,67 @@ export async function cacheClear(): Promise<void> {
   try {
     const db = await openDb()
     await new Promise<void>((resolve, reject) => {
-      const tx = db.transaction(STORE, 'readwrite')
+      const tx = db.transaction([STORE, ROAD_STORE], 'readwrite')
       tx.objectStore(STORE).clear()
+      tx.objectStore(ROAD_STORE).clear()
       tx.oncomplete = () => resolve()
       tx.onerror = () => reject(tx.error)
     })
     db.close()
   } catch {
     /* ignore */
+  }
+}
+
+// ---- road cache -----------------------------------------------------------
+
+/**
+ * Roads are cached for the same reason DEMs are, with a different pressure behind it:
+ * Overpass is free, unauthenticated, shared infrastructure, and the polite way to use
+ * it is to ask once. Keyed on the box alone — unlike elevation there is no choice of
+ * source to disambiguate.
+ *
+ * `Float64Array` survives the structured clone, so the ways go in and come out as they
+ * are with no serialisation step.
+ */
+interface CachedRoads {
+  key: string
+  network: RoadNetwork
+}
+
+function roadKey(bounds: Bounds): string {
+  const f = (n: number) => n.toFixed(5)
+  return `${f(bounds.south)}|${f(bounds.north)}|${f(bounds.west)}|${f(bounds.east)}`
+}
+
+export async function roadCacheGet(bounds: Bounds): Promise<RoadNetwork | null> {
+  try {
+    const db = await openDb()
+    const entry = await new Promise<CachedRoads | undefined>((resolve, reject) => {
+      const tx = db.transaction(ROAD_STORE, 'readonly')
+      const req = tx.objectStore(ROAD_STORE).get(roadKey(bounds))
+      req.onsuccess = () => resolve(req.result as CachedRoads | undefined)
+      req.onerror = () => reject(req.error)
+    })
+    db.close()
+    return entry?.network ?? null
+  } catch {
+    return null
+  }
+}
+
+export async function roadCachePut(network: RoadNetwork): Promise<void> {
+  try {
+    const db = await openDb()
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(ROAD_STORE, 'readwrite')
+      tx.objectStore(ROAD_STORE).put({ key: roadKey(network.bounds), network })
+      tx.oncomplete = () => resolve()
+      tx.onerror = () => reject(tx.error)
+    })
+    db.close()
+  } catch {
+    /* cache writes are best-effort */
   }
 }
 

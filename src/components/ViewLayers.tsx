@@ -26,11 +26,20 @@ const OVERLAYS: OverlayDef[] = [
   { key: 'showLakes', glyph: '◍', label: 'Lakes', hint: 'Enclosed standing water' },
 ]
 
+const ROAD_HINT: Record<string, string> = {
+  idle: 'Roads from OpenStreetMap — click to fetch',
+  loading: 'Querying OpenStreetMap…',
+  ready: 'Roads from OpenStreetMap © contributors',
+  empty: 'No roads are mapped in this area',
+  error: 'Could not reach OpenStreetMap — click to retry',
+}
+
 /** Layer switcher overlaid on the 3D view, where the layers actually are. */
 export default function ViewLayers() {
   const settings = useStore((s) => s.settings)
   const build = useStore((s) => s.build)
   const waterStats = useStore((s) => s.waterStats)
+  const roadPhase = useStore((s) => s.roadPhase)
   const set = useStore((s) => s.set)
   const loadImagery = useStore((s) => s.loadImagery)
   const winter = useStore((s) => s.winter)
@@ -143,6 +152,26 @@ export default function ViewLayers() {
             disabled={!settings.showFog}
           />
         </label>
+      </div>
+
+      {/* Roads sit apart from the derived overlays because they are not derived: this
+          is surveyed data off the network, so the button has to show three states, not
+          two. "Nothing here" is a real answer — deserts and open moor have no mapped
+          roads — and it has to be distinguishable from a fetch that fell over. */}
+      <div className="overlay-group">
+        <button
+          className={`road ${settings.showRoads && roadPhase === 'ready' ? 'on' : ''} ${
+            roadPhase === 'error' ? 'failed' : ''
+          }`}
+          disabled={roadPhase === 'loading'}
+          title={ROAD_HINT[roadPhase]}
+          onClick={() => set('showRoads', !settings.showRoads)}
+        >
+          <span className="glyph">{roadPhase === 'loading' ? '⋯' : '╪'}</span>
+          Roads
+          {roadPhase === 'empty' && <em>none</em>}
+          {roadPhase === 'error' && <em>failed</em>}
+        </button>
       </div>
 
       {/* Overlays, each independent of the base and of each other. */}

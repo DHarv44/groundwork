@@ -78,6 +78,14 @@ uniform float uTextureRange;   // scales how far surface detail survives
 // linear filtering blends between neighbouring classes for free.
 uniform sampler2D uBiomeMap;
 uniform float uHasBiomeMap;
+// Roads: R surface, G class (order/4), B cleared corridor. Observed data, not derived —
+// see lib/overpass.ts.
+uniform sampler2D uRoadMap;
+uniform float uHasRoads;
+uniform float uShowRoads;
+uniform float uRoadDarkness;
+uniform float uRoadClearing;   // how strongly the corridor takes the timber back
+uniform float uRoadTint;       // 0 metalled grey, 1 the local ground scraped bare
 uniform float uShadows;
 uniform float uAoStrength;
 uniform float uDetail;
@@ -305,6 +313,21 @@ void main() {
   // where it shifts the threshold, which is what lets it run past 1.
   float forestFrac = clamp(forest, 0.0, 1.0);
 
+  // Roads are resolved here, well before anything is painted, because the corridor has
+  // to reach the vegetation: what makes a road read as cut through the country rather
+  // than drawn on top of it is the timber standing back from it.
+  float roadSurface = 0.0;
+  float roadCorridor = 0.0;
+  float roadClass = 0.0;
+  if (uHasRoads > 0.5 && uShowRoads > 0.5 && vSide < 0.5) {
+    vec4 rm = texture2D(uRoadMap, vUv);
+    roadSurface = rm.r;
+    roadClass = rm.g;
+    // The mask ramps the corridor outward in steps; this feathers across them so the
+    // clearing thins into the woods instead of ending on a line.
+    roadCorridor = smoothstep(0.04, 0.75, rm.b) * uRoadClearing;
+  }
+
   // Linear-space albedos in the range real ground actually occupies: rock sits around
   // 0.15–0.30, vegetation lower still, only snow gets close to 0.8.
   vec3 rockDark  = vec3(0.088, 0.079, 0.071);
@@ -514,6 +537,13 @@ void main() {
   // trees off anything wide enough to be open water.
   float canopy = clamp(rawTrees * (1.0 - steepVeg * 0.45), 0.0, 1.0);
 
+  // Timber stands back from a road. Somebody felled that corridor to lay it and somebody
+  // keeps felling it — verge, firebreak, sightline — so a road through woodland is a
+  // clearing with a surface down the middle of it, not a line drawn across the canopy.
+  // Only the trees go: a verge is mown, so the grass below stays and the ground does not
+  // turn bare.
+  canopy *= 1.0 - roadCorridor;
+
   // The two cover layers switch independently, which is what makes the pattern legible:
   // with grass hidden, the timber network stands alone against bare ground and can be
   // compared straight against the drainage view.
@@ -577,6 +607,42 @@ void main() {
     float g = 0.90 + 0.20 * (grain * 0.5 + 0.5) * uSatDetail * (1.0 - smoothstep(600.0, 5000.0, dist));
     albedo = sat * g;
     snow *= 0.25;
+  }
+
+  // ---- roads --------------------------------------------------------------
+  // Painted after the imagery deliberately, and at reduced strength over it. The whole
+  // point of the satellite view is to check the derived ground against what is actually
+  // there, and roads are the one layer where that check is exact — these are surveyed
+  // lines, so if they do not sit on the roads in the photograph then the projection is
+  // wrong and everything else drawn from the same box is wrong with it.
+  if (roadSurface > 0.003) {
+    float cov = roadSurface * mix(1.0, 0.5, uUseSat);
+
+    // Metalled surfaces are among the darkest things outdoors: fresh asphalt returns
+    // under a tenth of what lands on it, and even bleached by years of sun it stays
+    // well below bare rock.
+    vec3 metalled = mix(vec3(0.075, 0.073, 0.070), vec3(0.020, 0.019, 0.019), uRoadDarkness);
+
+    // An unsealed road is not a material at all — it is this ground with the cover
+    // scraped off and the dust packed down, so it takes its colour from the place and
+    // sits a little lighter than what is beside it. That is why a dirt road is red in
+    // the tropics and pale in the desert without anything here knowing where it is.
+    vec3 graded = mix(albedo, soil, 0.4) * 1.3 + sandCol * 0.06;
+
+    // What gets surfaced is a question of traffic, not climate: a farm track is metalled
+    // almost nowhere, and anything above one is metalled almost anywhere there is enough
+    // traffic to have named it. The break sits between track and everything else rather
+    // than partway up the hierarchy — OSM's minor class is mostly residential streets,
+    // and a residential street in a town is tarmac whatever the climate. Above the break
+    // the biome decides, which is where the real variation is: a secondary road is
+    // sealed in Colorado and graded laterite in the Congo.
+    // (No backticks anywhere in here — this GLSL is a JS template literal and one would
+    // end it, which fails as a syntax error a long way from the cause.)
+    float tint = mix(max(uRoadTint, 0.9), uRoadTint, smoothstep(0.02, 0.2, roadClass));
+    albedo = mix(albedo, mix(metalled, graded, tint), cov);
+
+    // Roads are the first thing cleared and the last thing to hold snow.
+    snow *= 1.0 - cov * 0.85;
   }
 
   // ---- inland water -------------------------------------------------------
