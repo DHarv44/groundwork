@@ -86,6 +86,13 @@ uniform float uShowRoads;
 uniform float uRoadDarkness;
 uniform float uRoadClearing;   // how strongly the corridor takes the timber back
 uniform float uRoadTint;       // 0 metalled grey, 1 the local ground scraped bare
+// Mapped areas: R water, G woodland, B built-up. Surveyed ground, so where it disagrees
+// with what was derived from the DEM it is generally the derivation that is wrong.
+uniform sampler2D uAreaMap;
+uniform float uHasAreas;
+uniform float uOsmWater;       // how completely a mapped lake overrides the guess
+uniform float uOsmWood;        // how far mapped woodland pulls the canopy toward it
+uniform float uOsmBuilt;       // how strongly built-up land greys and clears the ground
 uniform float uShadows;
 uniform float uAoStrength;
 uniform float uDetail;
@@ -328,6 +335,18 @@ void main() {
     roadCorridor = smoothstep(0.04, 0.75, rm.b) * uRoadClearing;
   }
 
+  // Mapped ground, resolved alongside the roads and for the same reason — woodland and
+  // built-up land both have to reach the vegetation, which is computed further down.
+  float osmWater = 0.0;
+  float osmWood = 0.0;
+  float osmBuilt = 0.0;
+  if (uHasAreas > 0.5 && vSide < 0.5) {
+    vec4 am = texture2D(uAreaMap, vUv);
+    osmWater = am.r * uOsmWater;
+    osmWood = am.g * uOsmWood;
+    osmBuilt = am.b * uOsmBuilt;
+  }
+
   // Linear-space albedos in the range real ground actually occupies: rock sits around
   // 0.15–0.30, vegetation lower still, only snow gets close to 0.8.
   vec3 rockDark  = vec3(0.088, 0.079, 0.071);
@@ -544,6 +563,22 @@ void main() {
   // turn bare.
   canopy *= 1.0 - roadCorridor;
 
+  // Mapped woodland corrects the derived canopy rather than replacing it.
+  //
+  // Pulling toward the observed value instead of overwriting with it is the whole point.
+  // The generated timber knows things the polygon does not — it thins on steep rock,
+  // fingers up the gullies, stops at the tree line — and the polygon knows the one thing
+  // the model cannot: whether there are actually trees there. A blend keeps both, and
+  // degrades gracefully where OSM's coverage is thin, which in most of the world it is.
+  //
+  // Outside a mapped wood nothing is asserted: absence of a polygon is absence of a
+  // survey, not evidence of bare ground.
+  canopy = mix(canopy, max(canopy, 1.0), osmWood * 0.85);
+
+  // Nobody keeps a closed canopy in a housing estate. Street trees and gardens are real,
+  // so this thins rather than clears.
+  canopy *= 1.0 - osmBuilt * 0.72;
+
   // The two cover layers switch independently, which is what makes the pattern legible:
   // with grass hidden, the timber network stands alone against bare ground and can be
   // compared straight against the drainage view.
@@ -607,6 +642,26 @@ void main() {
     float g = 0.90 + 0.20 * (grain * 0.5 + 0.5) * uSatDetail * (1.0 - smoothstep(600.0, 5000.0, dist));
     albedo = sat * g;
     snow *= 0.25;
+  }
+
+  // ---- built-up ground ----------------------------------------------------
+  // Where the town is, without paying for every building in it.
+  //
+  // Land-use polygons are the cheap half of "towns look empty": they say a place is
+  // residential or industrial without the hundreds of thousands of footprints that
+  // saying which buildings would cost, and unlike a footprint they stay legible when a
+  // mask pixel is fifty metres across. What they cannot do is give the town height, so
+  // this reads correctly from above and stays flat from the ground.
+  //
+  // Under the roads on purpose — the streets run through the estate, not beside it.
+  if (osmBuilt > 0.003) {
+    // Grey, but not concrete-grey. Suburban ground from the air is mostly roofs, tarmac
+    // and gardens averaged together, which lands warmer and darker than bare pavement.
+    vec3 builtCol = mix(vec3(0.105, 0.100, 0.094), vec3(0.150, 0.142, 0.130), mottle);
+    // The mottle is what stops it reading as a painted polygon: real built-up land is a
+    // patchwork of blocks and green space at a scale the noise already has.
+    float cover = osmBuilt * (0.55 + 0.45 * mottle) * (1.0 - steep * 0.6);
+    albedo = mix(albedo, builtCol, clamp(cover, 0.0, 1.0));
   }
 
   // ---- roads --------------------------------------------------------------
@@ -675,6 +730,22 @@ void main() {
     // there, so let the picture read through rather than painting over it. The water
     // visibility slider still scales on top of this.
     waterCov *= mix(1.0, 0.55, uUseSat);
+  }
+
+  // A mapped lake beats a derived one.
+  //
+  // Depression filling asks where water would pond given the DEM alone. In a closed
+  // basin that is a good question; almost anywhere else the answer is settled by a dam,
+  // a drain or a century of drilling, none of which are in the elevation. Where somebody
+  // has actually walked the shoreline, that is the shoreline.
+  //
+  // Outside its own guard so this still works with no hydrology pass at all — a mapped
+  // lake does not depend on the drainage having been traced.
+  if (osmWater > 0.003 && vSide < 0.5) {
+    float mapped = clamp(osmWater, 0.0, 1.0) * uRivers * uShowLakes * mix(1.0, 0.55, uUseSat);
+    // Standing water, so it reads as a lake rather than a channel.
+    lakeness = max(lakeness, mapped);
+    waterCov = max(waterCov, mapped);
   }
 
   if (waterCov > 0.002) {

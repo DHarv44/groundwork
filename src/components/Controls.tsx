@@ -5,7 +5,7 @@ import { FOREST_MAX, GROUND_WARMTH_MAX } from '../lib/biomeMap'
 import { DAILY_QUOTA, cacheClear, cacheStats, quotaUsed } from '../lib/demcache'
 import { decodePreset, deletePreset, encodePreset, loadPresets, savePreset } from '../lib/presets'
 import { DEM_SOURCES } from '../lib/opentopo'
-import { ROAD_CLASSES } from '../lib/overpass'
+import { AREA_LABEL, ROAD_CLASSES } from '../lib/overpass'
 import { boundsAreaKm2, boundsExtentMetres, formatBounds } from '../lib/geo'
 import { captureScreenshot } from '../lib/capture'
 import { exportGLB, exportHeightmapPNG, exportSTL } from '../lib/exporters'
@@ -823,10 +823,10 @@ export default function Controls() {
               />
             </Group>
 
-            {/* Roads. The only layer here that is measured rather than modelled, so the
-                badge reports what came back rather than what was computed. */}
+            {/* The measured layers. The badge reports what came back rather than what
+                was computed, because with observed data those are different questions. */}
             <Group
-              title="Roads"
+              title="From OpenStreetMap"
               badge={
                 roadPhase === 'loading' ? (
                   <b className="pending">querying OSM…</b>
@@ -841,15 +841,9 @@ export default function Controls() {
                 )
               }
             >
-              <Toggle
-                label="Show roads"
-                value={settings.showRoads}
-                onChange={(v) => set('showRoads', v)}
-              />
-
               {roadPhase === 'idle' && (
                 <button className="wide" onClick={() => void loadRoads()}>
-                  Fetch roads for this area
+                  Fetch map features for this area
                 </button>
               )}
               {roadPhase === 'error' && (
@@ -872,6 +866,14 @@ export default function Controls() {
                     <span title="Ground metres per pixel of the road mask">
                       {roadInfo.metresPerPixel.toFixed(1)} m/px
                     </span>
+                    <span title="Rasterised in a worker, so this is cost rather than stutter">
+                      {roadInfo.drawMs} ms draw
+                    </span>
+                    {(['water', 'wood', 'built'] as const).map((k) => (
+                      <span key={k} title={`${AREA_LABEL[k]} polygons found`}>
+                        {AREA_LABEL[k]} {roadInfo.areaCounts[k].toLocaleString()}
+                      </span>
+                    ))}
                   </div>
                   {/* Both of these are places the render is knowingly not telling the
                       truth, so they are stated rather than left to be discovered. */}
@@ -952,6 +954,35 @@ export default function Controls() {
                   }
                 />
               </label>
+
+              {/* How much each observed layer is allowed to override what was derived.
+                  Water at full strength because a surveyed shoreline is simply better
+                  evidence than a depression fill; woodland lower, because it is a
+                  correction to a model that knows things the polygon does not. */}
+              <Slider
+                label="Mapped water"
+                value={settings.osmWaterStrength}
+                min={0}
+                max={1}
+                step={0.01}
+                onChange={setSetting('osmWaterStrength')}
+              />
+              <Slider
+                label="Mapped woodland"
+                value={settings.osmWoodStrength}
+                min={0}
+                max={1}
+                step={0.01}
+                onChange={setSetting('osmWoodStrength')}
+              />
+              <Slider
+                label="Built-up ground"
+                value={settings.osmBuiltStrength}
+                min={0}
+                max={1}
+                step={0.01}
+                onChange={setSetting('osmBuiltStrength')}
+              />
             </Group>
           </section>
         )}

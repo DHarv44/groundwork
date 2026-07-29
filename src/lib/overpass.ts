@@ -2,16 +2,16 @@ import type { Bounds } from './geo'
 import { boundsAreaKm2 } from './geo'
 
 /**
- * Roads, from OpenStreetMap via the Overpass API.
+ * What OpenStreetMap knows about a box: roads, water, woodland and where the town is.
  *
  * Unlike the elevation and the climate raster, this is *vector* data — which is the
  * whole reason it is worth pulling in rather than inventing. A road is a line somebody
- * surveyed, with a class attached; there is no resampling to argue about and nothing to
- * reproject beyond lat/lon into the box. What gets decided here is only which of them
- * are worth asking for.
+ * surveyed and a lake is a shore somebody walked; there is no resampling to argue about
+ * and nothing to reproject beyond lat/lon into the box. What gets decided here is only
+ * which of them are worth asking for.
  *
- * No key, no account, permissive CORS. The public endpoints are shared infrastructure
- * and are rate-limited accordingly, so every answer is cached — see roadcache.ts.
+ * One query for all of it, because Overpass is free, unauthenticated, shared
+ * infrastructure and the polite way to use it is to ask once. No key, permissive CORS.
  *
  * Data © OpenStreetMap contributors, ODbL. Attribution travels with anything exported.
  */
@@ -36,6 +36,21 @@ export const ROAD_CLASSES: Record<RoadClass, { width: number; order: number; lab
 
 export const ROAD_ORDER: RoadClass[] = ['track', 'minor', 'secondary', 'primary', 'motorway']
 
+/**
+ * The three kinds of ground OSM can tell us about that the renderer has an opinion on.
+ *
+ * Deliberately only three. OSM's tagging vocabulary is enormous and most of it says
+ * nothing a terrain renderer can act on — what matters here is standing water, tree
+ * cover, and whether people live on it.
+ */
+export type AreaKind = 'water' | 'wood' | 'built'
+
+export const AREA_LABEL: Record<AreaKind, string> = {
+  water: 'Water',
+  wood: 'Woodland',
+  built: 'Built-up',
+}
+
 /** OSM `highway=*` values, grouped into the five classes we draw. */
 const TAG_CLASS: Record<string, RoadClass> = {
   motorway: 'motorway',
@@ -55,18 +70,42 @@ const TAG_CLASS: Record<string, RoadClass> = {
   track: 'track',
 }
 
+/** Which tag combinations mean which kind of ground. */
+function areaKindOf(tags: Record<string, string>): AreaKind | null {
+  if (tags.natural === 'water' || tags.water) return 'water'
+  if (tags.landuse === 'reservoir' || tags.landuse === 'basin') return 'water'
+  if (tags.waterway === 'riverbank' || tags.waterway === 'dock') return 'water'
+  if (tags.natural === 'wood' || tags.landuse === 'forest') return 'wood'
+  if (
+    tags.landuse === 'residential' ||
+    tags.landuse === 'industrial' ||
+    tags.landuse === 'commercial' ||
+    tags.landuse === 'retail'
+  ) {
+    return 'built'
+  }
+  return null
+}
+
 export interface RoadWay {
   cls: RoadClass
   /** Flat [lon, lat, lon, lat, …]. Flat because this is what gets cached and cloned. */
   pts: Float64Array
 }
 
-export interface RoadNetwork {
+export interface OsmArea {
+  kind: AreaKind
+  /** One closed ring, flat [lon, lat, …]. Holes are not represented — see `fetchOsm`. */
+  ring: Float64Array
+}
+
+export interface OsmData {
   bounds: Bounds
-  ways: RoadWay[]
-  /** Centreline length in km, by class — the readout, and how you tell a city from a moor. */
+  roads: RoadWay[]
+  areas: OsmArea[]
+  /** Road centreline length in km — the readout, and how you tell a city from a moor. */
   lengthKm: number
-  /** Which OSM classes were actually requested. See `classesFor`. */
+  /** Which road classes were actually requested. See `classesFor`. */
   requested: RoadClass[]
   /** True when the class filter dropped detail the box was too big to resolve. */
   filtered: boolean
@@ -74,7 +113,7 @@ export interface RoadNetwork {
 }
 
 /**
- * Which classes to ask for, by how much ground the box covers.
+ * Which road classes to ask for, by how much ground the box covers.
  *
  * Not a bandwidth optimisation — a resolution one. A residential street is 6 m wide; on
  * a 100 km box the mask has one texel per 50 m, so every street in Denver would land in
@@ -83,6 +122,9 @@ export interface RoadNetwork {
  *
  * The cutoffs are where each class stops being separable at a plausible mask resolution.
  * Whatever is dropped is reported rather than quietly omitted — see `filtered`.
+ *
+ * Areas are not filtered this way. A lake or a forest block stays legible at any scale
+ * precisely because it is an area — shrinking the box does not make it thinner.
  */
 export function classesFor(areaKm2: number): RoadClass[] {
   if (areaKm2 <= 400) return ['track', 'minor', 'secondary', 'primary', 'motorway']
@@ -115,16 +157,47 @@ function tagsFor(classes: RoadClass[]): string[] {
 function buildQuery(b: Bounds, classes: RoadClass[]): string {
   // Overpass bbox order is (south, west, north, east).
   const bbox = `${b.south},${b.west},${b.north},${b.east}`
-  const filter = tagsFor(classes).join('|')
-  // `out geom` inlines each way's coordinates, so there is no second pass to resolve
-  // node ids — one request, one parse.
-  return `[out:json][timeout:60];way["highway"~"^(${filter})$"](${bbox});out geom;`
+  const roads = tagsFor(classes).join('|')
+  const landuse = 'forest|reservoir|basin|residential|industrial|commercial|retail'
+
+  // `out geom` inlines every way's coordinates, and for relations it inlines each
+  // member's — so there is no second pass to resolve node ids. One request, one parse.
+  //
+  // Relations are asked for on the area tags only. A big lake with islands, or a forest
+  // that wraps a village, is a multipolygon rather than a closed way, and leaving them
+  // out would silently drop exactly the largest features in the box. Route relations on
+  // roads carry no geometry of their own and are not wanted.
+  return (
+    `[out:json][timeout:90];(` +
+    `way["highway"~"^(${roads})$"](${bbox});` +
+    `way["natural"~"^(water|wood)$"](${bbox});` +
+    `way["landuse"~"^(${landuse})$"](${bbox});` +
+    `way["waterway"~"^(riverbank|dock)$"](${bbox});` +
+    `relation["natural"~"^(water|wood)$"](${bbox});` +
+    `relation["landuse"~"^(${landuse})$"](${bbox});` +
+    `);out geom;`
+  )
 }
 
-interface OverpassWay {
-  type: string
+interface OverpassGeom {
+  lat: number
+  lon: number
+}
+
+interface OverpassElement {
+  type: 'way' | 'relation' | string
   tags?: Record<string, string>
-  geometry?: Array<{ lat: number; lon: number }>
+  geometry?: OverpassGeom[]
+  members?: Array<{ type: string; role?: string; geometry?: OverpassGeom[] }>
+}
+
+function toFlat(geom: OverpassGeom[]): Float64Array {
+  const out = new Float64Array(geom.length * 2)
+  for (let i = 0; i < geom.length; i++) {
+    out[i * 2] = geom[i]!.lon
+    out[i * 2 + 1] = geom[i]!.lat
+  }
+  return out
 }
 
 /** Great-circle length of a way in metres, for the readout only. */
@@ -142,26 +215,31 @@ function wayLength(pts: Float64Array): number {
 export class NoRoadDataError extends Error {}
 
 /**
- * Fetch every mapped road in the box.
+ * Fetch everything mapped in the box.
  *
- * Returns an empty network rather than throwing when the area genuinely has no roads —
- * open desert, ocean, and wilderness are correct answers, not failures, and the caller
- * needs to be able to tell them apart from a fetch that fell over.
+ * Returns empty lists rather than throwing when the area genuinely has nothing — open
+ * desert, ocean and wilderness are correct answers, not failures, and the caller needs
+ * to be able to tell them apart from a fetch that fell over.
+ *
+ * Known simplification: inner rings are dropped. A lake with an island is drawn as a
+ * lake, and a forest with a clearing cut out of it is drawn as unbroken forest. Holes
+ * would need even-odd fill across a ring set rather than one ring at a time, and at the
+ * resolutions this is drawn at they are mostly below a pixel.
  */
-export async function fetchRoads(
+export async function fetchOsm(
   bounds: Bounds,
   signal?: AbortSignal,
   onProgress?: (note: string) => void,
-): Promise<RoadNetwork> {
-  const area = boundsAreaKm2(bounds)
-  if (area > MAX_ROAD_AREA_KM2) {
+): Promise<OsmData> {
+  const boxKm2 = boundsAreaKm2(bounds)
+  if (boxKm2 > MAX_ROAD_AREA_KM2) {
     throw new NoRoadDataError(
-      `Area is ${Math.round(area).toLocaleString()} km² — roads are only fetched up to ` +
-        `${MAX_ROAD_AREA_KM2.toLocaleString()} km².`,
+      `Area is ${Math.round(boxKm2).toLocaleString()} km² — map features are only fetched ` +
+        `up to ${MAX_ROAD_AREA_KM2.toLocaleString()} km².`,
     )
   }
 
-  const requested = classesFor(area)
+  const requested = classesFor(boxKm2)
   const filtered = requested.length < ROAD_ORDER.length
   const body = `data=${encodeURIComponent(buildQuery(bounds, requested))}`
 
@@ -192,28 +270,47 @@ export async function fetchRoads(
         )
       }
 
-      const json = JSON.parse(text) as { elements?: OverpassWay[]; remark?: string }
+      const json = JSON.parse(text) as { elements?: OverpassElement[]; remark?: string }
       // Overpass reports its own failures inside a 200 response.
       if (json.remark && !json.elements?.length) throw new Error(json.remark)
 
-      const ways: RoadWay[] = []
+      const roads: RoadWay[] = []
+      const areas: OsmArea[] = []
       let metres = 0
+
       for (const el of json.elements ?? []) {
-        const tag = el.tags?.highway
-        const cls = tag ? TAG_CLASS[tag] : undefined
-        if (!cls || !el.geometry || el.geometry.length < 2) continue
-        const pts = new Float64Array(el.geometry.length * 2)
-        for (let i = 0; i < el.geometry.length; i++) {
-          pts[i * 2] = el.geometry[i]!.lon
-          pts[i * 2 + 1] = el.geometry[i]!.lat
+        const tags = el.tags
+        if (!tags) continue
+
+        const highway = tags.highway
+        if (highway) {
+          const cls = TAG_CLASS[highway]
+          if (!cls || !el.geometry || el.geometry.length < 2) continue
+          const pts = toFlat(el.geometry)
+          metres += wayLength(pts)
+          roads.push({ cls, pts })
+          continue
         }
-        metres += wayLength(pts)
-        ways.push({ cls, pts })
+
+        const kind = areaKindOf(tags)
+        if (!kind) continue
+
+        if (el.type === 'way' && el.geometry && el.geometry.length >= 4) {
+          areas.push({ kind, ring: toFlat(el.geometry) })
+        } else if (el.type === 'relation' && el.members) {
+          // Outer rings only — see the note on holes above.
+          for (const m of el.members) {
+            if (m.role && m.role !== 'outer') continue
+            if (!m.geometry || m.geometry.length < 4) continue
+            areas.push({ kind, ring: toFlat(m.geometry) })
+          }
+        }
       }
 
       return {
         bounds,
-        ways,
+        roads,
+        areas,
         lengthKm: metres / 1000,
         requested,
         filtered,

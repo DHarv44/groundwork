@@ -1,4 +1,5 @@
 import { useStore, type Settings, type TextureMode } from '../store'
+import type { AreaKind } from '../lib/overpass'
 
 interface BaseDef {
   id: TextureMode
@@ -27,12 +28,46 @@ const OVERLAYS: OverlayDef[] = [
 ]
 
 const ROAD_HINT: Record<string, string> = {
-  idle: 'Roads from OpenStreetMap — click to fetch',
+  idle: 'From OpenStreetMap — click to fetch',
   loading: 'Querying OpenStreetMap…',
-  ready: 'Roads from OpenStreetMap © contributors',
-  empty: 'No roads are mapped in this area',
+  ready: 'From OpenStreetMap © contributors',
+  empty: 'Nothing is mapped in this area',
   error: 'Could not reach OpenStreetMap — click to retry',
 }
+
+interface OsmLayerDef {
+  key: 'showRoads' | 'showOsmWater' | 'showOsmWood' | 'showOsmBuilt'
+  /** Which ring count reports on this layer. Roads are ways, so they have none. */
+  kind?: AreaKind
+  glyph: string
+  label: string
+  hint: string
+}
+
+const OSM_LAYERS: OsmLayerDef[] = [
+  { key: 'showRoads', glyph: '╪', label: 'Roads', hint: 'Surveyed road network' },
+  {
+    key: 'showOsmWater',
+    kind: 'water',
+    glyph: '◉',
+    label: 'Mapped water',
+    hint: 'Surveyed lakes and reservoirs, over the derived guess',
+  },
+  {
+    key: 'showOsmWood',
+    kind: 'wood',
+    glyph: '♠',
+    label: 'Mapped wood',
+    hint: 'Surveyed woodland, correcting the derived canopy',
+  },
+  {
+    key: 'showOsmBuilt',
+    kind: 'built',
+    glyph: '▦',
+    label: 'Built-up',
+    hint: 'Residential, industrial and commercial land',
+  },
+]
 
 /** Layer switcher overlaid on the 3D view, where the layers actually are. */
 export default function ViewLayers() {
@@ -40,6 +75,7 @@ export default function ViewLayers() {
   const build = useStore((s) => s.build)
   const waterStats = useStore((s) => s.waterStats)
   const roadPhase = useStore((s) => s.roadPhase)
+  const roadInfo = useStore((s) => s.roadInfo)
   const set = useStore((s) => s.set)
   const loadImagery = useStore((s) => s.loadImagery)
   const winter = useStore((s) => s.winter)
@@ -154,24 +190,33 @@ export default function ViewLayers() {
         </label>
       </div>
 
-      {/* Roads sit apart from the derived overlays because they are not derived: this
-          is surveyed data off the network, so the button has to show three states, not
-          two. "Nothing here" is a real answer — deserts and open moor have no mapped
-          roads — and it has to be distinguishable from a fetch that fell over. */}
+      {/* The observed layers sit apart from the derived ones because they are not
+          derived: this is surveyed data off the network, so the buttons have to show
+          three states, not two. "Nothing here" is a real answer — deserts and open moor
+          have no mapped anything — and it has to stay distinguishable from a fetch that
+          fell over. All four come from one query, so they share a phase. */}
       <div className="overlay-group">
-        <button
-          className={`road ${settings.showRoads && roadPhase === 'ready' ? 'on' : ''} ${
-            roadPhase === 'error' ? 'failed' : ''
-          }`}
-          disabled={roadPhase === 'loading'}
-          title={ROAD_HINT[roadPhase]}
-          onClick={() => set('showRoads', !settings.showRoads)}
-        >
-          <span className="glyph">{roadPhase === 'loading' ? '⋯' : '╪'}</span>
-          Roads
-          {roadPhase === 'empty' && <em>none</em>}
-          {roadPhase === 'error' && <em>failed</em>}
-        </button>
+        {OSM_LAYERS.map((l) => (
+          <button
+            key={l.key}
+            className={`road ${settings[l.key] && roadPhase === 'ready' ? 'on' : ''} ${
+              roadPhase === 'error' ? 'failed' : ''
+            }`}
+            disabled={roadPhase === 'loading'}
+            title={roadPhase === 'ready' ? l.hint : ROAD_HINT[roadPhase]}
+            onClick={() => set(l.key, !settings[l.key])}
+          >
+            <span className="glyph">{roadPhase === 'loading' ? '⋯' : l.glyph}</span>
+            {l.label}
+            {roadPhase === 'empty' && <em>none</em>}
+            {roadPhase === 'error' && <em>failed</em>}
+            {/* Zero rings is a fact about the place, not a failure — a moor really has
+                no woodland polygons — so it is stated rather than left ambiguous. */}
+            {roadPhase === 'ready' && l.kind && roadInfo?.areaCounts[l.kind] === 0 && (
+              <em>none</em>
+            )}
+          </button>
+        ))}
       </div>
 
       {/* Overlays, each independent of the base and of each other. */}

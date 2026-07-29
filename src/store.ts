@@ -1,14 +1,21 @@
 import { create } from 'zustand'
 import * as THREE from 'three'
 import HydrologyWorker from './workers/hydrology.worker?worker'
+import RoadMaskWorker from './workers/roadmask.worker?worker'
 import { DEFAULT_TUNING, type HydrologyResult, type HydrologyTuning } from './lib/hydrology'
 import type { Bounds } from './lib/geo'
 import { DEFAULT_BOUNDS, boundsAreaKm2, climaticSnowLine, climaticTreeLine } from './lib/geo'
 import type { HeightField } from './lib/opentopo'
 import { DEM_SOURCES, fetchHeightField, validateRequest } from './lib/opentopo'
 import { fetchImagery } from './lib/imagery'
-import { NoRoadDataError, fetchRoads, type RoadClass, type RoadNetwork } from './lib/overpass'
-import { buildRoadMask } from './lib/roadmask'
+import {
+  NoRoadDataError,
+  fetchOsm,
+  type AreaKind,
+  type OsmData,
+  type RoadClass,
+} from './lib/overpass'
+import type { MaskOptions, Masks } from './lib/roadmask'
 import { roadCacheGet, roadCachePut } from './lib/demcache'
 import { biomeOf, ensureKoppen, fetchNormals, profileFor, type Biome } from './lib/climate'
 import { buildBiomeField, type BiomeShare } from './lib/biomeMap'
@@ -106,6 +113,32 @@ export interface Settings {
   roadClearing: number
   /** How far the surface takes the local ground colour rather than asphalt. Biome-owned. */
   roadTint: number
+  /**
+   * Mapped lakes and reservoirs, drawn over the derived water.
+   *
+   * These are surveyed shorelines. Depression-fill lakes are a guess about where water
+   * would pond given the DEM, which is a reasonable guess in a closed basin and a poor
+   * one anywhere a dam or a drain decides the answer instead — so where OSM has a real
+   * lake, it wins.
+   */
+  showOsmWater: boolean
+  /** How completely a mapped lake overrides the derived guess. */
+  osmWaterStrength: number
+  /**
+   * Mapped woodland, used to correct the derived canopy rather than replace it.
+   *
+   * Deliberately a correction. The generated timber follows drainage and relief, so it
+   * is continuous, responds to every slider and works at any resolution; OSM woodland is
+   * a patchwork whose completeness varies enormously by country. Blending keeps the
+   * generated structure and pins it to observed ground where observed ground exists.
+   */
+  showOsmWood: boolean
+  /** How far the mapped woodland pulls the canopy toward it. */
+  osmWoodStrength: number
+  /** Mapped built-up land: where the town is, without the per-building cost. */
+  showOsmBuilt: boolean
+  /** How strongly built-up land greys the ground and clears the timber. */
+  osmBuiltStrength: number
   /** Sea surface. All shader-side, so these respond without re-deriving anything. */
   seaLevel: number
   shoreCutoff: number
@@ -196,6 +229,13 @@ export const DEFAULT_SETTINGS: Settings = {
   // are the values in force for the moment before a class is known.
   roadClearing: 0.6,
   roadTint: 0.35,
+  showOsmWater: true,
+  osmWaterStrength: 1,
+  showOsmWood: true,
+  // A correction, not a replacement — so it starts at rather less than full weight.
+  osmWoodStrength: 0.7,
+  showOsmBuilt: true,
+  osmBuiltStrength: 0.65,
   seaLevel: 0,
   shoreCutoff: 0.25,
   shoreFeather: 0,
@@ -276,17 +316,19 @@ interface State {
     lakes: number
     maxDrainageKm2: number
   } | null
-  /** The road network as fetched, kept so the mask can be rebuilt without a request. */
-  roads: RoadNetwork | null
+  /** Everything OSM knows about the box, kept so masks rebuild without a request. */
+  roads: OsmData | null
   /** RGBA road mask: surface, class, cleared corridor. */
-  roadMask: THREE.CanvasTexture | null
+  roadMask: THREE.Texture | null
+  /** RGBA area mask: water, woodland, built-up. */
+  areaMask: THREE.Texture | null
   /**
-   * Where the road fetch has got to.
+   * Where the OSM fetch has got to.
    *
    * `empty` is deliberately its own state rather than an error. Open desert, ocean and
-   * genuine wilderness have no roads, and that is the correct answer — without somewhere
-   * to say so, an empty box is indistinguishable from a fetch that fell over, and you
-   * spend an hour debugging a map that simply has nothing on it.
+   * genuine wilderness have nothing mapped, and that is the correct answer — without
+   * somewhere to say so, an empty box is indistinguishable from a fetch that fell over,
+   * and you spend an hour debugging a map that simply has nothing on it.
    */
   roadPhase: 'idle' | 'loading' | 'ready' | 'empty' | 'error'
   roadError: string | null
@@ -298,6 +340,10 @@ interface State {
     filtered: boolean
     /** Classes drawn wider than life so they stay visible at this scale. */
     widened: RoadClass[]
+    /** Rings drawn per kind. Zero is a fact about the place, not a failure. */
+    areaCounts: Record<AreaKind, number>
+    /** Worker-side rasterise time. Off the main thread, so this is cost, not stutter. */
+    drawMs: number
   } | null
   settings: Settings
   /** Köppen class of the selected area, read from the bundled raster. */
@@ -381,6 +427,17 @@ let inflight: AbortController | null = null
 
 let hydroWorker: Worker | null = null
 
+/**
+ * The road-mask worker, and the bookkeeping that keeps the network on its side.
+ *
+ * `roadToken` names the current box; `roadSent` records which box the worker has
+ * actually been given. They differ exactly once per box — on the first draw after a
+ * fetch — and that is the only message that carries the ways.
+ */
+let roadWorker: Worker | null = null
+let roadToken = 0
+let roadSent = -1
+
 const restored = loadSession()
 
 /**
@@ -427,6 +484,12 @@ const PERSISTED_SETTINGS = [
   'roadDarkness',
   'roadClearing',
   'roadTint',
+  'showOsmWater',
+  'osmWaterStrength',
+  'showOsmWood',
+  'osmWoodStrength',
+  'showOsmBuilt',
+  'osmBuiltStrength',
   'seaLevel',
   'shoreCutoff',
   'shoreFeather',
@@ -730,44 +793,94 @@ export const useStore = create<State>((setState, getState) => {
   }
 
   /**
-   * Redraw the road mask from the network already in memory.
+   * Redraw the masks from the feature data already in memory.
    *
    * Separate from the fetch on purpose: width, verge and resolution are all painting
    * decisions, so dragging any of them has to be free. Only moving the box costs a
    * request.
+   *
+   * The drawing happens in a worker. The data crosses the boundary once per box —
+   * `roadToken` is what tells the worker whether it already holds this one — and every
+   * subsequent redraw sends only the three numbers that changed.
    */
   function rebuildRoadMask(): void {
-    const { roads, settings, roadMask } = getState()
+    const { roads, settings } = getState()
     if (!roads) return
 
-    const mask = buildRoadMask(roads, {
+    const opts: MaskOptions = {
       resolution: settings.roadResolution,
       widthScale: settings.roadWidth,
       vergeScale: settings.roadVerge,
-    })
+    }
 
-    const tex = new THREE.CanvasTexture(mask.canvas)
+    // One worker, reused. Replacing it would throw away the held data and the warm
+    // geometry cache, which is the entire point of keeping it.
+    if (!roadWorker) {
+      roadWorker = new RoadMaskWorker()
+      roadWorker.onmessage = (e: MessageEvent<Masks & { error?: string }>) => {
+        if (e.data.error) {
+          console.warn('mask rasterise failed', e.data.error)
+          return
+        }
+        applyMasks(e.data)
+      }
+      roadWorker.onerror = (e) => console.warn('mask worker failed', e.message)
+      // A fresh worker holds nothing, so the next post has to carry the data.
+      roadSent = -1
+    }
+
+    const first = roadSent !== roadToken
+    roadSent = roadToken
+    roadWorker.postMessage(first ? { token: roadToken, data: roads, opts } : { token: roadToken, opts })
+  }
+
+  /**
+   * Wrap a finished bitmap as a texture.
+   *
+   * Anisotropy is high because roads are thin, near-horizontal lines seen at a shallow
+   * angle — the exact case that smears to nothing without it. The area mask inherits the
+   * same settings; it costs nothing and shorelines are seen at the same angles.
+   */
+  function maskTexture(bitmap: ImageBitmap): THREE.Texture {
+    const tex = new THREE.Texture(bitmap as unknown as HTMLImageElement)
     // Row 0 is the north edge, as with every other field over the tile.
     tex.flipY = false
     tex.minFilter = THREE.LinearMipmapLinearFilter
     tex.magFilter = THREE.LinearFilter
     tex.generateMipmaps = true
-    // Roads are thin, near-horizontal lines seen at a shallow angle — the exact case
-    // that smears to nothing without it.
     tex.anisotropy = 16
     tex.wrapS = THREE.ClampToEdgeWrapping
     tex.wrapT = THREE.ClampToEdgeWrapping
     tex.needsUpdate = true
+    return tex
+  }
+
+  /** Bind finished masks to textures and publish the stats that go with them. */
+  function applyMasks(mask: Masks): void {
+    const { roads, roadMask, areaMask } = getState()
+    if (!roads) {
+      // The box moved while the worker was drawing — these describe somewhere else now.
+      mask.roads.close()
+      mask.areas.close()
+      return
+    }
+
+    const roadTex = maskTexture(mask.roads)
+    const areaTex = maskTexture(mask.areas)
 
     roadMask?.dispose()
+    areaMask?.dispose()
     setState({
-      roadMask: tex,
+      roadMask: roadTex,
+      areaMask: areaTex,
       roadInfo: {
         lengthKm: roads.lengthKm,
         byClass: mask.byClass,
         metresPerPixel: mask.metresPerPixel,
         filtered: roads.filtered,
         widened: mask.widened,
+        areaCounts: mask.areaCounts,
+        drawMs: mask.drawMs,
       },
     })
   }
@@ -781,12 +894,17 @@ export const useStore = create<State>((setState, getState) => {
     }, 160)
   }
 
-  /** Drop the road network and its mask — called whenever the area changes under us. */
+  /** Drop the OSM data and its masks — called whenever the area changes under us. */
   function clearRoads(): void {
     getState().roadMask?.dispose()
+    getState().areaMask?.dispose()
+    // A new box means new data, so the worker's held copy and its projected geometry
+    // are both stale. Bumping the token is what forces the next draw to resend.
+    roadToken++
     setState({
       roads: null,
       roadMask: null,
+      areaMask: null,
       roadInfo: null,
       roadPhase: 'idle',
       roadError: null,
@@ -896,6 +1014,7 @@ export const useStore = create<State>((setState, getState) => {
   waterStats: null,
   roads: null,
   roadMask: null,
+  areaMask: null,
   roadPhase: 'idle',
   roadError: null,
   roadInfo: null,
@@ -1201,20 +1320,20 @@ export const useStore = create<State>((setState, getState) => {
     // it twice for the same box is the one thing that would actually be rude.
     const hit = await roadCacheGet(bounds)
     if (hit) {
-      setState({ roads: hit, roadPhase: hit.ways.length ? 'ready' : 'empty' })
+      setState({ roads: hit, roadPhase: hit.roads.length || hit.areas.length ? 'ready' : 'empty' })
       rebuildRoadMask()
       return
     }
 
     try {
-      const network = await fetchRoads(bounds, undefined, (note) => setState({ message: note }))
+      const network = await fetchOsm(bounds, undefined, (note) => setState({ message: note }))
       // The area may have been rebuilt while Overpass was thinking.
       if (getState().heightField?.bounds !== bounds) return
 
       void roadCachePut(network)
       setState({
         roads: network,
-        roadPhase: network.ways.length ? 'ready' : 'empty',
+        roadPhase: network.roads.length || network.areas.length ? 'ready' : 'empty',
         message: '',
       })
       rebuildRoadMask()

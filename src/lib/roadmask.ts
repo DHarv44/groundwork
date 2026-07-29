@@ -1,47 +1,75 @@
 import type { Bounds } from './geo'
 import { boundsExtentMetres } from './geo'
-import { ROAD_ORDER, ROAD_CLASSES, type RoadClass, type RoadNetwork } from './overpass'
+import {
+  ROAD_ORDER,
+  ROAD_CLASSES,
+  type AreaKind,
+  type OsmData,
+  type RoadClass,
+} from './overpass'
 
 /**
- * Roads, rasterised into a mask the shader can sample — the same shape as the water
- * mask, for the same reason: everything in this renderer is a field evaluated per
- * fragment, so a road has to become a field before it can be drawn.
+ * OpenStreetMap features, rasterised into masks the shader can sample — the same shape
+ * as the water mask, for the same reason: everything in this renderer is a field
+ * evaluated per fragment, so a road or a lake has to become a field before it can be
+ * drawn.
  *
- *   R  road surface — 1 on the carriageway, feathering out across its edge
- *   G  class, as `order / 4`; only meaningful where R is high
- *   B  cleared corridor — the verge, wider than the surface
- *   A  unused
+ * Two textures, because they are read at different points in the shader and neither has
+ * a spare channel:
  *
- * The verge earns its own channel because it is what makes a road read as a road. A
- * metalled road through timber has felled shoulders — somebody cut them and keeps
+ *   roads   R surface · G class (order/4) · B cleared corridor
+ *   areas   R water   · G woodland        · B built-up
+ *
+ * The road corridor earns its own channel because it is what makes a road read as a road.
+ * A metalled road through timber has felled shoulders — somebody cut them and keeps
  * cutting them — so without it the canopy stands hard against the tarmac and the road
- * looks painted on rather than cut through. It suppresses trees; it does not paint
- * anything.
+ * looks painted on rather than cut through. It suppresses trees; it paints nothing.
  *
- * Drawn with canvas strokes rather than a distance field. Strokes give correct joins
- * and caps at junctions for free, antialias their own edges, and the result goes
- * straight to the GPU as a CanvasTexture with no read-back.
+ * Drawn with canvas strokes and fills rather than distance fields. Strokes give correct
+ * joins and caps at junctions for free, fills handle self-intersecting rings, both
+ * antialias their own edges, and the result goes to the GPU with no read-back.
+ *
+ * Runs in a worker on OffscreenCanvas, and deliberately has no DOM path at all. Stroke
+ * tessellation of a city-sized network is a few hundred milliseconds however carefully
+ * it is written, and width and verge are sliders — so the choice is between a hitch
+ * every time one settles and doing it somewhere that cannot hitch. The results come back
+ * as ImageBitmaps, which transfer rather than copy.
  */
 
-export interface RoadMaskOptions {
-  /** Longest side of the mask in pixels. The short side follows the ground aspect. */
+export interface MaskOptions {
+  /** Longest side of the masks in pixels. The short side follows the ground aspect. */
   resolution: number
-  /** Multiplies the true metric width of every class. */
+  /** Multiplies the true metric width of every road class. */
   widthScale: number
-  /** Verge width, as a multiple of the surface width. */
+  /** Cleared corridor width, as a multiple of the road surface width. */
   vergeScale: number
 }
 
-export interface RoadMask {
-  canvas: HTMLCanvasElement
+export interface MaskStats {
   width: number
   height: number
   /** Ground metres per mask pixel — what decides whether a class is resolvable at all. */
   metresPerPixel: number
-  /** Centreline km per class, largest class first. */
+  /** Road centreline km per class, largest class first. */
   byClass: Array<{ cls: RoadClass; km: number }>
-  /** Classes whose true width came out below the visibility floor and were widened. */
+  /** Road classes whose true width fell below the visibility floor and were widened. */
   widened: RoadClass[]
+  /** How many rings of each kind were drawn. Zero is a fact, not a failure. */
+  areaCounts: Record<AreaKind, number>
+  /**
+   * How long the rasterise took, in milliseconds.
+   *
+   * Reported rather than inferred. This is the number that decided the masks belong in a
+   * worker, and it scales with the feature count rather than with the box, so a dense
+   * city is an order of magnitude worse than open country of the same size — worth being
+   * able to see rather than guess at as more layers land on top of it.
+   */
+  drawMs: number
+}
+
+export interface Masks extends MaskStats {
+  roads: ImageBitmap
+  areas: ImageBitmap
 }
 
 /**
@@ -49,16 +77,16 @@ export interface RoadMask {
  *
  * A residential street is 6 m wide. On a 100 km box at 2048 px the mask has one texel
  * per 50 m, so drawn to scale the street is a twelfth of a pixel — antialiasing turns
- * it into a barely-there grey haze and the network vanishes. Every map ever printed
- * has the same problem and every one solves it the same way: below a certain size,
- * roads stop being drawn to scale and start being drawn legibly.
+ * it into a barely-there grey haze and the network vanishes. Every map ever printed has
+ * the same problem and every one solves it the same way: below a certain size, roads
+ * stop being drawn to scale and start being drawn legibly.
  *
  * Kept a shade above 1 so a road always lands on a whole pixel somewhere along its
  * length rather than dithering in and out between two.
  */
 const MIN_PIXELS = 1.4
 
-/** Longest side, clamped — the mask is one texture and it lives on the GPU. */
+/** Longest side, clamped — these are two textures and they live on the GPU. */
 const MAX_RESOLUTION = 4096
 
 /** Closest two path vertices may sit, in mask pixels, before the second is dropped. */
@@ -67,66 +95,65 @@ const MIN_VERTEX_STEP = 0.7
 interface Geometry {
   paths: Map<RoadClass, Path2D>
   lengths: Map<RoadClass, number>
+  areas: Map<AreaKind, Path2D>
+  areaCounts: Record<AreaKind, number>
 }
 
 /**
- * The projected geometry, cached against the network and the canvas size.
+ * The projected geometry, cached against the data and the canvas size.
  *
- * One Path2D per class rather than a fresh path per stroke pass. The obvious way to
- * write the rasteriser — walk the way list inside each pass, skipping the wrong class —
- * is five classes times four passes, so twenty full traversals with the geometry rebuilt
- * every time. Over Denver that is fifty-seven thousand ways projected twenty times, and
- * it locks the main thread long enough to be indistinguishable from a crash.
+ * One Path2D per road class and per area kind, rather than a fresh path per draw pass.
+ * The obvious way to write the rasteriser — walk the feature list inside each pass,
+ * skipping the wrong class — is five classes times four passes, so twenty full
+ * traversals with the geometry rebuilt every time. Over Denver that is fifty-seven
+ * thousand ways projected twenty times, and it locks the thread for over a second.
  *
  * Caching it matters just as much as building it once, because width and verge are
- * *sliders*. Neither changes a single coordinate — they only change how thickly the same
- * lines are stroked — so rebuilding a million projected points on every tick of a drag
- * is pure waste, and it is the difference between a control that responds and one that
- * hangs for over a second each time you let go of it.
+ * *sliders*. Neither moves a single coordinate — they only change how thickly the same
+ * lines are stroked — so reprojecting a million points on every tick of a drag is pure
+ * waste. Measured over Denver: 84 ms cold, 9 ms warm.
  *
- * Keyed on identity, not contents: a new network object always means a new box.
+ * Keyed on identity, not contents: a new data object always means a new box.
  */
-let geoCache: { network: RoadNetwork; w: number; h: number; geo: Geometry } | null = null
+let geoCache: { data: OsmData; w: number; h: number; geo: Geometry } | null = null
 
 function geometryFor(
-  network: RoadNetwork,
+  data: OsmData,
   w: number,
   h: number,
   project: (lon: number, lat: number) => [number, number],
 ): Geometry {
-  if (geoCache && geoCache.network === network && geoCache.w === w && geoCache.h === h) {
+  if (geoCache && geoCache.data === data && geoCache.w === w && geoCache.h === h) {
     return geoCache.geo
   }
 
   const paths = new Map<RoadClass, Path2D>()
   const lengths = new Map<RoadClass, number>()
-  // Squared, so the inner loop compares without a square root.
+  const areas = new Map<AreaKind, Path2D>()
+  const areaCounts: Record<AreaKind, number> = { water: 0, wood: 0, built: 0 }
+  // Squared, so the inner loops compare without a square root.
   const minStep = MIN_VERTEX_STEP * MIN_VERTEX_STEP
 
-  for (const way of network.ways) {
-    let p = paths.get(way.cls)
-    if (!p) {
-      p = new Path2D()
-      paths.set(way.cls, p)
-    }
-    const [x0, y0] = project(way.pts[0]!, way.pts[1]!)
+  /**
+   * Append a polyline, dropping vertices the mask cannot resolve.
+   *
+   * OSM geometry is surveyed at metre precision — a motorway curve carries a vertex
+   * every few metres, and a lake shore more still. On a wide box a mask pixel is fifty
+   * metres, so most consecutive points project onto the same pixel and every one of them
+   * still costs a segment to tessellate on each pass. Thinning to roughly one vertex per
+   * pixel is invisible in the output and takes a large multiple off the cost.
+   *
+   * The final vertex is always kept, or ways would quietly shorten, junctions would stop
+   * meeting and rings would not close.
+   */
+  const trace = (p: Path2D, pts: Float64Array, close: boolean) => {
+    const [x0, y0] = project(pts[0]!, pts[1]!)
     p.moveTo(x0, y0)
-
-    // Drop vertices the mask cannot resolve.
-    //
-    // OSM geometry is surveyed at metre precision — a motorway curve carries a vertex
-    // every few metres. On a wide box a mask pixel is fifty metres, so most consecutive
-    // points project onto the same pixel and every one of them still costs a segment to
-    // tessellate on each of the four stroke passes. Thinning to roughly one vertex per
-    // pixel is invisible in the output and takes a large multiple off the cost.
-    //
-    // The final vertex is always kept, or ways would quietly shorten and junctions
-    // would stop meeting.
     let lx = x0
     let ly = y0
-    const last = way.pts.length - 2
-    for (let i = 2; i < way.pts.length; i += 2) {
-      const [x, y] = project(way.pts[i]!, way.pts[i + 1]!)
+    const last = pts.length - 2
+    for (let i = 2; i < pts.length; i += 2) {
+      const [x, y] = project(pts[i]!, pts[i + 1]!)
       const dx = x - lx
       const dy = y - ly
       if (i !== last && dx * dx + dy * dy < minStep) continue
@@ -134,11 +161,31 @@ function geometryFor(
       lx = x
       ly = y
     }
+    if (close) p.closePath()
+  }
+
+  for (const way of data.roads) {
+    let p = paths.get(way.cls)
+    if (!p) {
+      p = new Path2D()
+      paths.set(way.cls, p)
+    }
+    trace(p, way.pts, false)
     lengths.set(way.cls, (lengths.get(way.cls) ?? 0) + wayKm(way.pts))
   }
 
-  const geo: Geometry = { paths, lengths }
-  geoCache = { network, w, h, geo }
+  for (const area of data.areas) {
+    let p = areas.get(area.kind)
+    if (!p) {
+      p = new Path2D()
+      areas.set(area.kind, p)
+    }
+    trace(p, area.ring, true)
+    areaCounts[area.kind]++
+  }
+
+  const geo: Geometry = { paths, lengths, areas, areaCounts }
+  geoCache = { data, w, h, geo }
   return geo
 }
 
@@ -153,8 +200,9 @@ function projector(bounds: Bounds, w: number, h: number) {
   ]
 }
 
-export function buildRoadMask(network: RoadNetwork, opts: RoadMaskOptions): RoadMask {
-  const { width: groundW, height: groundH } = boundsExtentMetres(network.bounds)
+export function buildMasks(data: OsmData, opts: MaskOptions): Masks {
+  const started = performance.now()
+  const { width: groundW, height: groundH } = boundsExtentMetres(data.bounds)
 
   // Match the pixel aspect to the ground aspect so one metres-per-pixel figure is true
   // on both axes — otherwise a stroke width correct east-west is wrong north-south, and
@@ -165,26 +213,13 @@ export function buildRoadMask(network: RoadNetwork, opts: RoadMaskOptions): Road
   const h = landscape ? Math.max(1, Math.round((longest * groundH) / groundW)) : longest
   const pxPerMetre = w / groundW
 
-  const canvas = document.createElement('canvas')
-  canvas.width = w
-  canvas.height = h
-  const ctx = canvas.getContext('2d')!
-  ctx.fillStyle = '#000'
-  ctx.fillRect(0, 0, w, h)
-  ctx.lineCap = 'round'
-  ctx.lineJoin = 'round'
-
-  const project = projector(network.bounds, w, h)
-
-  const byClass = new Map<RoadClass, number>()
-  const widened = new Set<RoadClass>()
-
-  const { paths, lengths } = geometryFor(network, w, h, project)
-  for (const [cls, km] of lengths) byClass.set(cls, km)
+  const project = projector(data.bounds, w, h)
+  const geo = geometryFor(data, w, h, project)
 
   // Only classes that actually came back can honestly be reported as widened — otherwise
   // the readout claims to have drawn tracks in a box where tracks were never requested.
-  const present = new Set(paths.keys())
+  const present = new Set(geo.paths.keys())
+  const widened = new Set<RoadClass>()
 
   const strokeWidth = (cls: RoadClass, multiplier: number): number => {
     const metres = ROAD_CLASSES[cls].width * opts.widthScale * multiplier
@@ -193,31 +228,52 @@ export function buildRoadMask(network: RoadNetwork, opts: RoadMaskOptions): Road
     return Math.max(MIN_PIXELS * multiplier, px)
   }
 
-  // Pass 1 — the verge, into blue alone so the surface pass can overwrite red and green
-  // without disturbing it.
+  // ---- areas -------------------------------------------------------------------
+  // Fills, one channel per kind, drawn before the roads because a road crosses a wood
+  // and a bridge crosses a lake — the linear feature is the one on top.
   //
-  // Drawn as three concentric strokes that add, rather than one flat band. A single
-  // stroke would give the corridor a hard outer edge — a felled rectangle stamped
-  // through the timber — whereas clearing actually thins outward: mown verge, then
-  // scrub, then whatever the woods do at their own pace. Three steps plus the texture's
-  // own linear filtering is enough of a ramp for the shader to feather against, and it
-  // costs two extra strokes.
+  // `nonzero` rather than `evenodd`: rings arrive independently, so overlapping ones
+  // (a reservoir tagged twice, adjacent forest blocks sharing an edge) must union
+  // rather than cancel each other out.
+  const areaCanvas = new OffscreenCanvas(w, h)
+  const actx = areaCanvas.getContext('2d')!
+  actx.fillStyle = '#000'
+  actx.fillRect(0, 0, w, h)
+  const AREA_COLOR: Record<AreaKind, string> = {
+    water: 'rgb(255,0,0)',
+    wood: 'rgb(0,255,0)',
+    built: 'rgb(0,0,255)',
+  }
+  actx.globalCompositeOperation = 'lighter'
+  for (const kind of ['water', 'wood', 'built'] as AreaKind[]) {
+    const p = geo.areas.get(kind)
+    if (!p) continue
+    actx.fillStyle = AREA_COLOR[kind]
+    actx.fill(p, 'nonzero')
+  }
+  actx.globalCompositeOperation = 'source-over'
+
+  // ---- roads -------------------------------------------------------------------
+  const roadCanvas = new OffscreenCanvas(w, h)
+  const ctx = roadCanvas.getContext('2d')!
+  ctx.fillStyle = '#000'
+  ctx.fillRect(0, 0, w, h)
+  ctx.lineCap = 'round'
+  ctx.lineJoin = 'round'
+
   if (opts.vergeScale > 0.01) {
-    // Stroked once into its own canvas and blurred on the way back, rather than as a
-    // stack of concentric strokes.
+    // The verge, stroked once into its own canvas and blurred on the way back rather
+    // than as a stack of concentric strokes.
     //
     // The corridor needs a soft outer edge — clearing thins outward through mown verge
-    // and scrub rather than ending on a line — and the obvious way to get one is to lay
-    // down several strokes of decreasing width. That costs a full tessellation of the
-    // whole network per step, which on a city-sized box is most of the time this
-    // function spends. A single stroke through a blur gives a smoother ramp than the
-    // stepped version did for one pass instead of three.
+    // and scrub rather than ending on a line — and the obvious way to get one is several
+    // strokes of decreasing width. That costs a full tessellation of the whole network
+    // per step, which on a city-sized box is most of the time this function spends. A
+    // single stroke through a blur gives a smoother ramp for a third of the work.
     //
     // Blue alone, so the surface pass can overwrite red and green without touching it —
     // and blurring cannot bleed into them either, since they are zero here.
-    const vergeCanvas = document.createElement('canvas')
-    vergeCanvas.width = w
-    vergeCanvas.height = h
+    const vergeCanvas = new OffscreenCanvas(w, h)
     const vctx = vergeCanvas.getContext('2d')!
     vctx.lineCap = 'round'
     vctx.lineJoin = 'round'
@@ -225,7 +281,7 @@ export function buildRoadMask(network: RoadNetwork, opts: RoadMaskOptions): Road
 
     let widest = 0
     for (const cls of ROAD_ORDER) {
-      const p = paths.get(cls)
+      const p = geo.paths.get(cls)
       if (!p) continue
       const lw = strokeWidth(cls, opts.vergeScale)
       widest = Math.max(widest, lw)
@@ -238,11 +294,11 @@ export function buildRoadMask(network: RoadNetwork, opts: RoadMaskOptions): Road
     ctx.filter = 'none'
   }
 
-  // Pass 2 — the carriageway, smallest class first so that where a motorway crosses a
-  // track the motorway is what the pixel ends up holding. Blue is written again because
-  // the surface sits inside its own verge.
+  // The carriageway, smallest class first so that where a motorway crosses a track the
+  // motorway is what the pixel ends up holding. Blue is written again because the
+  // surface sits inside its own verge.
   for (const cls of ROAD_ORDER) {
-    const p = paths.get(cls)
+    const p = geo.paths.get(cls)
     if (!p) continue
     const g = Math.round((ROAD_CLASSES[cls].order / 4) * 255)
     ctx.strokeStyle = `rgb(255,${g},255)`
@@ -251,15 +307,20 @@ export function buildRoadMask(network: RoadNetwork, opts: RoadMaskOptions): Road
   }
 
   return {
-    canvas,
+    // Detaches each canvas — neither is reused, and this is what makes the results
+    // transferable back to the main thread instead of copied.
+    roads: roadCanvas.transferToImageBitmap(),
+    areas: areaCanvas.transferToImageBitmap(),
     width: w,
     height: h,
     metresPerPixel: 1 / pxPerMetre,
     byClass: ROAD_ORDER.slice()
       .reverse()
-      .filter((c) => (byClass.get(c) ?? 0) > 0)
-      .map((cls) => ({ cls, km: byClass.get(cls)! })),
+      .filter((c) => (geo.lengths.get(c) ?? 0) > 0)
+      .map((cls) => ({ cls, km: geo.lengths.get(cls)! })),
     widened: ROAD_ORDER.filter((c) => widened.has(c)),
+    areaCounts: geo.areaCounts,
+    drawMs: Math.round(performance.now() - started),
   }
 }
 

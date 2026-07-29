@@ -163,30 +163,40 @@ Drawing and adjusting the selection needs work. Known rough edges:
 Worth doing together rather than piecemeal, since they all touch the same drag handling
 in `BoxDrawer`.
 
-### 8. Observed sources beyond roads
+### 8. Observed sources — what is left
 
-Roads (OpenStreetMap via Overpass, `overpass.ts` → `roadmask.ts`) are the first layer here
-that is *measured* rather than derived, and they establish the pattern: fetch on demand,
-cache by box in IndexedDB, rasterise into an RGBA field, expose a three-state fetch status
-so "nothing mapped here" stays distinguishable from "the request failed". The same shape
-fits the rest of what was discussed:
+Roads, mapped water, woodland and built-up land all come from one OpenStreetMap query
+(`overpass.ts` → `roadmask.ts`, rasterised in a worker). The pattern is settled: fetch on
+demand, cache by box in IndexedDB behind a query version, rasterise into RGBA fields, and
+expose a three-state status so "nothing mapped here" stays distinguishable from "the
+request failed". What remains:
 
-- **Lakes from OSM** (`natural=water`). Depression-fill lakes are a guess; these are
-  surveyed polygons. Small job, and it replaces a guess with a fact.
 - **River gating.** Keep the MFD accumulation — it is what the riparian and tree work read,
-  and it is continuous where real data is patchy — but use OSM or HydroRIVERS to decide
-  which of those channels actually carry water. That kills the phantom rivers in dry
+  and it is continuous where real data is patchy — but use OSM waterways or HydroRIVERS to
+  decide which of those channels actually carry water. That kills the phantom rivers in dry
   country without giving up the field. Touches vegetation, so it needs re-tuning after.
-- **ESA WorldCover** (10 m, CC BY): tree cover, grassland, cropland, built-up, bare,
-  water. Essentially the whole field set currently derived from Köppen plus noise.
-  **Not** a small decision — it changes Groundwork from simulating a landscape to
-  rendering a measured one, and the cover sliders become corrections rather than a model.
-  Discuss before building.
+  The area pipeline already fetches `waterway=riverbank`; what is missing is the
+  centreline query and the gating itself.
+- **ESA WorldCover calibration** (10 m, CC BY). *Not* to draw the trees — to calibrate the
+  model that draws them. Read the observed tree-cover fraction for the box and solve for
+  the `treeNeed` that reproduces it, per biome. The timber stays generated, so it remains
+  continuous, drainage-anchored and slider-driven; it is simply pinned to reality instead
+  of to a guess. Needs only a coarse histogram, not a full-resolution raster, and
+  `geotiff` is already a dependency so a windowed COG range read costs no new packages.
 
-Two things the road work already proved out and the rest should reuse: the mask projects
-exactly (checked against Esri imagery over Boulder at 2.3 km across — every street on its
-line), and the class filter has to scale with box size, because below about one mask pixel
-a road stops being a line and becomes a smear.
+  This is what fixes the thing that showed up in testing: Köppen puts the Oregon Coast
+  Range in `Csb`, the same class as Mediterranean maquis, so it renders bare until the
+  timber is dialled in by hand. Observed cover would separate them without touching the
+  classification.
+- **Holes in area polygons.** Inner rings are dropped, so a lake with an island is solid
+  water and a forest with a clearing is unbroken forest. Needs even-odd fill across a
+  ring *set* rather than one ring at a time.
+
+Two things the road work proved and the rest should reuse: the masks project exactly
+(checked against Esri imagery over Boulder at 2.3 km across — every street on its line),
+and the road class filter has to scale with box size, because below about one mask pixel a
+road stops being a line and becomes a smear. Areas do not need that filter — a lake stays
+legible at any scale precisely because shrinking the box does not make it thinner.
 
 ### 9. Roads: what is not done yet
 
@@ -201,18 +211,11 @@ a road stops being a line and becomes a smear.
   pass composites additively, so a dense interchange clears more ground than it should.
 - **No settlement layer.** OSM has building footprints and `landuse` from the same query.
   Towns currently show only as a mesh of minor roads with nothing between them.
-- **The mask is rasterised on the main thread**, around 280 ms for a city-sized network
-  (57k ways over Denver). Fine behind the debounce, but it is a visible hitch when the
-  width or verge slider settles, and it will get worse when buildings and landuse land.
-  Belongs in a worker with `OffscreenCanvas` — the hydrology pass already sets the
-  pattern. Worth doing *before* adding more vector layers, not after.
-
-  Three things already took this down from 1.5 s, and they are the reason it is not
-  worse: the projected geometry is cached against the network so slider drags never
-  reproject; vertices closer together than one mask pixel are dropped, which OSM has a
-  great many of; and the verge is one stroke through a blur rather than a stack of
-  concentric strokes. The remaining cost is canvas stroke tessellation and there is no
-  more to win on the main thread.
+- **No individual buildings.** Land-use polygons say where the town is; they cannot give
+  it height, so a town reads correctly from above and stays flat from the ground.
+  Footprints would need extrusion into instanced geometry — the first thing here that is
+  not a field — and OSM carries a usable `height` or `building:levels` on only a minority
+  of them. Worth it only once there is a reason to be standing in the street.
 
 ---
 

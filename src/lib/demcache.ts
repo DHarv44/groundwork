@@ -1,6 +1,6 @@
 import type { Bounds } from './geo'
 import type { HeightField } from './opentopo'
-import type { RoadNetwork } from './overpass'
+import type { OsmData } from './overpass'
 
 /**
  * Persistent cache of decoded DEMs.
@@ -160,15 +160,25 @@ export async function cacheClear(): Promise<void> {
  */
 interface CachedRoads {
   key: string
-  network: RoadNetwork
+  network: OsmData
 }
+
+/**
+ * Versioned, because the query has changed shape once already.
+ *
+ * v1 asked for roads alone. An entry written then would come back with no `areas` and
+ * be indistinguishable from a box that genuinely has no lakes or woodland — so the
+ * version is part of the key, and old entries are simply never matched rather than
+ * being migrated or trusted.
+ */
+const OSM_QUERY_VERSION = 2
 
 function roadKey(bounds: Bounds): string {
   const f = (n: number) => n.toFixed(5)
-  return `${f(bounds.south)}|${f(bounds.north)}|${f(bounds.west)}|${f(bounds.east)}`
+  return `v${OSM_QUERY_VERSION}|${f(bounds.south)}|${f(bounds.north)}|${f(bounds.west)}|${f(bounds.east)}`
 }
 
-export async function roadCacheGet(bounds: Bounds): Promise<RoadNetwork | null> {
+export async function roadCacheGet(bounds: Bounds): Promise<OsmData | null> {
   try {
     const db = await openDb()
     const entry = await new Promise<CachedRoads | undefined>((resolve, reject) => {
@@ -184,7 +194,7 @@ export async function roadCacheGet(bounds: Bounds): Promise<RoadNetwork | null> 
   }
 }
 
-export async function roadCachePut(network: RoadNetwork): Promise<void> {
+export async function roadCachePut(network: OsmData): Promise<void> {
   try {
     const db = await openDb()
     await new Promise<void>((resolve, reject) => {

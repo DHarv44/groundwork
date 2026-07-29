@@ -22,6 +22,7 @@ export default function Terrain({ build, sky, fogDensity, snowLine }: Props) {
   const waterMask = useStore((s) => s.waterMask)
   const biomeMap = useStore((s) => s.biomeMap)
   const roadMask = useStore((s) => s.roadMask)
+  const areaMask = useStore((s) => s.areaMask)
   const materialRef = useRef<THREE.ShaderMaterial>(null)
 
   const satTexture = useMemo(() => {
@@ -94,6 +95,11 @@ export default function Terrain({ build, sky, fogDensity, snowLine }: Props) {
       uRoadDarkness: { value: settings.roadDarkness },
       uRoadClearing: { value: settings.roadClearing },
       uRoadTint: { value: settings.roadTint },
+      uAreaMap: { value: WHITE },
+      uHasAreas: { value: 0 },
+      uOsmWater: { value: settings.osmWaterStrength },
+      uOsmWood: { value: settings.osmWoodStrength },
+      uOsmBuilt: { value: settings.osmBuiltStrength },
       uTextureRange: { value: settings.textureRange },
       uShadows: { value: settings.shadows ? 1 : 0 },
       uAoStrength: { value: settings.aoStrength },
@@ -167,6 +173,13 @@ export default function Terrain({ build, sky, fogDensity, snowLine }: Props) {
     u.uRoadDarkness.value = settings.roadDarkness
     u.uRoadClearing.value = settings.roadClearing
     u.uRoadTint.value = settings.roadTint
+    u.uAreaMap.value = areaMask ?? WHITE
+    u.uHasAreas.value = areaMask ? 1 : 0
+    // Each kind switches independently, and the toggle simply zeroes its weight — the
+    // mask is one texture, so there is nothing to rebuild when one is turned off.
+    u.uOsmWater.value = settings.showOsmWater ? settings.osmWaterStrength : 0
+    u.uOsmWood.value = settings.showOsmWood ? settings.osmWoodStrength : 0
+    u.uOsmBuilt.value = settings.showOsmBuilt ? settings.osmBuiltStrength : 0
     u.uTextureRange.value = settings.textureRange
     u.uShadows.value = settings.shadows ? 1 : 0
     u.uAoStrength.value = settings.aoStrength
