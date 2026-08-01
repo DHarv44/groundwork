@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import type { TerrainBuild } from './mesh'
-import type { SkyModel } from '../sky'
+import type { SkyModel } from '../atmosphere'
 import { terrainFragmentShader, terrainVertexShader } from './shader'
 
 /**

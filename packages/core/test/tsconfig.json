@@ -1,0 +1,14 @@
+{
+  // Separate from the package's own tsconfig on purpose.
+  //
+  // `packages/core/tsconfig.json` deliberately has no DOM lib and no ambient node
+  // types, which is what makes "core imports nothing" mechanical rather than a rule
+  // someone has to remember. The test needs `console` and `process`, so pulling node
+  // types into that config would quietly remove the guarantee it exists to enforce.
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2022"],
+    "types": ["node"]
+  },
+  "include": ["."]
+}

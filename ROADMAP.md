@@ -86,13 +86,41 @@ Strictly one-directional. Rules that keep it that way:
         In the component this was a `requestAnimationFrame`; in the class it is a frame
         counter in `update()`, which does the same thing without needing a DOM timer.
 
-      Still to move: `Water.tsx` and the water shader, `SkyDome.tsx`, and the pack
-      loader that lets the engine be fed something other than a live `HeightField`.
+- [x] **2b. Water and sky** — done. `WaterPlane` and `SkyDome` join `TerrainSurface`,
+      same shape: plain three.js objects the host configures and updates. The old
+      `sky.ts` is now `atmosphere.ts`, so the model (`computeSky`) and the thing that
+      draws it (`sky/dome.ts`) are no longer competing for the name.
 
-- [ ] **2b. Water and sky** — `shaders/water.ts`, `Water.tsx`, `SkyDome.tsx`.
-- [ ] **2c. Pack loading in the engine** — `TerrainData` from a pack, so the engine can
-      render something the builder did not just produce in memory. This is the point at
-      which the engine stops depending on the builder having run.
+      `WaterPlane` absorbed two behaviours that were loose in the component: it hides
+      itself rather than unmounting when the terrain never reaches sea level, so a
+      slider crossing a threshold does not restructure the host's scene graph; and it
+      rebuilds its geometry only when the box actually changes size.
+
+      Verified by dropping the sun to 1° and watching the whole scene go to twilight —
+      terrain, water and sky all took the new lighting, which is all three `setSky`
+      paths at once.
+- [~] **2c. Pack loading** — the byte-level half is done. `packio.ts` in core has
+      `buildPack` and `readHeightField`, and a pack's elevation plane comes back out as
+      an ordinary `HeightField` — the same structure a live DEM fetch produces, so
+      nothing downstream knows or cares which it was.
+
+      Reading and writing take and return bytes; nothing in there fetches. A pack might
+      arrive over HTTP, out of a zip, from disk in a Node baker or from a file input,
+      and none of that belongs in a decoder. `createdAt` is passed in rather than read
+      from a clock, so a baker can produce byte-identical output twice — which is what
+      makes a rebuild diffable and a regression test possible at all.
+
+      `npm run check:core` runs 17 checks in Node with no browser, which also proves
+      the headless claim rather than asserting it. The test field is a ramp plus an
+      off-centre spike: the ramp catches scale and offset errors, the spike catches a
+      transposition that a symmetric field would hide. Quantisation comes back inside
+      0.03 m over a 3900 m range. It has its own tsconfig, because core's has no DOM
+      lib and no node types and pulling those in for the test would quietly remove the
+      guarantee that config exists to enforce.
+
+      What is left is the host side: a loader that fetches the files and hands them
+      over, and the demo page that proves the engine can render a pack the builder did
+      not just produce in memory.
 - [ ] **3. `builder`** — extract what is left around it.
 - [ ] **4. Two demos** — an engine page that loads a pack and renders it, and a builder
       page running against a stub consumer that just prints the manifest. If either needs

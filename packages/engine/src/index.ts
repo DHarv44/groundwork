@@ -12,10 +12,16 @@
 export type { TerrainBuild } from './terrain/mesh'
 export { buildTerrain, sampleBilinear } from './terrain/mesh'
 
-export type { SkyModel } from './sky'
-export { computeSky } from './sky'
+export type { SkyModel } from './atmosphere'
+export { computeSky } from './atmosphere'
 
 export { terrainFragmentShader, terrainVertexShader } from './terrain/shader'
-
 export type { SurfaceConfig, SurfaceLayers, SurfaceTextureMode } from './terrain/surface'
 export { TerrainSurface } from './terrain/surface'
+
+export { waterFragmentShader, waterVertexShader } from './water/shader'
+export type { WaterConfig } from './water/plane'
+export { WaterPlane } from './water/plane'
+
+export { skyFragmentShader, skyVertexShader } from './sky/shader'
+export { SkyDome } from './sky/dome'
