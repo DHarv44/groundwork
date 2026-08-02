@@ -1,6 +1,6 @@
 {
   "name": "@dharv44/groundwork-engine",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Terrain renderer. Plain three.js — owns neither the renderer nor the frame loop.",
   "type": "module",
   "license": "MIT",
@@ -29,7 +29,7 @@
     "registry": "https://npm.pkg.github.com"
   },
   "dependencies": {
-    "@dharv44/groundwork-core": "^0.1.0"
+    "@dharv44/groundwork-core": "^0.2.0"
   },
   "peerDependencies": {
     "three": ">=0.160.0"
