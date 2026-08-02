@@ -14,6 +14,7 @@ import {
 } from '@groundwork/core'
 import type * as THREE from 'three'
 import type { OsmData } from './overpass'
+import { DEM_SOURCES } from './opentopo'
 import { downloadBlob } from './capture'
 
 /**
@@ -82,15 +83,17 @@ function waterLayerFrom(tex: THREE.DataTexture): PackInputLayer | null {
 }
 
 function attributionFor(hf: HeightField, hasOsm: boolean): PackAttribution[] {
+  // Each elevation source carries its own required credit — see DEM_SOURCES. Copernicus
+  // in particular specifies its notice verbatim for adapted data, which is what a pack
+  // is, so the string travels rather than being summarised.
+  const source = DEM_SOURCES.find((d) => d.id === hf.demtype)
   const out: PackAttribution[] = [
     {
-      source: `Elevation: ${hf.demtype}`,
-      // Deliberately not asserting a specific licence. The sources behind these
-      // datasets differ — some public domain, some CC BY, some with their own terms —
-      // and stating one we have not checked would be worse than pointing at the
-      // provider. See the roadmap: this wants a per-dataset table.
-      licence: 'See the dataset terms at the provider',
-      url: 'https://opentopography.org/',
+      // The notices already name their dataset, so they stand alone — prefixing the
+      // label as well reads as a stutter, and Copernicus's has to appear verbatim.
+      source: source?.attribution.notice ?? `Elevation: ${hf.demtype}`,
+      licence: source?.attribution.licence ?? 'See the dataset terms at the provider',
+      url: source?.attribution.url ?? 'https://opentopography.org/',
       covers: ['elevation'],
     },
   ]

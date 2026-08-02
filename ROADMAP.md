@@ -239,11 +239,28 @@ Strictly one-directional. Rules that keep it that way:
       indistinguishable from a box that genuinely has none — open ocean and empty desert
       being common, correct answers — so there is nothing in the data to tell the two
       apart. Exactly what the version is for. It cost three refetches.
-- [ ] **5d. Per-dataset elevation licences.** The pack currently attributes elevation
-      as "See the dataset terms at the provider", which is honest but weak. The sources
-      behind the DEM list differ — some public domain, some CC BY, some with their own
-      terms — and asserting one we have not checked would be worse than pointing at the
-      provider. Wants a licence field on the `DEM_TYPES` table, filled in per entry.
+- [x] **5d. Per-dataset elevation attribution.** Every entry in `DEM_SOURCES` now
+      carries the credit its provider requires, and the export puts the right one in the
+      pack.
+
+      The design decision worth recording: this is a **citation**, not a licence
+      classification. That is what these providers actually require — OpenTopography's
+      whole distribution model is built on citing the dataset, and several state no
+      licence at all while still mandating a specific credit. Copernicus is the case
+      where the exact words matter: its terms specify the notice verbatim for adapted or
+      modified data, and a pack is by definition adapted, so the string is quoted rather
+      than paraphrased.
+
+      Checked against the providers rather than written from memory. Confirmed:
+      NASADEM, SRTM GL1 and GL3 are public domain (CC0) via LP DAAC, no restriction on
+      redistribution; Copernicus GLO-30/90 free with mandatory attribution; ALOS World
+      3D has **no licence recorded** by OpenTopography but a required DOI citation,
+      which is what travels.
+
+      **Three are still unconfirmed** — EU DTM, SRTM15+ and GEBCO — and say so in their
+      own `licence` field rather than guessing. A wrong licence inside something meant
+      to be shared is worse than an honest pointer at the source. Anyone finishing this
+      only needs to confirm those three.
 - [ ] **3. `builder`** — extract what is left around it.
 - [~] **4. Demos** — the engine one is done: `demo/engine/`, at
       `/demo/engine/?pack=/sample.gwpack`. Plain three.js, no React, no store, no

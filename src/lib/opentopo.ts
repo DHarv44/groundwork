@@ -10,6 +10,27 @@ import {
 } from './demcache'
 import { fetchTerrariumHeightField } from './terrarium'
 
+/**
+ * What has to be shown when a source's data is passed on.
+ *
+ * A citation rather than a licence classification, because that is what these
+ * providers actually require — OpenTopography's whole distribution model is built on
+ * citing the dataset, and several of them state no licence at all while still
+ * requiring a specific credit. Copernicus is the one where the exact words matter:
+ * its terms specify the notice verbatim for adapted or modified data, which is what a
+ * pack contains.
+ *
+ * Where the terms were not confirmed from the provider, `licence` says so plainly
+ * rather than guessing. A wrong licence in something meant to be shared is worse than
+ * an honest pointer at the source.
+ */
+export interface DemAttribution {
+  /** The credit line to display. */
+  notice: string
+  licence: string
+  url?: string
+}
+
 export interface DemSource {
   id: string
   label: string
@@ -20,6 +41,29 @@ export interface DemSource {
   /** Latitude coverage limits, degrees. */
   latRange: [number, number]
   note: string
+  attribution: DemAttribution
+}
+
+/** NASA products via LP DAAC: public domain, no restriction on redistribution. */
+const LP_DAAC: DemAttribution = {
+  notice: 'NASA/JPL, distributed by NASA LP DAAC and OpenTopography',
+  licence: 'Public domain (CC0) — no restrictions on reuse or redistribution',
+  url: 'https://www.earthdata.nasa.gov/centers/lp-daac',
+}
+
+/**
+ * Copernicus requires this notice verbatim for adapted or modified data.
+ *
+ * Quoted from the Copernicus DEM terms rather than paraphrased, because a paraphrase
+ * would not satisfy them — and a pack is by definition adapted data.
+ */
+const COPERNICUS: DemAttribution = {
+  notice:
+    'produced using Copernicus WorldDEM-30 © DLR e.V. 2010-2014 and © Airbus Defence ' +
+    'and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; ' +
+    'all rights reserved',
+  licence: 'Copernicus DEM licence — free of charge, attribution mandatory',
+  url: 'https://dataspace.copernicus.eu/explore-data/data-collections/copernicus-contributing-missions/collections-description/COP-DEM',
 }
 
 /** Sources that need no key and have no request cap. */
@@ -34,6 +78,11 @@ export const DEM_SOURCES: DemSource[] = [
     maxAreaKm2: 250_000,
     latRange: [-85, 85],
     note: 'No API key and no daily limit. SRTM/NED-derived, served as map tiles — use this when the OpenTopography allowance is spent.',
+    attribution: {
+      notice: 'AWS Terrain Tiles — derived from SRTM, NED and other public-domain sources',
+      licence: 'Per-source terms; the constituent datasets are public domain',
+      url: 'https://registry.opendata.aws/terrain-tiles/',
+    },
   },
   {
     id: 'COP30',
@@ -42,6 +91,7 @@ export const DEM_SOURCES: DemSource[] = [
     maxAreaKm2: 450_000,
     latRange: [-90, 90],
     note: 'Best all-round 30 m DEM. Global, void-filled, clean coastlines.',
+    attribution: COPERNICUS,
   },
   {
     id: 'NASADEM',
@@ -50,6 +100,7 @@ export const DEM_SOURCES: DemSource[] = [
     maxAreaKm2: 450_000,
     latRange: [-56, 60],
     note: 'Reprocessed SRTM with improved voids. Sharp in high relief.',
+    attribution: LP_DAAC,
   },
   {
     id: 'SRTMGL1',
@@ -58,6 +109,7 @@ export const DEM_SOURCES: DemSource[] = [
     maxAreaKm2: 450_000,
     latRange: [-56, 60],
     note: 'The classic 1 arc-second SRTM. Some voids in steep terrain.',
+    attribution: LP_DAAC,
   },
   {
     id: 'AW3D30',
@@ -66,6 +118,15 @@ export const DEM_SOURCES: DemSource[] = [
     maxAreaKm2: 450_000,
     latRange: [-90, 90],
     note: 'JAXA optical stereo DEM. Excellent in glaciated / polar terrain.',
+    attribution: {
+      // OpenTopography records no licence for this one but does state a required
+      // citation, so the citation is what travels.
+      notice:
+        'Japan Aerospace Exploration Agency (2021). ALOS World 3D 30 meter DEM. ' +
+        'V3.2, Jan 2021. Distributed by OpenTopography. https://doi.org/10.5069/G94M92HB',
+      licence: 'JAXA terms — free of charge; OpenTopography states no licence, citation required',
+      url: 'https://portal.opentopography.org/datasetMetadata?otCollectionID=OT.112016.4326.2',
+    },
   },
   {
     id: 'COP90',
@@ -74,6 +135,7 @@ export const DEM_SOURCES: DemSource[] = [
     maxAreaKm2: 4_050_000,
     latRange: [-90, 90],
     note: 'Coarser but covers a much larger area per request.',
+    attribution: COPERNICUS,
   },
   {
     id: 'SRTMGL3',
@@ -82,6 +144,7 @@ export const DEM_SOURCES: DemSource[] = [
     maxAreaKm2: 4_050_000,
     latRange: [-56, 60],
     note: '3 arc-second SRTM. Good for whole mountain ranges.',
+    attribution: LP_DAAC,
   },
   {
     id: 'EU_DTM',
@@ -90,6 +153,11 @@ export const DEM_SOURCES: DemSource[] = [
     maxAreaKm2: 450_000,
     latRange: [34, 72],
     note: 'Continental Europe only. Bare-earth, very high quality.',
+    attribution: {
+      notice: 'EU DTM — Copernicus Land Monitoring Service, distributed by OpenTopography',
+      licence: 'See the provider terms — not confirmed here',
+      url: 'https://portal.opentopography.org/',
+    },
   },
   {
     id: 'SRTM15Plus',
@@ -98,6 +166,11 @@ export const DEM_SOURCES: DemSource[] = [
     maxAreaKm2: 4_050_000,
     latRange: [-90, 90],
     note: 'Includes bathymetry — use it for ocean trenches and seamounts.',
+    attribution: {
+      notice: 'SRTM15+ — Scripps Institution of Oceanography, distributed by OpenTopography',
+      licence: 'See the provider terms — not confirmed here',
+      url: 'https://portal.opentopography.org/',
+    },
   },
   {
     id: 'GEBCOIceTopo',
@@ -106,6 +179,11 @@ export const DEM_SOURCES: DemSource[] = [
     maxAreaKm2: 4_050_000,
     latRange: [-90, 90],
     note: 'Global relief including ocean floor, ice-sheet surface.',
+    attribution: {
+      notice: 'GEBCO 2023 Grid — GEBCO Compilation Group, distributed by OpenTopography',
+      licence: 'See the provider terms — not confirmed here',
+      url: 'https://www.gebco.net/data_and_products/gridded_bathymetry_data/',
+    },
   },
 ]
 
