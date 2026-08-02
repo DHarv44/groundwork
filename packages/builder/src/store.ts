@@ -32,6 +32,8 @@ export interface Settings {
   exaggeration: number
   detail: number
   textureMode: TextureMode
+  /** Extra zoom levels the close-up satellite patch may fetch past the base drape. */
+  satPatchBoost: number
   sunAzimuth: number
   sunElevation: number
   haze: number
@@ -199,6 +201,7 @@ export const DEFAULT_SETTINGS: Settings = {
   exaggeration: 1.6,
   detail: 768,
   textureMode: 'procedural',
+  satPatchBoost: 3,
   // The default camera sits to the south-east, so a north-east sun rakes across the
   // relief instead of flattening it from behind the viewer.
   sunAzimuth: 70,
@@ -343,6 +346,17 @@ interface State {
   imageryZoom: number
   /** True while satellite tiles are in flight, so the layer button can say so. */
   imageryLoading: boolean
+  /**
+   * The close-up imagery patch: the sub-box the camera is over, refetched at a higher
+   * zoom than the base drape and composited on top of it in the shader. Null whenever
+   * the camera is wide out — the base drape is already the best available there.
+   */
+  satPatch: {
+    canvas: HTMLCanvasElement
+    /** Terrain-UV rectangle the canvas covers: x0, y0 north-west; x1, y1 south-east. */
+    rect: [number, number, number, number]
+    zoom: number
+  } | null
   /** RGBA water mask from the hydrology pass: coverage, lake flag, log drainage. */
   waterMask: THREE.DataTexture | null
   waterStats: {
@@ -453,6 +467,11 @@ interface State {
   generate: () => Promise<void>
   generateDemo: () => Promise<void>
   loadImagery: () => Promise<void>
+  /**
+   * Fetch the close-up patch for a sub-box the camera has settled over, or clear it
+   * by passing null. The viewer decides when and where; this only fetches and holds.
+   */
+  loadSatPatch: (sub: Bounds | null) => Promise<void>
   /** Fetch (or recall) the road network for the built area. Safe to call repeatedly. */
   loadRoads: () => Promise<void>
 }
@@ -460,6 +479,8 @@ interface State {
 let inflight: AbortController | null = null
 /** The road/area fetch in flight, aborted by clearRoads when the box changes. */
 let roadsAbort: AbortController | null = null
+/** The close-up imagery fetch in flight — the camera moving on aborts it. */
+let satPatchAbort: AbortController | null = null
 
 let hydroWorker: Worker | null = null
 
@@ -485,6 +506,7 @@ const PERSISTED_SETTINGS = [
   'exaggeration',
   'detail',
   'textureMode',
+  'satPatchBoost',
   'sunAzimuth',
   'sunElevation',
   'haze',
@@ -926,6 +948,29 @@ export const useStore = create<State>((setState, getState) => {
     })
   }
 
+  /**
+   * Progress text, throttled — and the throttle is load-bearing, not cosmetic.
+   *
+   * React 19 re-renders external-store subscribers synchronously, and any update that
+   * arrives while the previous flush is still running counts toward its nested-update
+   * limit of 50. A tile fetch that completes as one microtask burst — everything
+   * cached, or a fast proxy answering together — can fire every per-tile callback
+   * back-to-back: 72 satellite tiles, or 165 elevation tiles, each calling setState.
+   * That threw "Maximum update depth exceeded" out of the *store*, surfaced through
+   * whatever fetch was in flight, and read as a network failure. The road tiles never
+   * tripped it only because their count sits under the limit.
+   *
+   * One message every ~120 ms is also all a human can read. The final state is not
+   * throttled away: every load path ends by setting its own completion message.
+   */
+  let lastNoteAt = 0
+  function noteProgress(note: string): void {
+    const now = performance.now()
+    if (now - lastNoteAt < 120) return
+    lastNoteAt = now
+    setState({ message: note })
+  }
+
   let roadTimer: ReturnType<typeof setTimeout> | null = null
   function scheduleRoadMask(): void {
     if (roadTimer !== null) clearTimeout(roadTimer)
@@ -1057,6 +1102,7 @@ export const useStore = create<State>((setState, getState) => {
   build: null,
   imagery: null,
   imageryZoom: 0,
+  satPatch: null,
   imageryLoading: false,
   waterMask: null,
   waterStats: null,
@@ -1304,7 +1350,7 @@ export const useStore = create<State>((setState, getState) => {
         () => {
           fromCache = true
         },
-        (done, total) => setState({ message: `Elevation tiles ${done}/${total}…` }),
+        (done, total) => noteProgress(`Elevation tiles ${done}/${total}…`),
       )
       if (signal.aborted) return
       await finishBuild(heightField, signal, fromCache)
@@ -1355,7 +1401,7 @@ export const useStore = create<State>((setState, getState) => {
     try {
       setState({ imageryLoading: true, message: 'Fetching satellite imagery…' })
       const result = await fetchImagery(heightField.bounds, (done, total) => {
-        setState({ message: `Satellite tiles ${done}/${total}…` })
+        noteProgress(`Satellite tiles ${done}/${total}…`)
       })
       setState({
         imagery: result.canvas,
@@ -1372,11 +1418,82 @@ export const useStore = create<State>((setState, getState) => {
       // The reason travels. The old blanket message turned every transient hiccup
       // into "unavailable for this area", which reads as a fact about the place and
       // sent the debugging at the wrong target entirely.
+      //
+      // The full stack is stashed as well: the recurring failure here is a React
+      // "maximum update depth" throw that surfaces through this catch and nowhere
+      // else — no console.error, no window error event — so this is the only place
+      // its stack can be captured at all.
+      try {
+        localStorage.setItem(
+          'gw.imageryError',
+          JSON.stringify({
+            at: Date.now(),
+            message: err instanceof Error ? err.message : String(err),
+            stack: err instanceof Error ? err.stack : null,
+          }),
+        )
+      } catch {
+        /* diagnostics must never break the failure path they observe */
+      }
       setState({
         imageryLoading: false,
         message: '',
         error: `Satellite imagery failed (${err instanceof Error ? err.message : String(err)}) — click Satellite to retry.`,
       })
+    }
+  },
+
+  loadSatPatch: async (sub: Bounds | null): Promise<void> => {
+    // The camera moved on; whatever was being fetched is for somewhere it no longer is.
+    satPatchAbort?.abort()
+    satPatchAbort = null
+
+    if (!sub) {
+      if (getState().satPatch) setState({ satPatch: null })
+      return
+    }
+
+    const { heightField, imagery, imageryZoom, settings } = getState()
+    if (!heightField || !imagery || settings.textureMode !== 'satellite') return
+    if (settings.satPatchBoost <= 0) return
+
+    // Clamp to the box — a patch that pokes past the terrain has nothing to sit on.
+    const b = heightField.bounds
+    const s: Bounds = {
+      south: Math.max(sub.south, b.south),
+      north: Math.min(sub.north, b.north),
+      west: Math.max(sub.west, b.west),
+      east: Math.min(sub.east, b.east),
+    }
+    if (s.north <= s.south || s.east <= s.west) return
+
+    const ctrl = new AbortController()
+    satPatchAbort = ctrl
+    try {
+      const result = await fetchImagery(s, undefined, ctrl.signal, imageryZoom + settings.satPatchBoost)
+      if (ctrl.signal.aborted) return
+      // No sharper than the base drape? Then the patch adds nothing but a seam.
+      if (result.zoom <= getState().imageryZoom) return
+
+      const lonSpan = b.east - b.west
+      const latSpan = b.north - b.south
+      setState({
+        satPatch: {
+          canvas: result.canvas,
+          rect: [
+            (s.west - b.west) / lonSpan,
+            (b.north - s.north) / latSpan,
+            (s.east - b.west) / lonSpan,
+            (b.north - s.south) / latSpan,
+          ],
+          zoom: result.zoom,
+        },
+      })
+    } catch (err) {
+      // A failed close-up is not an error state — the base drape is still underneath.
+      if ((err as Error)?.name !== 'AbortError') console.warn('satellite close-up failed', err)
+    } finally {
+      if (satPatchAbort === ctrl) satPatchAbort = null
     }
   },
 
@@ -1401,9 +1518,10 @@ export const useStore = create<State>((setState, getState) => {
 
     try {
       roadsAbort = new AbortController()
-      const network = await fetchOsmTiles(bounds, roadsAbort.signal, (note) =>
-        setState({ message: note }),
-      )
+      // Throttled for the same reason as the other tile fetches: a fully-cached box
+      // answers as one microtask burst, and MAX_TILES is 64 against React's nested
+      // limit of 50 — this path was one budget tweak from the same crash.
+      const network = await fetchOsmTiles(bounds, roadsAbort.signal, noteProgress)
       // The area may have been rebuilt while the tiles were coming down.
       if (getState().heightField?.bounds !== bounds) return
 

@@ -1,10 +1,14 @@
 import type { Bounds } from './geo'
 import { latToTileY, lonToTileX } from './geo'
 import { builderConfig } from '../config'
+import { tileCacheGet, tileCachePut } from './demcache'
 
 const TILE = 256
 const MAX_TILES = 144
 const MAX_PIXELS = 4096
+
+/** Esri serves down to z19; past it there is nothing sharper to fetch. */
+export const MAX_IMAGERY_ZOOM = 19
 
 function tileUrl(z: number, x: number, y: number): string {
   // Esri World Imagery is served z/y/x — the swap happens here rather than in the
@@ -13,19 +17,44 @@ function tileUrl(z: number, x: number, y: number): string {
   return builderConfig().endpoints.imagery(z, y, x)
 }
 
-function loadTile(url: string): Promise<HTMLImageElement | null> {
-  return new Promise((resolve) => {
-    const img = new Image()
-    img.crossOrigin = 'anonymous'
-    img.onload = () => resolve(img)
-    img.onerror = () => resolve(null)
-    img.src = url
-  })
+/**
+ * One imagery tile: cache, else network.
+ *
+ * Fetched as bytes rather than through an Image element, for three things the element
+ * cannot do: abort (the camera moves on, the request should too), caching (the bytes
+ * go into the same IndexedDB store the vector tiles use, under an `i/` prefix), and
+ * an error that says what happened. Failures resolve null and the mosaic keeps its
+ * ground-coloured fill — one missing tile is a blemish, not a failure.
+ */
+async function loadTile(
+  z: number,
+  x: number,
+  y: number,
+  signal?: AbortSignal,
+): Promise<ImageBitmap | null> {
+  const key = `i/${z}/${x}/${y}`
+  try {
+    const cached = await tileCacheGet(key)
+    if (cached) {
+      return cached.byteLength > 0 ? await createImageBitmap(new Blob([cached])) : null
+    }
+    const res = await fetch(tileUrl(z, x, y), { signal })
+    if (!res.ok) {
+      if (res.status === 404) void tileCachePut(key, new ArrayBuffer(0))
+      return null
+    }
+    const buf = await res.arrayBuffer()
+    void tileCachePut(key, buf)
+    return await createImageBitmap(new Blob([buf]))
+  } catch (err) {
+    if ((err as Error)?.name === 'AbortError') throw err
+    return null
+  }
 }
 
 /** Pick the highest zoom whose tile mosaic stays within our tile and pixel budgets. */
-function chooseZoom(b: Bounds): number {
-  for (let z = 19; z >= 1; z--) {
+function chooseZoom(b: Bounds, maxZoom: number): number {
+  for (let z = Math.min(maxZoom, MAX_IMAGERY_ZOOM); z >= 1; z--) {
     const nx = Math.floor(lonToTileX(b.east, z)) - Math.floor(lonToTileX(b.west, z)) + 1
     const ny = Math.floor(latToTileY(b.south, z)) - Math.floor(latToTileY(b.north, z)) + 1
     if (nx * ny <= MAX_TILES && nx * TILE <= MAX_PIXELS && ny * TILE <= MAX_PIXELS) return z
@@ -48,8 +77,10 @@ export async function fetchImagery(
   bounds: Bounds,
   onProgress?: (done: number, total: number) => void,
   signal?: AbortSignal,
+  /** Cap the zoom — the close-up patch bounds how far past the base it may reach. */
+  maxZoom: number = MAX_IMAGERY_ZOOM,
 ): Promise<ImageryResult> {
-  const z = chooseZoom(bounds)
+  const z = chooseZoom(bounds, maxZoom)
   const tx0 = Math.floor(lonToTileX(bounds.west, z))
   const tx1 = Math.floor(lonToTileX(bounds.east, z))
   const ty0 = Math.floor(latToTileY(bounds.north, z))
@@ -72,10 +103,11 @@ export async function fetchImagery(
   for (let ty = ty0; ty <= ty1; ty++) {
     for (let tx = tx0; tx <= tx1; tx++) {
       jobs.push(
-        loadTile(tileUrl(z, tx, ty)).then((img) => {
+        loadTile(z, tx, ty, signal).then((img) => {
           if (signal?.aborted) return
           if (img) {
             mctx.drawImage(img, (tx - tx0) * TILE, (ty - ty0) * TILE, TILE, TILE)
+            img.close()
             loaded++
           }
           onProgress?.(++done, total)

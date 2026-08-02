@@ -39,6 +39,9 @@ uniform float uWaveHeight;
 
 uniform float uUseSat;        // 0 = procedural, 1 = satellite drape
 uniform float uSatDetail;     // how much procedural micro-detail survives under imagery
+uniform sampler2D uSatPatchMap; // close-up imagery for the sub-box the camera is over
+uniform vec4 uSatPatchRect;   // that sub-box in terrain UV: xy = NW corner, zw = SE
+uniform float uHasSatPatch;
 
 uniform float uMinElev;
 uniform float uMaxElev;
@@ -655,6 +658,22 @@ void main() {
   // ---- satellite drape ----------------------------------------------------
   if (uUseSat > 0.5) {
     vec3 sat = srgbToLinear(texture2D(uSatMap, vUv).rgb);
+
+    // The close-up patch: the same imagery, refetched at a higher zoom for just the
+    // sub-box the camera has settled over, composited where its rectangle covers.
+    // The seam is feathered so the resolution step does not draw its own rectangle
+    // onto the ground.
+    if (uHasSatPatch > 0.5) {
+      vec2 span = max(uSatPatchRect.zw - uSatPatchRect.xy, vec2(1e-6));
+      vec2 pUv = (vUv - uSatPatchRect.xy) / span;
+      vec2 edge = min(pUv, 1.0 - pUv);
+      float inside = smoothstep(0.0, 0.05, min(edge.x, edge.y));
+      if (inside > 0.0) {
+        vec3 hi = srgbToLinear(texture2D(uSatPatchMap, pUv).rgb);
+        sat = mix(sat, hi, inside);
+      }
+    }
+
     // Keep a little procedural grain so close-ups don't turn to mush.
     float g = 0.90 + 0.20 * (grain * 0.5 + 0.5) * uSatDetail * (1.0 - smoothstep(600.0, 5000.0, dist));
     albedo = sat * g;

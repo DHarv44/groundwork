@@ -87,6 +87,14 @@ export interface SurfaceConfig {
 export interface SurfaceLayers {
   /** Satellite or aerial imagery draped on the surface. */
   imagery?: THREE.Texture | null
+  /**
+   * A close-up refetch of the imagery covering just part of the box, with the part
+   * it covers in terrain UV space (x0, y0 = north-west corner; x1, y1 = south-east).
+   * The shader composites it over the base drape with a feathered seam. Both or
+   * neither: a patch without its rectangle has no meaning.
+   */
+  imageryPatch?: THREE.Texture | null
+  imageryPatchRect?: readonly [number, number, number, number] | null
   /** RGBA hydrology field: coverage, lake flag, log drainage. */
   water?: THREE.Texture | null
   /** RGBA climate field: aridity, riparian, ground warmth, tree cover. */
@@ -121,6 +129,9 @@ export class TerrainSurface {
       uSatMap: { value: BLANK },
       uUseSat: { value: 0 },
       uSatDetail: { value: 1 },
+      uSatPatchMap: { value: BLANK },
+      uSatPatchRect: { value: new THREE.Vector4(0, 0, 1, 1) },
+      uHasSatPatch: { value: 0 },
       uWaterMap: { value: BLANK },
       uHasWater: { value: 0 },
       uRivers: { value: 0 },
@@ -220,6 +231,13 @@ export class TerrainSurface {
   setLayers(layers: SurfaceLayers): void {
     const u = this.uniforms
     u.uSatMap!.value = layers.imagery ?? BLANK
+    const patchReady = !!layers.imageryPatch && !!layers.imageryPatchRect
+    u.uSatPatchMap!.value = patchReady ? layers.imageryPatch! : BLANK
+    if (patchReady) {
+      const [x0, y0, x1, y1] = layers.imageryPatchRect!
+      ;(u.uSatPatchRect!.value as THREE.Vector4).set(x0, y0, x1, y1)
+    }
+    u.uHasSatPatch!.value = patchReady ? 1 : 0
     u.uWaterMap!.value = layers.water ?? BLANK
     u.uHasWater!.value = layers.water ? 1 : 0
     u.uBiomeMap!.value = layers.biome ?? BLANK
