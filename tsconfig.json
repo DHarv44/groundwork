@@ -18,6 +18,12 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src", "demo"],
+  // The builder's own source is listed so its `vite-env.d.ts` is in the program —
+  // without it the `?worker` imports and `import.meta.env` lose their declarations.
+  // `core` and `engine` are reached through imports and are additionally checked
+  // against their own stricter configs by `npm run check:types`; core's in particular
+  // omits the DOM lib, which this config cannot, so that guarantee has to be enforced
+  // there rather than here.
+  "include": ["src", "demo", "packages/builder/src"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }

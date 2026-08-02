@@ -261,7 +261,38 @@ Strictly one-directional. Rules that keep it that way:
       own `licence` field rather than guessing. A wrong licence inside something meant
       to be shared is worse than an honest pointer at the source. Anyone finishing this
       only needs to confirm those three.
-- [ ] **3. `builder`** — extract what is left around it.
+- [x] **3. `builder`** — done. `packages/builder` is the authoring tool; the repo root
+      keeps a four-line standalone shell that mounts it.
+
+      Extracting the files was the easy part. What actually made it portable:
+
+      - **`config.ts` owns everything the host owns** — storage namespace, service
+        endpoints, asset base, dev hooks — and is the only place `import.meta.env` is
+        read. Keys and endpoints are resolved per call, not captured at module load,
+        because a host configures before mounting and that is after these modules have
+        been imported.
+      - **Styles are scoped to `.gw`.** The stylesheet used to style `button`,
+        `select`, `input` and `main` globally, which would have silently restyled a
+        host's own controls. The palette moved off `:root` for the same reason —
+        `--bg` and `--line` are generic enough to collide.
+      - **Page-level rules are not scoped, they are gone.** There is no correct way to
+        scope a rule about `body`, so `*`, `html`, `body` and `#root` live in
+        `page.css`, loaded only by the standalone entry.
+
+      Checked rather than assumed: a `<button>` injected outside `.gw` keeps default
+      browser styling while identical markup inside gets the builder's; `--accent`
+      resolves on `.gw` and is absent from `:root`; changing `storagePrefix` moves
+      every key; and a partial `endpoints` override leaves the others at their
+      defaults.
+
+      Two deliberate exceptions, both documented where they live: the preset `FORMAT`
+      string stays unnamespaced because it identifies exported files rather than
+      storage, and Leaflet's stylesheet is still global because it is Leaflet's, though
+      it namespaces itself under `.leaflet-`.
+
+      `npm run check:types` now covers the root program plus each package against its
+      own config — which is what keeps `core`'s DOM-less guarantee enforced, since the
+      root config cannot express it.
 - [~] **4. Demos** — the engine one is done: `demo/engine/`, at
       `/demo/engine/?pack=/sample.gwpack`. Plain three.js, no React, no store, no
       builder. Drop a `.gwpack` on it or point it at one with `?pack=`.

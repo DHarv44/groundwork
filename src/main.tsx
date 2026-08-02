@@ -1,8 +1,16 @@
+/**
+ * The standalone Groundwork app — a thin shell around the builder package.
+ *
+ * Everything here is what a *page* owns rather than what the builder owns: the root
+ * element, the body reset, and the decision to fill the viewport. A host embedding
+ * `<Builder />` supplies its own equivalents and loads none of this.
+ *
+ * That it is this short is the point. If something has to be added here to make the
+ * builder work, it probably belongs inside the package instead.
+ */
 import { createRoot } from 'react-dom/client'
-import App from './App'
-// The page shell first, then the builder's own styles. Only this entry point loads
-// page.css — an embedding host owns its own body and must not have it rewritten.
+import { Builder } from '@groundwork/builder'
+import '@groundwork/builder/styles.css'
 import './page.css'
-import './styles.css'
 
-createRoot(document.getElementById('root')!).render(<App />)
+createRoot(document.getElementById('root')!).render(<Builder />)

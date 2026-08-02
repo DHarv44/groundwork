@@ -1,0 +1,28 @@
+{
+  "name": "@groundwork/builder",
+  "version": "0.1.0",
+  "description": "The authoring tool: pick a box on Earth, tune it, write a pack.",
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    ".": "./src/index.ts",
+    "./styles.css": "./src/styles.css"
+  },
+  "types": "./src/index.ts",
+  "files": [
+    "src"
+  ],
+  "dependencies": {
+    "@groundwork/core": "*",
+    "@groundwork/engine": "*",
+    "geotiff": "^2.1.3",
+    "leaflet": "^1.9.4",
+    "react-leaflet": "^4.2.1",
+    "zustand": "^5.0.1"
+  },
+  "peerDependencies": {
+    "react": ">=18",
+    "react-dom": ">=18",
+    "three": ">=0.160.0"
+  }
+}
