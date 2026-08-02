@@ -6,70 +6,80 @@
     <title>Host app — embedding the Groundwork builder</title>
     <style>
       /*
-        Deliberately hostile host styling.
+        A host application's styling — plausible, and adversarial precisely because of
+        that.
 
-        This is the point of the page: every rule here is the sort of thing a real
-        application has and a badly-behaved component would trample or be trampled by.
-        If the builder still looks right inside this, its styles are genuinely scoped.
+        Every rule here is the sort of thing a real app has, and each one conflicts with
+        the builder: `content-box` against its `border-box`, a light theme against its
+        dark one, a serif face against its sans, and the same CSS variable names
+        (`--bg`, `--line`, `--accent`) carrying entirely different values. If the
+        builder still looks right sitting inside this, its styles are genuinely scoped.
+
+        Realistic rather than garish on purpose. Something obviously broken-looking
+        would prove the same thing, but this is what an actual embedding app looks
+        like, and it makes a leak easier to spot rather than harder.
       */
-      * { box-sizing: content-box; }           /* opposite of what the builder wants */
+      * { box-sizing: content-box; }
       :root {
-        --bg: #fff0f5;                          /* same variable names, wrong values */
-        --panel: #ffe4e1;
-        --line: #ff69b4;
-        --text: #8b0000;
-        --accent: #ff1493;
-        --muted: #c71585;
+        --bg: #f4f6f9;
+        --panel: #ffffff;
+        --line: #d3d9e3;
+        --text: #1e2732;
+        --accent: #2f6fd0;
+        --muted: #6b7684;
       }
       html, body { height: 100%; margin: 0; }
       body {
         background: var(--bg);
         color: var(--text);
-        font: 15px/1.6 Georgia, 'Times New Roman', serif;
+        font: 14px/1.6 Georgia, 'Times New Roman', serif;
         display: flex;
         flex-direction: column;
       }
       button {
         background: var(--accent);
         color: #fff;
-        border: 3px dashed var(--line);
-        border-radius: 0;
-        padding: 6px 14px;
+        border: 1px solid #2a63ba;
+        border-radius: 3px;
+        padding: 7px 14px;
         font: inherit;
         cursor: pointer;
       }
-      select, input { border: 3px dotted var(--line); background: #fff; font: inherit; }
-      main { border: 6px solid var(--line); }
+      button:hover { background: #2a63ba; }
+      select, input { border: 1px solid var(--line); background: #fff; font: inherit; }
+      main { border: 1px solid var(--line); }
       p { margin: 0 0 8px; }
 
       header.host {
-        padding: 10px 16px;
+        padding: 12px 18px;
         background: var(--panel);
-        border-bottom: 3px solid var(--line);
+        border-bottom: 1px solid var(--line);
         display: flex;
         align-items: center;
-        gap: 14px;
+        gap: 16px;
         flex: none;
       }
-      header.host h1 { margin: 0; font-size: 17px; }
+      header.host h1 { margin: 0; font-size: 16px; font-weight: 600; }
       .host-note { font-size: 12px; color: var(--muted); }
       .host-body { flex: 1; display: flex; min-height: 0; }
       /* The builder gets a bounded box, not the page. */
-      #slot { flex: 1; min-width: 0; border-right: 3px solid var(--line); }
+      #slot { flex: 1; min-width: 0; border-right: 1px solid var(--line); }
       aside.host {
-        width: 300px;
-        padding: 14px;
+        width: 320px;
+        padding: 16px;
         overflow-y: auto;
         background: var(--panel);
+        border-left: 1px solid var(--line);
         flex: none;
       }
-      aside.host h2 { font-size: 14px; margin: 0 0 8px; }
+      aside.host h2 { font-size: 13px; margin: 0 0 8px; font-weight: 600; }
       pre.out {
-        background: #fff;
-        border: 2px solid var(--line);
-        padding: 8px;
-        font: 11px/1.45 ui-monospace, Consolas, monospace;
-        color: #333;
+        background: var(--bg);
+        border: 1px solid var(--line);
+        border-radius: 3px;
+        padding: 10px;
+        font: 11px/1.5 ui-monospace, Consolas, monospace;
+        color: #2b3440;
         white-space: pre-wrap;
         word-break: break-word;
         max-height: 46vh;
@@ -82,8 +92,8 @@
       <h1>Host application</h1>
       <button id="hostBtn">A host button</button>
       <span class="host-note">
-        Pink, serif and dashed — the host's own styling. The builder beside it should be
-        untouched by any of it.
+        Light theme, serif, <code>content-box</code>, and its own <code>--accent</code> —
+        all of it conflicting with the builder beside it, none of it reaching in.
       </span>
     </header>
 
