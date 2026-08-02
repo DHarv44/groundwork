@@ -30,9 +30,16 @@ function tileUrl(z: number, x: number, y: number): string {
  *
  * Fetched rather than loaded through an Image element, for three things the element
  * cannot do: abort (the camera moves on, the request should too), caching (the bytes
- * go into the same IndexedDB store the vector tiles use, under an `i/` prefix), and
- * an error that says what happened. Zero-byte cache entries record a tile the server
- * does not have, so the nothing is remembered instead of refetched.
+ * go into the same IndexedDB store the vector tiles use, under an `i2/` prefix), and
+ * an error that says what happened.
+ *
+ * Absence is NEVER cached. An earlier version wrote a zero-byte marker on 404 so a
+ * genuinely missing tile would not be refetched — but a transient 404 (a rate-limit
+ * hiccup, a CDN blip) then poisoned that tile's key permanently: every later ring
+ * covering it silently skipped the tile forever, leaving a soft base-resolution band
+ * in an otherwise sharp view at every revisit. The key prefix is bumped from `i/` to
+ * `i2/` so entries poisoned under the old rule are orphaned rather than trusted.
+ * Transient network failures get one retry before giving up on this pass.
  */
 async function fetchTileBytes(
   z: number,
@@ -40,22 +47,31 @@ async function fetchTileBytes(
   y: number,
   signal?: AbortSignal,
 ): Promise<ArrayBuffer | null> {
-  const key = `i/${z}/${x}/${y}`
+  const key = `i2/${z}/${x}/${y}`
   try {
     const cached = await tileCacheGet(key)
-    if (cached) return cached.byteLength > 0 ? cached : null
-    const res = await fetch(tileUrl(z, x, y), { signal })
-    if (!res.ok) {
-      if (res.status === 404) void tileCachePut(key, new ArrayBuffer(0))
-      return null
-    }
-    const buf = await res.arrayBuffer()
-    void tileCachePut(key, buf)
-    return buf
-  } catch (err) {
-    if ((err as Error)?.name === 'AbortError') throw err
-    return null
+    if (cached && cached.byteLength > 0) return cached
+  } catch {
+    /* a cache read failure is not a fetch failure */
   }
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const res = await fetch(tileUrl(z, x, y), { signal })
+      if (res.ok) {
+        const buf = await res.arrayBuffer()
+        if (buf.byteLength > 0) {
+          void tileCachePut(key, buf)
+          return buf
+        }
+        return null
+      }
+      // Server errors may pass on retry; a 4xx will not — don't hammer it.
+      if (res.status < 500) return null
+    } catch (err) {
+      if ((err as Error)?.name === 'AbortError') throw err
+    }
+  }
+  return null
 }
 
 /** A tile decoded for drawing. Failures resolve null — one missing tile is a blemish. */

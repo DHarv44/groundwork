@@ -58,7 +58,7 @@ export default function Terrain({ build, sky, fogDensity, snowLine }: Props) {
   // bound sampler flashes.
   const satRings = useStore((s) => s.satRings)
   const ringTexCache = useRef(
-    new Map<HTMLCanvasElement, { tex: THREE.Texture; version: number }>(),
+    new Map<HTMLCanvasElement, { tex: THREE.Texture; version: number; w: number; h: number }>(),
   )
   const ringLayers = useMemo(() => {
     const cache = ringTexCache.current
@@ -67,6 +67,21 @@ export default function Terrain({ build, sky, fogDensity, snowLine }: Props) {
       if (!ring) return null
       live.add(ring.canvas)
       let entry = cache.get(ring.canvas)
+      // A texture may NEVER outlive a resize of its canvas. three.js backs the
+      // texture with immutable GPU storage sized at the first upload; once the
+      // canvas changes dimensions, every later re-upload lands cropped or scaled
+      // against that stale storage, and the drape stops corresponding to its
+      // rect — imagery visibly displaced, panning at the wrong rate, unfixable
+      // by needsUpdate, healed only by anything that mints a fresh texture
+      // (which is why switching texture modes "fixed" it). Ring re-keys resize
+      // their canvas whenever the zoom crosses a tile-count threshold, so this
+      // check is load-bearing on every zoom gesture.
+      if (entry && (entry.w !== ring.canvas.width || entry.h !== ring.canvas.height)) {
+        const old = entry.tex
+        setTimeout(() => old.dispose(), 400)
+        cache.delete(ring.canvas)
+        entry = undefined
+      }
       if (!entry) {
         const tex = new THREE.CanvasTexture(ring.canvas)
         tex.flipY = false
@@ -77,11 +92,12 @@ export default function Terrain({ build, sky, fogDensity, snowLine }: Props) {
         tex.generateMipmaps = true
         tex.anisotropy = 16
         tex.needsUpdate = true
-        entry = { tex, version: ring.version }
+        entry = { tex, version: ring.version, w: ring.canvas.width, h: ring.canvas.height }
         cache.set(ring.canvas, entry)
       } else if (entry.version !== ring.version) {
-        // Same canvas, new pixels: the ring sharpened in place. Re-upload under
-        // the same texture identity so the engine's fade does not restart.
+        // Same canvas, same dimensions, new pixels: the ring sharpened in place.
+        // Re-upload under the same texture identity so the engine's fade does
+        // not restart.
         entry.version = ring.version
         entry.tex.needsUpdate = true
       }

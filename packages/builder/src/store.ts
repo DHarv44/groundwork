@@ -497,7 +497,7 @@ interface State {
    * independent — the inner ring re-centres often, the outer rarely — so each index
    * carries its own abort.
    */
-  loadSatRing: (index: number, sub: Bounds, maxZoom: number) => Promise<void>
+  loadSatRing: (index: number, sub: Bounds, maxZoom: number, attempt?: number) => Promise<void>
   /** Drop every ring — leaving satellite mode, or the box changing under them. */
   clearSatRings: () => void
   /**
@@ -1501,7 +1501,7 @@ export const useStore = create<State>((setState, getState) => {
     }
   },
 
-  loadSatRing: async (index: number, sub: Bounds, maxZoom: number): Promise<void> => {
+  loadSatRing: async (index: number, sub: Bounds, maxZoom: number, attempt = 0): Promise<void> => {
     if (index < 0 || index > 3) return
     // The camera moved on; whatever this ring was fetching is for somewhere it no
     // longer is. Other rings keep their fetches — they cover different ground.
@@ -1564,7 +1564,7 @@ export const useStore = create<State>((setState, getState) => {
     }
 
     try {
-      await fetchImageryProgressive(s, {
+      const result = await fetchImageryProgressive(s, {
         maxZoom: Math.min(maxZoom, MAX_IMAGERY_ZOOM),
         signal: ctrl.signal,
         canvas: ringCanvas,
@@ -1608,6 +1608,25 @@ export const useStore = create<State>((setState, getState) => {
         },
       })
       flush()
+      // A fetch that came home with tiles missing leaves base-soft patches in an
+      // otherwise sharp ring — read as the imagery being wrong, because visually
+      // it is. The watcher marked this key satisfied when the fetch STARTED, so
+      // nothing would ever repair it. One delayed retry covers the transient
+      // failures; tiles that are genuinely absent upstream just miss again
+      // quietly and the base-seeded ground (correctly placed, merely soft)
+      // remains.
+      if (
+        attempt === 0 &&
+        !ctrl.signal.aborted &&
+        result.tilesTotal > 0 &&
+        result.tilesLoaded < result.tilesTotal
+      ) {
+        setTimeout(() => {
+          if (satRingAborts[index] === null && getState().settings.textureMode === 'satellite') {
+            void getState().loadSatRing(index, sub, maxZoom, 1)
+          }
+        }, 1500)
+      }
     } catch (err) {
       // A failed close-up is not an error state — the coarser rings and the base
       // drape are still underneath, and the seeded canvas already published is
