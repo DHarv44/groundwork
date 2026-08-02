@@ -26,7 +26,8 @@
     "directory": "packages/engine"
   },
   "publishConfig": {
-    "registry": "https://npm.pkg.github.com"
+    "registry": "https://registry.npmjs.org",
+    "access": "public"
   },
   "dependencies": {
     "@dharv44/groundwork-core": "^0.2.0"
