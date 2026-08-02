@@ -1,5 +1,6 @@
 import { fromArrayBuffer } from 'geotiff'
 import { boundsAreaKm2, type Bounds, type HeightField } from '@groundwork/core'
+import { builderConfig } from '../config'
 import {
   DAILY_QUOTA,
   cacheGet,
@@ -226,11 +227,7 @@ function describeFailure(status: number, body: string): string {
 }
 
 function endpoint(params: Record<string, string>): string {
-  const qs = new URLSearchParams(params).toString()
-  // In dev the Vite proxy appends API_Key server-side; in a static build we must send it.
-  if (import.meta.env.DEV) return `/api/opentopo/globaldem?${qs}`
-  const key = import.meta.env.VITE_OPENTOPO_KEY ?? ''
-  return `https://portal.opentopography.org/API/globaldem?${qs}&API_Key=${key}`
+  return builderConfig().endpoints.openTopography(new URLSearchParams(params).toString())
 }
 
 export function validateRequest(bounds: Bounds, source: DemSource): string | null {

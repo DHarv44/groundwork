@@ -8,6 +8,7 @@ import HeadingTape from './HeadingTape'
 import ViewLayers from './ViewLayers'
 import { computeSky } from '../lib/atmosphere'
 import { rendererRef } from '../lib/capture'
+import { builderConfig } from '../config'
 import { loadSession, saveSession } from '../lib/session'
 import Terrain from './Terrain'
 import Water from './Water'
@@ -19,7 +20,7 @@ function RendererBridge() {
   const camera = useThree((s) => s.camera)
   useEffect(() => {
     rendererRef.current = gl
-    if (import.meta.env.DEV) {
+    if (builderConfig().devHooks) {
       ;(window as unknown as Record<string, unknown>).__viewer = { gl, scene, camera }
     }
     return () => {

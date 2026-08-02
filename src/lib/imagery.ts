@@ -1,14 +1,16 @@
 import type { Bounds } from './geo'
 import { latToTileY, lonToTileX } from './geo'
+import { builderConfig } from '../config'
 
 const TILE = 256
 const MAX_TILES = 144
 const MAX_PIXELS = 4096
 
 function tileUrl(z: number, x: number, y: number): string {
-  // Esri World Imagery is served z/y/x. Proxied in dev so the canvas stays untainted.
-  if (import.meta.env.DEV) return `/api/imagery/${z}/${y}/${x}`
-  return `https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${y}/${x}`
+  // Esri World Imagery is served z/y/x — the swap happens here rather than in the
+  // config, so a host overriding the endpoint is not handed an argument order that
+  // disagrees with every other tile service it deals with.
+  return builderConfig().endpoints.imagery(z, y, x)
 }
 
 function loadTile(url: string): Promise<HTMLImageElement | null> {

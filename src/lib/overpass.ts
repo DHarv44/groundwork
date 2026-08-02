@@ -1,5 +1,6 @@
 import type { Bounds } from './geo'
 import { boundsAreaKm2 } from './geo'
+import { builderConfig } from '../config'
 
 /**
  * What OpenStreetMap knows about a box: roads, water, woodland and where the town is.
@@ -199,10 +200,8 @@ export const MAX_ROAD_AREA_KM2 = 40000
  */
 const MAX_RESPONSE_BYTES = 120e6
 
-const ENDPOINTS = [
-  'https://overpass-api.de/api/interpreter',
-  'https://overpass.kumi.systems/api/interpreter',
-]
+/** Read per call rather than captured, so a host can configure them before mounting. */
+const endpoints = (): string[] => builderConfig().endpoints.overpass
 
 function tagsFor(classes: RoadClass[]): string[] {
   const want = new Set(classes)
@@ -446,11 +445,10 @@ export async function fetchOsm(
   const body = `data=${encodeURIComponent(buildQuery(bounds, requested))}`
 
   let lastError: Error | null = null
-  for (const endpoint of ENDPOINTS) {
+  const hosts = endpoints()
+  for (const endpoint of hosts) {
     try {
-      onProgress?.(
-        endpoint === ENDPOINTS[0] ? 'Querying OpenStreetMap…' : 'Retrying on a mirror…',
-      )
+      onProgress?.(endpoint === hosts[0] ? 'Querying OpenStreetMap…' : 'Retrying on a mirror…')
       const res = await postWithBackoff(endpoint, body, signal, onProgress)
       if (!res.ok) {
         // 429 and 504 are what a public Overpass instance says when it is busy, and they

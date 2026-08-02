@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import * as THREE from 'three'
+import { builderConfig } from './config'
 import HydrologyWorker from './workers/hydrology.worker?worker'
 import RoadMaskWorker from './workers/roadmask.worker?worker'
 import { DEFAULT_TUNING, type HydrologyResult, type HydrologyTuning } from './lib/hydrology'
@@ -1395,6 +1396,6 @@ export const useStore = create<State>((setState, getState) => {
 useStore.getState().refreshBiome()
 
 // Dev hook: drive the whole pipeline from the console without touching the UI.
-if (import.meta.env.DEV) {
+if (builderConfig().devHooks) {
   ;(window as unknown as Record<string, unknown>).__terrain = useStore
 }

@@ -5,6 +5,7 @@ import 'leaflet/dist/leaflet.css'
 import type { Bounds } from '../lib/geo'
 import { DEFAULT_BOUNDS } from '../lib/geo'
 import { useStore } from '../store'
+import { storageKey } from '../config'
 import KoppenLayer from './KoppenLayer'
 
 export interface Preset {
@@ -99,7 +100,7 @@ function BoxDrawer({ armed, onFinish }: { armed: boolean; onFinish: (b: Bounds) 
   )
 }
 
-const VIEW_KEY = 'terrain-builder.mapView'
+const VIEW_KEY = () => storageKey('mapView')
 
 interface SavedView {
   lat: number
@@ -109,7 +110,7 @@ interface SavedView {
 
 function loadSavedView(): SavedView | null {
   try {
-    const raw = localStorage.getItem(VIEW_KEY)
+    const raw = localStorage.getItem(VIEW_KEY())
     if (!raw) return null
     const v = JSON.parse(raw) as SavedView
     return Number.isFinite(v.lat) && Number.isFinite(v.lng) && Number.isFinite(v.zoom)
@@ -128,7 +129,7 @@ function RememberView() {
       const c = map.getCenter()
       try {
         localStorage.setItem(
-          VIEW_KEY,
+          VIEW_KEY(),
           JSON.stringify({ lat: c.lat, lng: c.lng, zoom: map.getZoom() }),
         )
       } catch {
@@ -155,13 +156,13 @@ function FitTo({ bounds, token }: { bounds: Bounds | null; token: number }) {
   return null
 }
 
-const BIOME_KEY = 'terrain-builder.showBiome'
+const BIOME_KEY = () => storageKey('showBiome')
 
 export default function MapPicker() {
   const bounds = useStore((s) => s.bounds)
   const setBounds = useStore((s) => s.setBounds)
   const biome = useStore((s) => s.biome)
-  const [showBiome, setShowBiome] = useState(() => localStorage.getItem(BIOME_KEY) === '1')
+  const [showBiome, setShowBiome] = useState(() => localStorage.getItem(BIOME_KEY()) === '1')
   const [armed, setArmed] = useState(true)
   const [fitToken, setFitToken] = useState(0)
   // Read once at mount; MapContainer ignores later changes to center/zoom anyway.
@@ -276,7 +277,7 @@ export default function MapPicker() {
           className={`biome-toggle ${showBiome ? 'on' : ''}`}
           onClick={() =>
             setShowBiome((v) => {
-              localStorage.setItem(BIOME_KEY, v ? '0' : '1')
+              localStorage.setItem(BIOME_KEY(), v ? '0' : '1')
               return !v
             })
           }

@@ -6,7 +6,9 @@
  * area, source or camera — so it can be applied to any terrain.
  */
 
-const KEY = 'terrain-builder.presets'
+import { storageKey } from '../config'
+
+const KEY = () => storageKey('presets')
 
 export interface Preset {
   name: string
@@ -16,7 +18,7 @@ export interface Preset {
 
 export function loadPresets(): Preset[] {
   try {
-    const raw = localStorage.getItem(KEY)
+    const raw = localStorage.getItem(KEY())
     const list = raw ? (JSON.parse(raw) as Preset[]) : []
     return Array.isArray(list) ? list : []
   } catch {
@@ -26,7 +28,7 @@ export function loadPresets(): Preset[] {
 
 function write(list: Preset[]): void {
   try {
-    localStorage.setItem(KEY, JSON.stringify(list))
+    localStorage.setItem(KEY(), JSON.stringify(list))
   } catch {
     /* storage disabled or full — not worth failing over */
   }
@@ -52,6 +54,14 @@ export function deletePreset(name: string): Preset[] {
 // ---- copy and paste ------------------------------------------------------
 
 /** Marks the text as ours, so a paste of something else fails with a clear reason. */
+/**
+ * Deliberately *not* namespaced by the storage prefix.
+ *
+ * This is the identifier inside exported preset files, not a storage key. A host
+ * changing its prefix must not stop being able to read presets somebody else exported
+ * — the format is shared across every deployment, which is the whole point of it
+ * having a name.
+ */
 const FORMAT = 'terrain-builder/preset'
 
 /** Human-readable on purpose: this is meant to be pasted into a message or a file. */

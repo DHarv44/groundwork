@@ -1,5 +1,6 @@
 import type { Bounds } from './geo'
 import { latToTileY, lonToTileX } from './geo'
+import { builderConfig } from '../config'
 import type { HeightField } from './opentopo'
 
 /**
@@ -29,8 +30,7 @@ const MAX_SAMPLES = 4096
 const MAX_ZOOM = 13
 
 function tileUrl(z: number, x: number, y: number): string {
-  if (import.meta.env.DEV) return `/api/terrarium/${z}/${x}/${y}.png`
-  return `https://s3.amazonaws.com/elevation-tiles-prod/terrarium/${z}/${x}/${y}.png`
+  return builderConfig().endpoints.terrarium(z, x, y)
 }
 
 function loadTile(url: string): Promise<HTMLImageElement | null> {

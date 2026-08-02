@@ -1,3 +1,5 @@
+import { builderConfig } from '../config'
+
 /**
  * Global Köppen–Geiger climate map, held locally.
  *
@@ -15,7 +17,11 @@
  * the box, and the whole visible map can be painted, without a single request.
  */
 
-const RASTER_URL = `${import.meta.env.BASE_URL}koppen_0p1.png`
+/**
+ * Read per call, not captured at module load — a host configures the asset base before
+ * mounting, which is after this module has already been imported.
+ */
+const rasterUrl = (): string => `${builderConfig().assetBase}koppen_0p1.png`
 
 /** Equirectangular, whole globe, 0.1° cells. Origin is the north-west corner. */
 const WIDTH = 3600
@@ -65,7 +71,7 @@ export function loadKoppen(): Promise<Uint8Array | null> {
 
   loading = (async () => {
     try {
-      const res = await fetch(RASTER_URL)
+      const res = await fetch(rasterUrl())
       if (!res.ok) throw new Error(`koppen ${res.status}`)
       const bitmap = await createImageBitmap(await res.blob(), {
         colorSpaceConversion: 'none',

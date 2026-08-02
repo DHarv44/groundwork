@@ -1,3 +1,4 @@
+import { builderConfig, storageKey } from '../config'
 import type { Bounds } from './geo'
 import type { HeightField } from './opentopo'
 import type { OsmData } from './overpass'
@@ -15,7 +16,10 @@ import type { OsmData } from './overpass'
 // cached area rather than migrate it, and those cost API calls to fetch — a cosmetic
 // tidy is not worth spending someone's daily allowance twice. The same goes for the
 // localStorage keys elsewhere: they are internal, and nothing reads them but us.
-const DB_NAME = 'terrain-builder'
+//
+// Now derived from the configured prefix, which defaults to that same name — so a host
+// embedding the builder can isolate its storage, and a standalone run is unchanged.
+const dbName = (): string => builderConfig().storagePrefix
 // v2 added the road store. Bumping the version runs the upgrade, which only *creates*
 // the missing store — the cached DEMs are left untouched, which matters because they
 // cost API allowance to refetch and this app is opened with a nearly-full cache.
@@ -43,7 +47,7 @@ export function cacheKey(bounds: Bounds, demtype: string): string {
 
 function openDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, DB_VERSION)
+    const req = indexedDB.open(dbName(), DB_VERSION)
     req.onupgradeneeded = () => {
       if (!req.result.objectStoreNames.contains(STORE)) {
         req.result.createObjectStore(STORE, { keyPath: 'key' })
@@ -231,13 +235,13 @@ export async function roadCachePut(network: OsmData): Promise<void> {
 
 // ---- local request budget -------------------------------------------------
 
-const QUOTA_KEY = 'terrain-builder.requests'
+const QUOTA_KEY = () => storageKey('requests')
 export const DAILY_QUOTA = 50
 
 /** Timestamps of requests that actually hit the network, within the last 24 h. */
 function recentRequests(): number[] {
   try {
-    const raw = localStorage.getItem(QUOTA_KEY)
+    const raw = localStorage.getItem(QUOTA_KEY())
     const list: number[] = raw ? JSON.parse(raw) : []
     const cutoff = Date.now() - 24 * 3600 * 1000
     return list.filter((t) => t > cutoff)
@@ -250,7 +254,7 @@ export function noteRequest(): void {
   try {
     const list = recentRequests()
     list.push(Date.now())
-    localStorage.setItem(QUOTA_KEY, JSON.stringify(list))
+    localStorage.setItem(QUOTA_KEY(), JSON.stringify(list))
   } catch {
     /* ignore */
   }

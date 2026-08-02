@@ -1,3 +1,5 @@
+import { storageKey } from '../config'
+
 /**
  * What biome a tile sits in, and what the ground should therefore look like.
  *
@@ -38,11 +40,11 @@ export interface Biome {
 const START = '1991-01-01'
 const END = '2020-12-31'
 
-const CACHE_KEY = 'terrain-builder.climate'
+const CACHE_KEY = () => storageKey('climate')
 
 function cacheRead(key: string): ClimateNormals | null {
   try {
-    const raw = localStorage.getItem(CACHE_KEY)
+    const raw = localStorage.getItem(CACHE_KEY())
     const all = raw ? (JSON.parse(raw) as Record<string, unknown>) : {}
     const hit = all[key] as ClimateNormals | undefined
     // Shape-checked rather than trusted: this cache has already outlived one change of
@@ -55,10 +57,10 @@ function cacheRead(key: string): ClimateNormals | null {
 
 function cacheWrite(key: string, normals: ClimateNormals): void {
   try {
-    const raw = localStorage.getItem(CACHE_KEY)
+    const raw = localStorage.getItem(CACHE_KEY())
     const all = raw ? (JSON.parse(raw) as Record<string, ClimateNormals>) : {}
     all[key] = normals
-    localStorage.setItem(CACHE_KEY, JSON.stringify(all))
+    localStorage.setItem(CACHE_KEY(), JSON.stringify(all))
   } catch {
     /* storage disabled — the lookup just repeats next time */
   }

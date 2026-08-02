@@ -1,3 +1,4 @@
+import { storageKey } from '../config'
 import type { Bounds } from './geo'
 
 /**
@@ -6,7 +7,7 @@ import type { Bounds } from './geo'
  * already cached in IndexedDB, so restoring a session never spends an API call.
  */
 
-const KEY = 'terrain-builder.session'
+const KEY = () => storageKey('session')
 
 export interface SessionCamera {
   pos: [number, number, number]
@@ -26,7 +27,7 @@ export interface SessionState {
 
 export function loadSession(): SessionState {
   try {
-    const raw = localStorage.getItem(KEY)
+    const raw = localStorage.getItem(KEY())
     return raw ? (JSON.parse(raw) as SessionState) : {}
   } catch {
     return {}
@@ -36,7 +37,7 @@ export function loadSession(): SessionState {
 /** Merge-on-write, so each part of the app can persist its own slice independently. */
 export function saveSession(patch: SessionState): void {
   try {
-    localStorage.setItem(KEY, JSON.stringify({ ...loadSession(), ...patch }))
+    localStorage.setItem(KEY(), JSON.stringify({ ...loadSession(), ...patch }))
   } catch {
     /* storage disabled — not worth failing over */
   }
@@ -44,7 +45,7 @@ export function saveSession(patch: SessionState): void {
 
 export function clearSession(): void {
   try {
-    localStorage.removeItem(KEY)
+    localStorage.removeItem(KEY())
   } catch {
     /* ignore */
   }
