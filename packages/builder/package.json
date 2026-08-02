@@ -1,6 +1,6 @@
 {
   "name": "@dharv44/groundwork-builder",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "The authoring tool: pick a box on Earth, tune it, write a pack.",
   "type": "module",
   "license": "MIT",
