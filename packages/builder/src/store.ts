@@ -1363,11 +1363,19 @@ export const useStore = create<State>((setState, getState) => {
         imageryLoading: false,
         message: '',
       })
-    } catch {
+    } catch (err) {
+      // An abort is the caller's doing, not a failure to report.
+      if ((err as Error)?.name === 'AbortError') {
+        setState({ imageryLoading: false, message: '' })
+        return
+      }
+      // The reason travels. The old blanket message turned every transient hiccup
+      // into "unavailable for this area", which reads as a fact about the place and
+      // sent the debugging at the wrong target entirely.
       setState({
         imageryLoading: false,
         message: '',
-        error: 'Satellite imagery unavailable for this area.',
+        error: `Satellite imagery failed (${err instanceof Error ? err.message : String(err)}) — click Satellite to retry.`,
       })
     }
   },
