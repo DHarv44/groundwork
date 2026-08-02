@@ -8,7 +8,7 @@ import type { Bounds } from './lib/geo'
 import { DEFAULT_BOUNDS, boundsAreaKm2, climaticSnowLine, climaticTreeLine } from './lib/geo'
 import type { HeightField } from './lib/opentopo'
 import { DEM_SOURCES, fetchHeightField, validateRequest } from './lib/opentopo'
-import { fetchImagery } from './lib/imagery'
+import { MAX_IMAGERY_ZOOM, fetchImagery } from './lib/imagery'
 import {
   NoRoadDataError,
   DEFAULT_ROAD_CLASSES,
@@ -1453,7 +1453,7 @@ export const useStore = create<State>((setState, getState) => {
       return
     }
 
-    const { heightField, imagery, imageryZoom, settings } = getState()
+    const { heightField, imagery, settings } = getState()
     if (!heightField || !imagery || settings.textureMode !== 'satellite') return
     if (settings.satPatchBoost <= 0) return
 
@@ -1470,9 +1470,16 @@ export const useStore = create<State>((setState, getState) => {
     const ctrl = new AbortController()
     satPatchAbort = ctrl
     try {
-      const result = await fetchImagery(s, undefined, ctrl.signal, imageryZoom + settings.satPatchBoost)
+      // The ceiling comes from the slider alone, not from the base zoom: on a huge box
+      // the base is capped very low, and "base plus a few" would forbid exactly the
+      // close-ups that box needs most. Each slider step is two zooms — 13/15/17/19 —
+      // and the footprint's own tile budget decides what is actually reachable.
+      const maxZoom = Math.min(11 + 2 * settings.satPatchBoost, MAX_IMAGERY_ZOOM)
+      const result = await fetchImagery(s, undefined, ctrl.signal, maxZoom)
       if (ctrl.signal.aborted) return
       // No sharper than the base drape? Then the patch adds nothing but a seam.
+      // Returning here leaves any previous patch in place — stale-but-sharp beats
+      // a visible pop back to blur.
       if (result.zoom <= getState().imageryZoom) return
 
       const lonSpan = b.east - b.west

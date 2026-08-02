@@ -1467,16 +1467,16 @@ export default function Controls() {
               step={0.01}
               onChange={setSetting('aoStrength')}
             />
-            {/* How many zoom levels past the base drape the close-up patch may fetch
-                when the camera settles. 0 turns the mechanism off; each step doubles
-                the ground resolution under the camera. */}
+            {/* Sharpness ceiling for the close-up that follows the camera: each step is
+                two tile zooms (13/15/17/19 — from ~20 m to ~0.3 m per pixel). 0 turns
+                the mechanism off. The footprint's own tile budget decides what is
+                actually reachable at any moment; this only caps how far it may go. */}
             <Slider
               label="Satellite close-up"
               value={settings.satPatchBoost}
               min={0}
               max={4}
               step={1}
-              suffix=" zooms"
               decimals={0}
               onChange={setSetting('satPatchBoost')}
             />

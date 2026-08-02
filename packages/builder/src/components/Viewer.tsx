@@ -67,8 +67,11 @@ function SatPatchWatcher() {
   const loadSatPatch = useStore((s) => s.loadSatPatch)
 
   const lastPos = useRef(new THREE.Vector3(Infinity, Infinity, Infinity))
+  const lastQuat = useRef(new THREE.Quaternion())
   const stillFor = useRef(0)
   const lastKey = useRef('')
+  const ndc = useRef(new THREE.Vector3())
+  const dir = useRef(new THREE.Vector3())
 
   useFrame((_, dt) => {
     if (!build || !heightField) return
@@ -82,10 +85,14 @@ function SatPatchWatcher() {
       return
     }
 
-    // Settled = the camera has barely moved for a third of a second. Distance alone
-    // is enough: orbiting, panning and walking all move the camera position.
-    const moved = camera.position.distanceToSquared(lastPos.current) > 1
+    // Settled = neither position nor orientation has meaningfully changed for a
+    // beat. Orientation matters on its own because tilting in place moves no metres
+    // yet completely changes which ground is on screen.
+    const moved =
+      camera.position.distanceToSquared(lastPos.current) > 1 ||
+      Math.abs(1 - Math.abs(camera.quaternion.dot(lastQuat.current))) > 1e-6
     lastPos.current.copy(camera.position)
+    lastQuat.current.copy(camera.quaternion)
     if (moved) {
       stillFor.current = 0
       return
@@ -93,52 +100,78 @@ function SatPatchWatcher() {
     stillFor.current += dt
     if (stillFor.current < 0.35) return
 
-    // The footprint: centred on what the camera orbits (or, walking, roughly the
-    // ground underfoot), sized by how far away the camera is. The 0.75 makes the
-    // patch comfortably overfill a 50° view so its feathered edge stays off screen.
+    // The footprint is what the camera actually SEES: the four frustum corner rays
+    // dropped onto the ground plane, not a square guessed around the orbit target.
+    // That is the difference between "sharp near the middle" and "sharp viewport" —
+    // a tilted view reaches ground far beyond any target-centred square.
+    //
+    // Rays that miss the ground (looking at sky) or land absurdly far away are
+    // clamped to a horizon distance: past a few times the eye distance the fog owns
+    // the pixels anyway, and chasing the mathematical horizon would balloon the
+    // footprint until no zoom gain survived the tile budget.
     const target = controls?.target ?? camera.position
     const dist = Math.max(200, camera.position.distanceTo(target))
-    const half = dist * 0.75
-    const span = Math.min(build.widthMetres, build.depthMetres)
+    const planeY = controls ? controls.target.y : 0
+    const maxDist = dist * 5
 
-    // Wide out, the base drape is already the best available — carrying a patch
-    // there would just re-render the middle of it through a seam.
-    if (half * 2 > span * 0.6) {
-      if (lastKey.current !== '') {
-        lastKey.current = ''
-        void loadSatPatch(null)
-      }
-      return
+    let minX = Infinity
+    let maxX = -Infinity
+    let minZ = Infinity
+    let maxZ = -Infinity
+    for (const [cx, cy] of [
+      [-1, -1],
+      [1, -1],
+      [-1, 1],
+      [1, 1],
+    ] as const) {
+      dir.current.copy(ndc.current.set(cx, cy, 0.5).unproject(camera)).sub(camera.position).normalize()
+      const t = dir.current.y < -1e-4 ? (planeY - camera.position.y) / dir.current.y : Infinity
+      const reach = Math.min(t > 0 ? t : Infinity, maxDist)
+      const x = camera.position.x + dir.current.x * reach
+      const z = camera.position.z + dir.current.z * reach
+      minX = Math.min(minX, x)
+      maxX = Math.max(maxX, x)
+      minZ = Math.min(minZ, z)
+      maxZ = Math.max(maxZ, z)
     }
+
+    // A little margin so panning has somewhere sharp to arrive in, then clamp to the
+    // terrain — the patch cannot cover ground the box does not have.
+    const marginX = (maxX - minX) * 0.1
+    const marginZ = (maxZ - minZ) * 0.1
+    const halfW = build.widthMetres / 2
+    const halfD = build.depthMetres / 2
+    minX = Math.max(minX - marginX, -halfW)
+    maxX = Math.min(maxX + marginX, halfW)
+    minZ = Math.max(minZ - marginZ, -halfD)
+    maxZ = Math.min(maxZ + marginZ, halfD)
+    if (maxX <= minX || maxZ <= minZ) return
 
     // World metres → the box's lon/lat. The mesh runs x west→east and z north→south,
     // both centred on the origin — the same convention every mask projector uses.
     const b = heightField.bounds
-    const u = target.x / build.widthMetres + 0.5
-    const v = target.z / build.depthMetres + 0.5
     const lonSpan = b.east - b.west
     const latSpan = b.north - b.south
-    const cLon = b.west + u * lonSpan
-    const cLat = b.north - v * latSpan
-    const dLon = (half / build.widthMetres) * lonSpan
-    const dLat = (half / build.depthMetres) * latSpan
+    const west = b.west + (minX / build.widthMetres + 0.5) * lonSpan
+    const east = b.west + (maxX / build.widthMetres + 0.5) * lonSpan
+    const north = b.north - (minZ / build.depthMetres + 0.5) * latSpan
+    const south = b.north - (maxZ / build.depthMetres + 0.5) * latSpan
 
-    // Quantised, so drift of a few metres or a nudge of the wheel does not refetch —
-    // the centre snaps to a fraction of the patch size and the size to powers of two.
+    // Quantised, so metres of drift or a wheel nudge do not refetch: corners snap to
+    // a tenth of the footprint, size to powers of two. When the view IS wider than
+    // any useful patch, the store's no-gain guard skips the fetch and — deliberately
+    // — leaves the previous patch standing. Stale-but-sharp beats popping to blur.
+    const sizeStep = Math.round(Math.log2(maxX - minX))
+    const grid = (maxX - minX) * 0.1
     const key = [
-      Math.round(cLon / (dLon * 0.5)),
-      Math.round(cLat / (dLat * 0.5)),
-      Math.round(Math.log2(half)),
+      Math.round(minX / grid),
+      Math.round(minZ / grid),
+      sizeStep,
     ].join('|')
     if (key === lastKey.current) return
     lastKey.current = key
 
-    void loadSatPatch({
-      west: cLon - dLon,
-      east: cLon + dLon,
-      south: cLat - dLat,
-      north: cLat + dLat,
-    })
+    void loadSatPatch({ west, east, south, north })
   })
 
   return null
