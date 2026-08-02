@@ -157,12 +157,38 @@ function FitTo({ bounds, token }: { bounds: Bounds | null; token: number }) {
 }
 
 const BIOME_KEY = () => storageKey('showBiome')
+const MINI_SAT_KEY = () => storageKey('miniSat')
+
+/**
+ * Minimap basemaps. Esri's canvas maps rather than openstreetmap.org tiles,
+ * for one reason: labels. OSM's standard style names places in the local
+ * script — Arabic over Iraq, Cyrillic over Ukraine — which is faithful to the
+ * ground and useless for orientation. The Dark Gray Canvas pair labels the
+ * whole world in English, and happens to sit well against the dark UI. The
+ * satellite pair is the same World Imagery the terrain drape uses, with
+ * Esri's English boundaries-and-places reference on top. Canvas tiles stop at
+ * z16; maxNativeZoom lets Leaflet upsample them beyond rather than blanking.
+ */
+const ESRI = 'https://server.arcgisonline.com/ArcGIS/rest/services'
+const BASEMAPS = {
+  map: {
+    base: `${ESRI}/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}`,
+    labels: `${ESRI}/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}`,
+    maxNative: 16,
+  },
+  sat: {
+    base: `${ESRI}/World_Imagery/MapServer/tile/{z}/{y}/{x}`,
+    labels: `${ESRI}/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}`,
+    maxNative: 19,
+  },
+} as const
 
 export default function MapPicker() {
   const bounds = useStore((s) => s.bounds)
   const setBounds = useStore((s) => s.setBounds)
   const biome = useStore((s) => s.biome)
   const [showBiome, setShowBiome] = useState(() => localStorage.getItem(BIOME_KEY()) === '1')
+  const [miniSat, setMiniSat] = useState(() => localStorage.getItem(MINI_SAT_KEY()) === '1')
   const [armed, setArmed] = useState(true)
   const [fitToken, setFitToken] = useState(0)
   // Read once at mount; MapContainer ignores later changes to center/zoom anyway.
@@ -242,10 +268,19 @@ export default function MapPicker() {
           style={{ height: '100%', width: '100%' }}
           worldCopyJump
         >
+          {/* Keyed by mode so the pair swaps atomically instead of mutating in place. */}
           <TileLayer
-            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-            attribution="&copy; OpenStreetMap"
+            key={miniSat ? 'sat-base' : 'map-base'}
+            url={BASEMAPS[miniSat ? 'sat' : 'map'].base}
+            attribution="&copy; Esri"
             maxZoom={19}
+            maxNativeZoom={BASEMAPS[miniSat ? 'sat' : 'map'].maxNative}
+          />
+          <TileLayer
+            key={miniSat ? 'sat-labels' : 'map-labels'}
+            url={BASEMAPS[miniSat ? 'sat' : 'map'].labels}
+            maxZoom={19}
+            maxNativeZoom={BASEMAPS[miniSat ? 'sat' : 'map'].maxNative}
           />
           {bounds && (
             <Rectangle
@@ -271,6 +306,19 @@ export default function MapPicker() {
           title={armed ? 'Drawing armed — drag on the map' : 'Click to draw a new box'}
         >
           {armed ? '◻ drag to draw' : '✎ draw box'}
+        </button>
+
+        <button
+          className={`minisat-toggle ${miniSat ? 'on' : ''}`}
+          onClick={() =>
+            setMiniSat((v) => {
+              localStorage.setItem(MINI_SAT_KEY(), v ? '0' : '1')
+              return !v
+            })
+          }
+          title="Swap the minimap between the labelled map and satellite imagery"
+        >
+          ⌾ satellite
         </button>
 
         <button

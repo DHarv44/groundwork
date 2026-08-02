@@ -207,6 +207,26 @@
   color: var(--accent);
 }
 
+/* Minimap basemap switch, third in the stack under draw and biomes. */
+.minisat-toggle {
+  position: absolute;
+  right: 8px;
+  top: 64px;
+  z-index: 450;
+  padding: 5px 9px;
+  font-size: 11px;
+  border-radius: 5px;
+  background: rgba(12, 16, 22, 0.88);
+  border: 1px solid var(--line);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.minisat-toggle.on {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 /* Names the class the selection box is sitting in, on the map where the box is. */
 .biome-badge {
   position: absolute;
