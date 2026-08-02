@@ -26,6 +26,14 @@ export interface BuilderEndpoints {
   /** Esri World Imagery. Served `z/y/x` — note the order. */
   imagery: (z: number, y: number, x: number) => string
   /**
+   * TileJSON endpoint for OpenMapTiles-schema vector tiles — the road/water/wood/
+   * built-up/place source. Resolved once per session for the tile URL template.
+   * The default is OpenFreeMap: keyless, CORS-open, no stated limits. A host that
+   * wants its own weather can point this at any OpenMapTiles-compatible server or a
+   * self-hosted PMTiles-backed endpoint.
+   */
+  osmTiles: string
+  /**
    * Overpass instances, tried in order.
    *
    * Several, because slots are counted per client IP and a busy instance answers 429
@@ -81,6 +89,7 @@ const DEFAULTS: BuilderConfig = {
       dev
         ? `/api/imagery/${z}/${y}/${x}`
         : `https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${y}/${x}`,
+    osmTiles: 'https://tiles.openfreemap.org/planet',
     overpass: [
       'https://overpass-api.de/api/interpreter',
       'https://overpass.kumi.systems/api/interpreter',

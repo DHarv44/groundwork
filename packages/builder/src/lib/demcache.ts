@@ -20,12 +20,14 @@ import type { OsmData } from './overpass'
 // Now derived from the configured prefix, which defaults to that same name — so a host
 // embedding the builder can isolate its storage, and a standalone run is unchanged.
 const dbName = (): string => builderConfig().storagePrefix
-// v2 added the road store. Bumping the version runs the upgrade, which only *creates*
-// the missing store — the cached DEMs are left untouched, which matters because they
-// cost API allowance to refetch and this app is opened with a nearly-full cache.
-const DB_VERSION = 2
+// v2 added the road store; v3 the raw vector-tile store. Bumping the version runs the
+// upgrade, which only *creates* missing stores — the cached DEMs are left untouched,
+// which matters because they cost API allowance to refetch and this app is opened
+// with a nearly-full cache.
+const DB_VERSION = 3
 const STORE = 'dem'
 const ROAD_STORE = 'roads'
+const TILE_STORE = 'osmtiles'
 
 interface CachedEntry {
   key: string
@@ -54,6 +56,9 @@ function openDb(): Promise<IDBDatabase> {
       }
       if (!req.result.objectStoreNames.contains(ROAD_STORE)) {
         req.result.createObjectStore(ROAD_STORE, { keyPath: 'key' })
+      }
+      if (!req.result.objectStoreNames.contains(TILE_STORE)) {
+        req.result.createObjectStore(TILE_STORE, { keyPath: 'key' })
       }
     }
     req.onsuccess = () => resolve(req.result)
@@ -139,9 +144,10 @@ export async function cacheClear(): Promise<void> {
   try {
     const db = await openDb()
     await new Promise<void>((resolve, reject) => {
-      const tx = db.transaction([STORE, ROAD_STORE], 'readwrite')
+      const tx = db.transaction([STORE, ROAD_STORE, TILE_STORE], 'readwrite')
       tx.objectStore(STORE).clear()
       tx.objectStore(ROAD_STORE).clear()
+      tx.objectStore(TILE_STORE).clear()
       tx.oncomplete = () => resolve()
       tx.onerror = () => reject(tx.error)
     })
@@ -187,8 +193,13 @@ interface CachedRoads {
  * summits, which is indistinguishable from a box that genuinely has none — open ocean
  * and empty desert are common and correct answers here, so there is nothing in the data
  * to tell the two apart. Exactly the case this version exists for.
+ *
+ * v5 came from Overpass; v6 comes from vector tiles. The shapes are the same but the
+ * content systematically differs — tile geometry is generalised per zoom, polygons
+ * arrive tile-clipped, trunk folds into motorway — so a v5 entry must not sit beside a
+ * v6 one pretending to be comparable.
  */
-const OSM_QUERY_VERSION = 5
+const OSM_QUERY_VERSION = 6
 
 /**
  * Keyed on the box alone.
@@ -224,6 +235,50 @@ export async function roadCachePut(network: OsmData): Promise<void> {
     await new Promise<void>((resolve, reject) => {
       const tx = db.transaction(ROAD_STORE, 'readwrite')
       tx.objectStore(ROAD_STORE).put({ key: roadKey(network.bounds), network })
+      tx.oncomplete = () => resolve()
+      tx.onerror = () => reject(tx.error)
+    })
+    db.close()
+  } catch {
+    /* cache writes are best-effort */
+  }
+}
+
+// ---- raw vector tiles -----------------------------------------------------
+
+/**
+ * Raw MVT bytes, keyed `t{version}/{z}/{x}/{y}` by the caller.
+ *
+ * Cached at the tile level rather than the box level because tiles are shared:
+ * overlapping and nested boxes reuse each other's tiles automatically, which is the
+ * cache-containment behaviour the box-keyed road store above could never give.
+ * Zero-byte entries are meaningful — they record that a tile is genuinely empty
+ * (open ocean), so the nothing is remembered instead of refetched.
+ */
+export async function tileCacheGet(key: string): Promise<ArrayBuffer | null> {
+  try {
+    const db = await openDb()
+    const entry = await new Promise<{ key: string; buf: ArrayBuffer } | undefined>(
+      (resolve, reject) => {
+        const tx = db.transaction(TILE_STORE, 'readonly')
+        const req = tx.objectStore(TILE_STORE).get(key)
+        req.onsuccess = () => resolve(req.result as { key: string; buf: ArrayBuffer } | undefined)
+        req.onerror = () => reject(req.error)
+      },
+    )
+    db.close()
+    return entry?.buf ?? null
+  } catch {
+    return null
+  }
+}
+
+export async function tileCachePut(key: string, buf: ArrayBuffer): Promise<void> {
+  try {
+    const db = await openDb()
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(TILE_STORE, 'readwrite')
+      tx.objectStore(TILE_STORE).put({ key, buf })
       tx.oncomplete = () => resolve()
       tx.onerror = () => reject(tx.error)
     })

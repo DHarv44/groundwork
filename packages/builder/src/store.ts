@@ -11,12 +11,12 @@ import { DEM_SOURCES, fetchHeightField, validateRequest } from './lib/opentopo'
 import { fetchImagery } from './lib/imagery'
 import {
   NoRoadDataError,
-  fetchOsm,
   DEFAULT_ROAD_CLASSES,
   type AreaKind,
   type OsmData,
   type RoadClass,
 } from './lib/overpass'
+import { fetchOsmTiles } from './lib/osmtiles'
 import type { MaskOptions, Masks } from './lib/roadmask'
 import { roadCacheGet, roadCachePut } from './lib/demcache'
 import { biomeOf, ensureKoppen, fetchNormals, profileFor, type Biome } from './lib/climate'
@@ -442,6 +442,8 @@ interface State {
 }
 
 let inflight: AbortController | null = null
+/** The road/area fetch in flight, aborted by clearRoads when the box changes. */
+let roadsAbort: AbortController | null = null
 
 let hydroWorker: Worker | null = null
 
@@ -916,6 +918,12 @@ export const useStore = create<State>((setState, getState) => {
 
   /** Drop the OSM data and its masks — called whenever the area changes under us. */
   function clearRoads(): void {
+    // A fetch for the old box must not keep running under the new one. This was the
+    // Overpass path's quiet self-competition bug — an orphaned request holding one of
+    // the per-IP queue slots against its own successor. Tiles have no slots, but an
+    // orphan still burns bandwidth and can land its stale result after the fresh one.
+    roadsAbort?.abort()
+    roadsAbort = null
     getState().roadMask?.dispose()
     getState().areaMask?.dispose()
     // A new box means new data, so the worker's held copy and its projected geometry
@@ -1365,8 +1373,11 @@ export const useStore = create<State>((setState, getState) => {
     }
 
     try {
-      const network = await fetchOsm(bounds, undefined, (note) => setState({ message: note }))
-      // The area may have been rebuilt while Overpass was thinking.
+      roadsAbort = new AbortController()
+      const network = await fetchOsmTiles(bounds, roadsAbort.signal, (note) =>
+        setState({ message: note }),
+      )
+      // The area may have been rebuilt while the tiles were coming down.
       if (getState().heightField?.bounds !== bounds) return
 
       void roadCachePut(network)
