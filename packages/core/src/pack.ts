@@ -32,6 +32,18 @@ export interface PackLayer {
   format: 'uint8' | 'uint16' | 'float32'
   channels: number
   /**
+   * Plane dimensions, when they differ from the manifest's.
+   *
+   * Derived fields legitimately have their own native resolution — a hydrology pass
+   * runs at a routing resolution chosen for the cost of the flood fill, not for the
+   * DEM's sample spacing. Forcing every layer to the elevation grid would mean
+   * resampling on the way in and again on the way out, which throws away detail in
+   * one direction and invents it in the other. Absent means "same as the manifest",
+   * which is the common case.
+   */
+  width?: number
+  height?: number
+  /**
    * For quantised integer planes: the real values that map to 0 and to the type's
    * maximum. Absent on `float32` planes and on integer planes that mean their own
    * value (a class index, a boolean).
@@ -221,6 +233,17 @@ export function validateManifest(m: unknown): string[] {
   }
 
   return errs
+}
+
+/** A layer's own dimensions, falling back to the manifest's. */
+export function layerSize(
+  layer: PackLayer,
+  manifest: Pick<PackManifest, 'width' | 'height'>,
+): { width: number; height: number } {
+  return {
+    width: layer.width ?? manifest.width,
+    height: layer.height ?? manifest.height,
+  }
 }
 
 /** Bytes one plane of a layer occupies, for sizing a read. */

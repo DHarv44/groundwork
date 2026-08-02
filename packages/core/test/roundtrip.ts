@@ -17,6 +17,8 @@ import {
   boxToLonLat,
   buildPack,
   lonLatToBox,
+  packFromBytes,
+  packToBytes,
   parseVectors,
   readHeightField,
   readRaster,
@@ -102,6 +104,24 @@ check('spike stays at (20,10)', Math.abs(back.data[10 * W + 20]! - 4000) < 0.06)
 const coverBack = readRaster(files, 'cover')
 check('extra layer reads back', coverBack !== null && coverBack.data[0] === 7)
 
+// A derived field at its own resolution — the hydrology pass runs at a routing
+// resolution of its own, and forcing it onto the elevation grid would resample twice.
+const coarse = new Uint8Array(16 * 12 * 4)
+coarse[0] = 42
+const mixed = buildPack({
+  id: 'mixed',
+  name: 'Mixed resolutions',
+  heights: hf,
+  layers: [{ id: 'water', data: coarse, channels: 4, width: 16, height: 12 }],
+  attribution: [{ source: 'derived', licence: 'n/a', covers: ['water'] }],
+  generator: 'roundtrip-check',
+  createdAt: '2026-07-29T00:00:00.000Z',
+})
+const waterBack = readRaster(mixed, 'water')
+check('an off-grid layer keeps its own size', waterBack?.width === 16 && waterBack?.height === 12)
+check('an off-grid layer reads back', waterBack?.data[0] === 42)
+check('elevation is unaffected by it', readHeightField(mixed).width === W)
+
 let threw = ''
 try {
   readRaster({ ...files, rasters: new Map([['cover', new ArrayBuffer(8)]]) }, 'cover')
@@ -126,6 +146,38 @@ check('south-east is (1,1)', Math.abs(se.x - 1) < 1e-9 && Math.abs(se.y - 1) < 1
 const rt = boxToLonLat(b, 0.25, 0.75)
 const rt2 = lonLatToBox(b, rt.lon, rt.lat)
 check('box → lonlat → box', Math.abs(rt2.x - 0.25) < 1e-9 && Math.abs(rt2.y - 0.75) < 1e-9)
+
+console.log('container')
+const bytes = packToBytes(files)
+check('starts with a local file header', bytes[0] === 0x50 && bytes[1] === 0x4b)
+// Written twice from the same inputs, it must be byte-identical — that is the whole
+// reason createdAt and the zip timestamp are passed in rather than read from a clock.
+const again = packToBytes(files)
+check('two writes are byte-identical', bytes.length === again.length && bytes.every((b, i) => b === again[i]))
+
+const reopened = packFromBytes(bytes.slice().buffer)
+check('manifest survives the container', reopened.manifest.id === 'test-box')
+check('layer count survives', reopened.manifest.layers.length === 2)
+check('vectors survive the container', reopened.vectors === files.vectors)
+
+const heightsBack = readHeightField(reopened)
+let worstZip = 0
+for (let i = 0; i < data.length; i++) {
+  worstZip = Math.max(worstZip, Math.abs(heightsBack.data[i]! - data[i]!))
+}
+check(`heights survive the container (worst ${worstZip.toFixed(4)} m)`, worstZip < 0.06)
+check('spike survives the container', Math.abs(heightsBack.data[10 * W + 20]! - 4000) < 0.06)
+
+const coverZip = readRaster(reopened, 'cover')
+check('extra layer survives the container', coverZip !== null && coverZip.data[0] === 7)
+
+let badThrew = ''
+try {
+  packFromBytes(new ArrayBuffer(64))
+} catch (e) {
+  badThrew = String(e)
+}
+check('a non-zip is rejected', badThrew.includes('not a zip'))
 
 console.log(failures === 0 ? '\nall passed' : `\n${failures} FAILED`)
 process.exit(failures === 0 ? 0 : 1)

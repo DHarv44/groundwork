@@ -4,13 +4,17 @@ import type { HeightField } from './field'
 import type { PackAttribution, PackLayer, PackManifest } from './pack'
 import {
   PACK_FORMAT_VERSION,
+  PACK_MANIFEST_FILE,
   PACK_VECTORS_FILE,
   dequantise,
   layerByteLength,
+  layerSize,
   quantise,
   serialiseVectors,
+  validateManifest,
 } from './pack'
 import type { PackVectors } from './vector'
+import { unzip, zip, type ZipEntry } from './zip'
 
 /**
  * Reading and writing pack bytes.
@@ -41,20 +45,26 @@ const TYPED = {
 export function readRaster(
   files: PackFiles,
   id: string,
-): { layer: PackLayer; data: Uint8Array | Uint16Array | Float32Array } | null {
+): {
+  layer: PackLayer
+  data: Uint8Array | Uint16Array | Float32Array
+  width: number
+  height: number
+} | null {
   const layer = files.manifest.layers.find((l) => l.id === id)
   if (!layer) return null
   const buf = files.rasters.get(id)
   if (!buf) return null
 
-  const expected = layerByteLength(layer, files.manifest.width, files.manifest.height)
+  const { width, height } = layerSize(layer, files.manifest)
+  const expected = layerByteLength(layer, width, height)
   if (buf.byteLength !== expected) {
     throw new Error(
       `pack layer "${id}": ${buf.byteLength} bytes, expected ${expected} — ` +
-        `${files.manifest.width}×${files.manifest.height}×${layer.channels} ${layer.format}`,
+        `${width}×${height}×${layer.channels} ${layer.format}`,
     )
   }
-  return { layer, data: new TYPED[layer.format](buf) }
+  return { layer, data: new TYPED[layer.format](buf), width, height }
 }
 
 /**
@@ -107,6 +117,9 @@ export interface PackInputLayer {
   /** Required for a quantised plane that means a measurement rather than an index. */
   min?: number
   max?: number
+  /** Own dimensions, when the plane is not on the elevation grid. */
+  width?: number
+  height?: number
 }
 
 export interface PackInput {
@@ -161,11 +174,13 @@ export function buildPack(input: PackInput): PackFiles {
   })
 
   for (const l of input.layers ?? []) {
-    const expected = hf.width * hf.height * l.channels
+    const lw = l.width ?? hf.width
+    const lh = l.height ?? hf.height
+    const expected = lw * lh * l.channels
     if (l.data.length !== expected) {
       throw new Error(
         `pack layer "${l.id}": ${l.data.length} samples, expected ${expected} ` +
-          `(${hf.width}×${hf.height}×${l.channels})`,
+          `(${lw}×${lh}×${l.channels})`,
       )
     }
     rasters.set(l.id, l.data.buffer as ArrayBuffer)
@@ -174,6 +189,8 @@ export function buildPack(input: PackInput): PackFiles {
       file: `${l.id}.bin`,
       format: formatOf(l.data),
       channels: l.channels,
+      ...(l.width !== undefined ? { width: l.width } : {}),
+      ...(l.height !== undefined ? { height: l.height } : {}),
       ...(l.min !== undefined ? { min: l.min } : {}),
       ...(l.max !== undefined ? { max: l.max } : {}),
       ...(l.description ? { description: l.description } : {}),
@@ -202,5 +219,78 @@ export function buildPack(input: PackInput): PackFiles {
     manifest,
     rasters,
     ...(input.vectors ? { vectors: serialiseVectors(input.vectors) } : {}),
+  }
+}
+
+// ---- the single-file container ---------------------------------------------
+
+/** Conventional extension. A pack is an ordinary ZIP; this is only a hint to a person. */
+export const PACK_EXTENSION = '.gwpack'
+
+/**
+ * Flatten a pack to one file.
+ *
+ * A pack is several files, and a download is one — so the wire form is a ZIP. Nothing
+ * about the container is bespoke: any unzip tool opens it, which matters for anyone
+ * trying to work out what a pack of theirs actually contains without our code.
+ *
+ * The manifest goes in first so a reader that streams gets the index before the bulk.
+ */
+export function packToBytes(files: PackFiles): Uint8Array {
+  const enc = new TextEncoder()
+  const entries: ZipEntry[] = [
+    {
+      name: PACK_MANIFEST_FILE,
+      data: enc.encode(JSON.stringify(files.manifest, null, 2)),
+    },
+  ]
+
+  for (const layer of files.manifest.layers) {
+    const buf = files.rasters.get(layer.id)
+    if (!buf) throw new Error(`pack layer "${layer.id}" is in the manifest but has no data`)
+    entries.push({ name: layer.file, data: new Uint8Array(buf) })
+  }
+
+  if (files.vectors !== undefined) {
+    entries.push({ name: PACK_VECTORS_FILE, data: enc.encode(files.vectors) })
+  }
+
+  return zip(entries, files.manifest.createdAt)
+}
+
+/**
+ * Read a pack back out of its container.
+ *
+ * The manifest is validated before anything is indexed by it, because every read past
+ * this point is sized and typed from what it claims — a manifest that disagrees with
+ * the bytes produces terrain that renders as noise rather than an error, and that is
+ * a long way to travel from the actual fault.
+ */
+export function packFromBytes(buf: ArrayBuffer): PackFiles {
+  const files = unzip(buf)
+
+  const manifestBytes = files.get(PACK_MANIFEST_FILE)
+  if (!manifestBytes) throw new Error(`pack has no ${PACK_MANIFEST_FILE}`)
+  const manifest = JSON.parse(new TextDecoder().decode(manifestBytes)) as PackManifest
+
+  const problems = validateManifest(manifest)
+  if (problems.length > 0) throw new Error(`pack manifest is invalid: ${problems.join('; ')}`)
+
+  const rasters = new Map<string, ArrayBuffer>()
+  for (const layer of manifest.layers) {
+    const bytes = files.get(layer.file)
+    if (!bytes) throw new Error(`pack is missing ${layer.file} for layer "${layer.id}"`)
+    // sliced, so the returned buffer is exactly the layer rather than a window onto
+    // the whole archive — a typed-array view over the latter would silently read past
+    // the end of the plane.
+    rasters.set(layer.id, bytes.slice().buffer)
+  }
+
+  const vectorBytes = manifest.vectors ? files.get(manifest.vectors) : undefined
+
+  return {
+    manifest,
+    rasters,
+    ...(vectorBytes ? { vectors: new TextDecoder().decode(vectorBytes) } : {}),
   }
 }

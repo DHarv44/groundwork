@@ -121,6 +121,41 @@ Strictly one-directional. Rules that keep it that way:
       What is left is the host side: a loader that fetches the files and hands them
       over, and the demo page that proves the engine can render a pack the builder did
       not just produce in memory.
+
+- [x] **5. Export** — done, ahead of stages 3 and 4 because it is what makes packs real
+      enough to test anything else against. **Export → Pack → Write pack.**
+
+      A pack is several files and a download is one, so the wire form is a ZIP —
+      written by hand in `core/src/zip.ts` rather than pulled in, because core has no
+      dependencies and is not going to start now: it has to open packs in a browser, in
+      a Node baker, and anywhere else, and a zero-dependency decoder is the only
+      version of that which cannot rot. Store-only, about a hundred lines, and the
+      output is an ordinary ZIP — verified by extracting one with Windows'
+      `Expand-Archive`, not only with our own reader.
+
+      Verified end to end in the browser by intercepting the download and reading the
+      bytes back: a Hawaii box came out as 3495×2167 at 62877×38746 m, −407.2 to
+      4199.5 m, matching the UI's own readouts; 5368 roads, 464 mapped areas of which
+      10 carry inner rings, so the island-and-clearing fix survives into the format.
+
+      **Known: it is big.** That box is 46.9 MB, and 30 MB of it is the RGBA hydrology
+      field — which is mostly zeroes and would deflate to a fraction. Store-only was
+      the right first call (no dependency, trivially correct), but adding deflate to
+      `zip.ts` is the obvious next win and does not change the format. Quantising the
+      water field or dropping it to one channel would help as much again.
+
+- [ ] **5b. Deflate in `zip.ts`** — see above. The container already records a method
+      per entry, so this is additive rather than a format change.
+- [ ] **5c. Named places** — `node["place"~"^(city|town|village|hamlet)$"]` folded into
+      the **existing** single Overpass union query, so it stays one request. The pack
+      already carries the slot and writes it empty. Names are the one thing that cannot
+      be recovered from geometry, and anything built on a pack anchors its
+      human-readable references to them.
+- [ ] **5d. Per-dataset elevation licences.** The pack currently attributes elevation
+      as "See the dataset terms at the provider", which is honest but weak. The sources
+      behind the DEM list differ — some public domain, some CC BY, some with their own
+      terms — and asserting one we have not checked would be worse than pointing at the
+      provider. Wants a licence field on the `DEM_TYPES` table, filled in per entry.
 - [ ] **3. `builder`** — extract what is left around it.
 - [ ] **4. Two demos** — an engine page that loads a pack and renders it, and a builder
       page running against a stub consumer that just prints the manifest. If either needs

@@ -33,7 +33,17 @@ export type {
 export { ROAD_CLASSES, ROAD_WIDTH_METRES } from './vector'
 
 export type { PackFiles, PackInput, PackInputLayer } from './packio'
-export { buildPack, readHeightField, readRaster } from './packio'
+export {
+  PACK_EXTENSION,
+  buildPack,
+  packFromBytes,
+  packToBytes,
+  readHeightField,
+  readRaster,
+} from './packio'
+
+export type { ZipEntry } from './zip'
+export { unzip, zip } from './zip'
 
 export type { PackAttribution, PackLayer, PackManifest } from './pack'
 export {
@@ -42,6 +52,7 @@ export {
   PACK_VECTORS_FILE,
   dequantise,
   layerByteLength,
+  layerSize,
   parseVectors,
   quantise,
   serialiseVectors,

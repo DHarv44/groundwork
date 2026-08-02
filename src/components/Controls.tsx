@@ -9,6 +9,7 @@ import { AREA_LABEL, ROAD_CLASSES, ROAD_CLASS_NOTE, ROAD_ORDER } from '../lib/ov
 import { boundsAreaKm2, boundsExtentMetres, formatBounds } from '../lib/geo'
 import { captureScreenshot } from '../lib/capture'
 import { exportGLB, exportHeightmapPNG, exportSTL } from '../lib/exporters'
+import { exportPack, summarisePack } from '../lib/packexport'
 
 function Slider({
   label,
@@ -190,6 +191,8 @@ export default function Controls() {
     roadError,
     roadInfo,
     loadRoads,
+    roads,
+    waterMask,
   } = useStore()
 
   // The class the sliders act on: your pick, falling back to the dominant one.
@@ -1449,6 +1452,50 @@ export default function Controls() {
             <p className="note">
               Meshes are in metres, 1 : 1 with the ground at exaggeration 1×. Heightmap PNG packs
               16-bit elevation across the red and green channels.
+            </p>
+
+            <h3>Pack</h3>
+            <button
+              className="wide"
+              disabled={!heightField}
+              onClick={() =>
+                heightField &&
+                exportPack({
+                  heightField,
+                  osm: roads,
+                  waterMask,
+                  baseName,
+                  createdAt: new Date().toISOString(),
+                })
+              }
+            >
+              Write pack
+            </button>
+            {heightField &&
+              (() => {
+                const s = summarisePack({
+                  heightField,
+                  osm: roads,
+                  waterMask,
+                  baseName,
+                  createdAt: '',
+                })
+                return (
+                  <p className="note">
+                    {s.samples.toLocaleString()} elevation samples
+                    {s.roads > 0 ? `, ${s.roads.toLocaleString()} roads` : ''}
+                    {s.areas > 0 ? `, ${s.areas.toLocaleString()} mapped areas` : ''}
+                    {s.hasWater ? ', derived hydrology' : ''}. Everything already loaded — writing
+                    a pack makes no requests, so whatever is switched off in the layer panel is
+                    still written if it has been fetched.
+                    {!roads && ' Load the road and area layers first if you want them included.'}
+                  </p>
+                )
+              })()}
+            <p className="note">
+              Roads and mapped areas go in as vector geometry, not as the rasterised masks — the
+              masks are drawn at the current mask resolution, which is a display setting rather
+              than a property of the place.
             </p>
           </section>
         )}
