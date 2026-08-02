@@ -164,11 +164,40 @@ Strictly one-directional. Rules that keep it that way:
       Verified by extracting a deflated pack with Windows' `Expand-Archive` — right
       uncompressed sizes — and by re-rendering it in the demo unchanged.
 
-- [ ] **5b-ii. The water field is now the dominant cost.** At 3495×2167 RGBA it is
-      30 MB raw and the bulk of what is left after deflate. Its alpha channel is
-      constant and its lake flag is a single bit, so three channels — or two — would
-      carry the same information. Worth measuring what the hydrology pass actually
-      needs before cutting, rather than guessing which channels are load-bearing.
+- [x] **5b-ii. Filter the elevation plane.** **21.3 MB → 13.7 MB.**
+
+      Measuring first was the whole value here, because the obvious target was wrong.
+      The water field *looked* like the problem at 30 MB raw, but it deflates 3.6× and
+      was only 37% of the pack. Elevation was **61% and compressed 1.1×** — quantised
+      heights resist deflate badly, because each sample's low byte is essentially noise
+      while its high byte varies smoothly, and interleaving them buries the smooth
+      signal in the noisy one.
+
+      `delta16-split` takes a running difference between samples, then writes all the
+      high bytes followed by all the low bytes. Small deltas have a high byte of 0x00
+      going up or 0xff going down, so that plane becomes long runs — measured at 99.9%
+      of the first million bytes. Elevation went from 1.1× to 2.7×. Entirely lossless:
+      it reorders and predicts, it does not discard. Declared per layer as
+      `filter`, so a pack without the field is still read correctly.
+
+      Verified at full scale: 0 bad samples in 7,573,665, worst error 0.0352 m — inside
+      one quantisation step.
+
+      **A trap worth knowing about, which nearly caused a correct change to be
+      reverted.** Verifying from the browser console by dynamically importing
+      `/node_modules/@groundwork/core/src/index.ts` can get a *stale* copy: Vite treats
+      that path as a dependency rather than source, so it kept serving the pre-filter
+      transform while the app itself — importing the bare specifier — had the new one.
+      The result was two copies of core in one page, the export filtering correctly and
+      the probe failing to unfilter, which read as catastrophic corruption of every
+      sample. The code was right the whole time and the instrument was lying. Add a
+      cache-busting query, or verify in Node where the problem does not exist.
+
+- [ ] **5b-iii. The water field, now that it is measured.** 7.92 MB compressed, 58% of
+      what is left. Its alpha channel is constant and its lake flag is a single bit, so
+      three channels — or two — carry the same information. Worth checking what the
+      hydrology pass actually needs before cutting, rather than guessing which channels
+      are load-bearing. A `uint8` delta filter may also be worth trying on it.
 - [x] **5c. Named places** — done. Settlements and named summits are folded into the
       **existing** union query, so it is still one request. That placement is the whole
       point: Overpass charges by the request rather than the byte — an IP gets very few

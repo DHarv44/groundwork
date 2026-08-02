@@ -41,6 +41,44 @@ const TYPED = {
   float32: Float32Array,
 } as const
 
+// ---- the delta16-split filter ----------------------------------------------
+
+/**
+ * Running difference, then byte-plane split.
+ *
+ * The two halves do different jobs. The difference makes neighbouring samples nearly
+ * equal, so most deltas are small; the split then puts every high byte together, and
+ * a small delta's high byte is 0x00 going up or 0xff going down. That plane turns into
+ * long runs deflate eats, while the low plane stays noisy but is only half the data.
+ *
+ * Interleaved, the noisy byte sits between every pair of smooth ones and deflate can
+ * find almost nothing — which is exactly the 1.1× measured on real quantised terrain.
+ */
+function applyDelta16Split(src: Uint16Array): Uint8Array {
+  const n = src.length
+  const out = new Uint8Array(n * 2)
+  let prev = 0
+  for (let i = 0; i < n; i++) {
+    const v = src[i]!
+    const d = (v - prev) & 0xffff
+    prev = v
+    out[i] = d >>> 8
+    out[n + i] = d & 0xff
+  }
+  return out
+}
+
+function undoDelta16Split(src: Uint8Array): Uint16Array<ArrayBuffer> {
+  const n = src.length >> 1
+  const out = new Uint16Array(n)
+  let prev = 0
+  for (let i = 0; i < n; i++) {
+    prev = (prev + ((src[i]! << 8) | src[n + i]!)) & 0xffff
+    out[i] = prev
+  }
+  return out
+}
+
 /**
  * A raster plane's samples.
  *
@@ -78,6 +116,14 @@ export function readRaster(
         `${width}×${height}×${layer.channels} ${layer.format}`,
     )
   }
+
+  if (layer.filter === 'delta16-split') {
+    if (layer.format !== 'uint16') {
+      throw new Error(`pack layer "${id}": delta16-split only applies to uint16, not ${layer.format}`)
+    }
+    return { layer, data: undoDelta16Split(new Uint8Array(buf)), width, height }
+  }
+
   return { layer, data: new TYPED[layer.format](buf), width, height }
 }
 
@@ -176,12 +222,14 @@ export function buildPack(input: PackInput): PackFiles {
   const layers: PackLayer[] = []
 
   const q = quantise(hf.data, hf.min, hf.max)
-  rasters.set('elevation', q.buffer as ArrayBuffer)
+  const filtered = applyDelta16Split(q)
+  rasters.set('elevation', filtered.buffer as ArrayBuffer)
   layers.push({
     id: 'elevation',
     file: 'elevation.bin',
     format: 'uint16',
     channels: 1,
+    filter: 'delta16-split',
     min: hf.min,
     max: hf.max,
     description: 'Metres above sea level, row-major, north row first.',

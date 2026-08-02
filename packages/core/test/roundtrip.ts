@@ -105,6 +105,14 @@ check('spike stays at (20,10)', Math.abs(back.data[10 * W + 20]! - 4000) < 0.06)
 const coverBack = readRaster(files, 'cover')
 check('extra layer reads back', coverBack !== null && coverBack.data[0] === 7)
 
+const elevLayer = files.manifest.layers.find((l) => l.id === 'elevation')!
+check('elevation is filtered', elevLayer.filter === 'delta16-split')
+// The filter reorders and predicts; it must not change the byte count.
+check(
+  'the filter is size-neutral',
+  files.rasters.get('elevation')!.byteLength === W * H * 2,
+)
+
 // A derived field at its own resolution — the hydrology pass runs at a routing
 // resolution of its own, and forcing it onto the elevation grid would resample twice.
 const coarse = new Uint8Array(16 * 12 * 4)

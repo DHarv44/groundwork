@@ -44,6 +44,20 @@ export interface PackLayer {
   width?: number
   height?: number
   /**
+   * A reversible transform applied to the bytes before they were compressed.
+   *
+   * `delta16-split` is for `uint16` planes. Quantised elevation resists deflate badly —
+   * measured at 1.1× on real terrain — because each sample's low byte is essentially
+   * noise while its high byte varies smoothly, and interleaving them buries the smooth
+   * signal in the noisy one. The filter takes a running difference between samples and
+   * then writes all the high bytes followed by all the low bytes, so the high plane
+   * becomes long runs of 0x00 and 0xff. Entirely lossless: it reorders and predicts,
+   * it does not discard.
+   *
+   * Absent means the bytes are the samples, which is what every earlier pack has.
+   */
+  filter?: 'delta16-split'
+  /**
    * For quantised integer planes: the real values that map to 0 and to the type's
    * maximum. Absent on `float32` planes and on integer planes that mean their own
    * value (a class index, a boolean).
