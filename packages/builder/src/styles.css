@@ -30,6 +30,7 @@
   --accent-2: #7dd3fc;
   --bad: #f87171;
   --sidebar-w: 372px;
+  --layers-w: 168px;
   color-scheme: dark;
 
   /* The builder fills whatever box the host gives it. */
@@ -53,15 +54,23 @@
 
   .app {
   display: grid;
-  /* Third column is the docked layers panel; `auto` sizes to its content and
-     collapses to nothing when no terrain is built (the aside is not rendered). */
-  grid-template-columns: var(--sidebar-w) 1fr auto;
+  /* Third column is the docked layers panel. Both side columns collapse the
+     same way — to zero — and rcollapsed also stands in for "no terrain yet". */
+  grid-template-columns: var(--sidebar-w) 1fr var(--layers-w);
   height: 100%;
   transition: grid-template-columns 0.22s ease;
 }
 
 .app.collapsed {
-  grid-template-columns: 0 1fr auto;
+  grid-template-columns: 0 1fr var(--layers-w);
+}
+
+.app.rcollapsed {
+  grid-template-columns: var(--sidebar-w) 1fr 0;
+}
+
+.app.collapsed.rcollapsed {
+  grid-template-columns: 0 1fr 0;
 }
 
 /* ---------- sidebar ---------- */
@@ -126,6 +135,30 @@
 }
 
 .collapse:hover {
+  color: var(--text);
+}
+
+/* Mirror of .collapse for the right-hand layers panel. */
+.rcollapse {
+  position: absolute;
+  top: 14px;
+  right: calc(var(--layers-w) - 13px);
+  z-index: 500;
+  width: 26px;
+  height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 6px 0 0 6px;
+  background: var(--panel-2);
+  color: var(--muted);
+  cursor: pointer;
+  transition: right 0.22s ease;
+}
+
+.app.rcollapsed .rcollapse {
+  right: 0;
+}
+
+.rcollapse:hover {
   color: var(--text);
 }
 
@@ -1039,6 +1072,11 @@ main {
   overflow-y: auto;
   overflow-x: hidden;
   padding: 12px 10px;
+  min-width: 0;
+}
+
+.app.rcollapsed .layers-panel {
+  visibility: hidden;
 }
 
 .layers-panel .view-layers.docked {

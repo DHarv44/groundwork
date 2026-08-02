@@ -14,6 +14,7 @@ export default function App() {
   const waterStats = useStore((s) => s.waterStats)
   const settings = useStore((s) => s.settings)
   const [collapsed, setCollapsed] = useState(false)
+  const [rightCollapsed, setRightCollapsed] = useState(false)
 
   // The mesh lands first and the derived layers stream in behind it. A terrain with
   // its rivers still missing reads as a finished render that is simply wrong, so the
@@ -43,7 +44,13 @@ export default function App() {
   // app cannot restyle anything outside it.
   return (
     <div className="gw">
-    <div className={`app ${collapsed ? 'collapsed' : ''}`}>
+    <div
+      className={`app ${collapsed ? 'collapsed' : ''} ${
+        // rcollapsed also stands in for "no terrain yet" — the layers panel has
+        // nothing to say before a build, so its column stays at zero.
+        !build || rightCollapsed ? 'rcollapsed' : ''
+      }`}
+    >
       <aside className="sidebar">
         <header>
           <h1>Groundwork</h1>
@@ -93,13 +100,20 @@ export default function App() {
         )}
       </main>
 
-      {/* The view's layer switchboard, docked opposite the build panel. Only
-          rendered once there is a terrain — its grid column is `auto`, so with
-          no build the column simply is not there. */}
+      {/* The view's layer switchboard, docked opposite the build panel. */}
       {build && (
-        <aside className="layers-panel">
-          <LayersPanel />
-        </aside>
+        <>
+          <button
+            className="rcollapse"
+            onClick={() => setRightCollapsed((c) => !c)}
+            title={rightCollapsed ? 'Show layers' : 'Hide layers'}
+          >
+            {rightCollapsed ? '‹' : '›'}
+          </button>
+          <aside className="layers-panel">
+            <LayersPanel />
+          </aside>
+        </>
       )}
     </div>
     </div>
