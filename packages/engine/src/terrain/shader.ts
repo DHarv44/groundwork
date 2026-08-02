@@ -711,6 +711,16 @@ void main() {
     float g = 0.90 + 0.20 * (grain * 0.5 + 0.5) * uSatDetail * (1.0 - smoothstep(600.0, 5000.0, dist));
     albedo = sat * g;
     snow *= 0.25;
+
+    // Mapped overlays composite OVER the imagery — the photograph is the ground
+    // layer, surveyed data reads on top of it, and roads (drawn further down)
+    // top everything. In procedural mode these signals steer the ground colours
+    // themselves; over a photograph a recolour would fight real pixels, so they
+    // render as frank translucent overlays instead. Water wins over the land
+    // uses, as it does on any chart.
+    if (osmWood > 0.001) albedo = mix(albedo, vec3(0.035, 0.085, 0.030), min(osmWood, 1.0) * 0.45);
+    if (osmBuilt > 0.001) albedo = mix(albedo, vec3(0.28, 0.26, 0.23), min(osmBuilt, 1.0) * 0.35);
+    if (osmWater > 0.001) albedo = mix(albedo, vec3(0.030, 0.095, 0.160), min(osmWater, 1.0) * 0.60);
   }
 
   // ---- built-up ground ----------------------------------------------------

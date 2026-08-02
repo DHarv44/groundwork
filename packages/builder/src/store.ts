@@ -524,9 +524,6 @@ const satRingAborts: Array<AbortController | null> = [null, null, null, null]
  * that measurably grinds the driver down mid-gesture.
  */
 const satRingCanvases: Array<HTMLCanvasElement | null> = [null, null, null, null]
-/** Scratch for seeding: a ring re-centring must read its own previous pixels, and
- * they live in the very canvas about to be resized and overwritten. */
-let satRingScratch: HTMLCanvasElement | null = null
 /**
  * Globally monotonic ring version. Per-fetch counters would restart at zero and
  * collide with the previous fetch's zero — the renderer would see an unchanged
@@ -1555,20 +1552,6 @@ export const useStore = create<State>((setState, getState) => {
     const ringCanvas = satRingCanvases[index] ?? document.createElement('canvas')
     satRingCanvases[index] = ringCanvas
 
-    // Snapshot this ring's own previous pixels before the fetch resizes and
-    // overwrites the canvas they live in. Safe on one shared scratch because the
-    // snapshot, the resize and the seed all run synchronously before the fetch's
-    // first await — no other ring's load can interleave between them.
-    const prev = getState().satRings[index]
-    let prevRect: [number, number, number, number] | null = null
-    if (prev) {
-      const scratch = (satRingScratch ??= document.createElement('canvas'))
-      if (scratch.width !== prev.canvas.width) scratch.width = prev.canvas.width
-      if (scratch.height !== prev.canvas.height) scratch.height = prev.canvas.height
-      scratch.getContext('2d')!.drawImage(prev.canvas, 0, 0)
-      prevRect = prev.rect
-    }
-
     // Published the moment it is seeded and re-published as tiles sharpen it.
     // Flushes are throttled because each one is a full-canvas GPU re-upload;
     // the trailing flush after the await catches whatever landed since.
@@ -1586,15 +1569,17 @@ export const useStore = create<State>((setState, getState) => {
         signal: ctrl.signal,
         canvas: ringCanvas,
         seed: (canvas) => {
-          // Paint the canvas with exactly what the viewer already sees there —
-          // base drape, then the other rings coarse to fine, with this ring's
-          // own snapshot taking its place in that order. All are plate-carrée,
-          // so this is pure rectangle arithmetic. The swap is therefore
-          // invisible: a re-centre shows the same picture it replaced, and
-          // arriving tiles only ever sharpen it. This is the clipmap upsample
-          // trick — the parent level stands in until the child arrives.
+          // Seed from the BASE DRAPE ONLY. The base is immutable for the life of
+          // a build and proven-registered, so the canvas after seeding is a pure
+          // function of (base + this fetch's tiles) — one geometry, always.
+          // Seeding from sibling rings or this ring's own previous pixels was
+          // sharper for a moment, but it made every seed a copy of mutable
+          // shared state: one transiently inconsistent ring and the corruption
+          // propagated through every later seed, sticking until a mode switch
+          // cleared all rings. A brief soft blip on re-key (cached tiles re-land
+          // in a beat) is the price of making that class of bug impossible.
           const ctx = canvas.getContext('2d')!
-          const { imagery, satRings } = getState()
+          const { imagery } = getState()
           if (imagery) {
             ctx.drawImage(
               imagery,
@@ -1610,36 +1595,6 @@ export const useStore = create<State>((setState, getState) => {
           } else {
             ctx.fillStyle = '#3c4a3a'
             ctx.fillRect(0, 0, canvas.width, canvas.height)
-          }
-          const dk = [canvas.width / (rect[2] - rect[0]), canvas.height / (rect[3] - rect[1])]
-          for (let j = 3; j >= 0; j--) {
-            const source =
-              j === index
-                ? prevRect && satRingScratch
-                  ? { canvas: satRingScratch, rect: prevRect }
-                  : null
-                : satRings[j]
-            if (!source) continue
-            const ox0 = Math.max(rect[0], source.rect[0])
-            const oy0 = Math.max(rect[1], source.rect[1])
-            const ox1 = Math.min(rect[2], source.rect[2])
-            const oy1 = Math.min(rect[3], source.rect[3])
-            if (ox1 <= ox0 || oy1 <= oy0) continue
-            const sk = [
-              source.canvas.width / (source.rect[2] - source.rect[0]),
-              source.canvas.height / (source.rect[3] - source.rect[1]),
-            ]
-            ctx.drawImage(
-              source.canvas,
-              (ox0 - source.rect[0]) * sk[0]!,
-              (oy0 - source.rect[1]) * sk[1]!,
-              (ox1 - ox0) * sk[0]!,
-              (oy1 - oy0) * sk[1]!,
-              (ox0 - rect[0]) * dk[0]!,
-              (oy0 - rect[1]) * dk[1]!,
-              (ox1 - ox0) * dk[0]!,
-              (oy1 - oy0) * dk[1]!,
-            )
           }
           lastFlush = performance.now()
           flush()
