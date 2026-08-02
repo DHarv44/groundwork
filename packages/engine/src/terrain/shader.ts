@@ -668,7 +668,9 @@ void main() {
   snow *= smoothstep(-0.55, 0.35, macro * 1.4 + meso * 0.6);
   snow *= 1.0 - aridity * 0.85;
   snow = clamp(snow, 0.0, 1.0) * uShowSnow;
-  albedo = mix(albedo, snowCol, snow);
+  // Applied AFTER the satellite drape below, not here — mixed in early it was
+  // simply overwritten by a full-opacity photograph, leaving only the faint
+  // specular glint of snow that was no longer in the albedo.
 
   // Beaches where the land meets the sea.
   float shore = (1.0 - smoothstep(0.0, 14.0, vElev - uSeaLevel)) *
@@ -712,16 +714,19 @@ void main() {
       if (in0 > 0.0) sat = mix(sat, srgbToLinear(texture2D(uSatRing0Map, rUv0).rgb), in0);
     }
 
-    // At full opacity the photograph IS the ground: no procedural grain, no
-    // procedural snow — nothing of the modelled terrain shows through. Both
-    // leaks return only as the drape is made translucent, where the procedural
-    // ground is deliberately part of the picture. (The close-up grain was meant
-    // to hide upscaled-imagery mush, but it read as terrain bleeding through
-    // the photo — the wrong trade at 100%.)
+    // At full opacity the photograph IS the ground: no procedural grain leaks
+    // through — it returns only as the drape is made translucent, where the
+    // procedural ground is deliberately part of the picture. (The close-up
+    // grain was meant to hide upscaled-imagery mush, but it read as terrain
+    // bleeding through the photo — the wrong trade at 100%.)
+    //
+    // Snow is different: it stays a live layer OVER the imagery, governed by
+    // its own toggle, the snow line and the winter scrub — dialling winter onto
+    // a summer photograph is a feature, not a leak. Anyone who wants the
+    // photograph's own snow alone turns the layer off.
     float g = 0.90 + 0.20 * (grain * 0.5 + 0.5) * uSatDetail * (1.0 - smoothstep(600.0, 5000.0, dist));
     g = mix(g, 1.0, uSatOpacity);
     albedo = mix(albedo, sat * g, uSatOpacity);
-    snow *= 1.0 - uSatOpacity;
 
     // Mapped overlays composite OVER the imagery — the photograph is the ground
     // layer, surveyed data reads on top of it, and roads (drawn further down)
@@ -733,6 +738,11 @@ void main() {
     if (osmBuilt > 0.001) albedo = mix(albedo, vec3(0.28, 0.26, 0.23), min(osmBuilt, 1.0) * 0.35);
     if (osmWater > 0.001) albedo = mix(albedo, vec3(0.030, 0.095, 0.160), min(osmWater, 1.0) * 0.60);
   }
+
+  // Snow covers whichever ground is showing — procedural or photograph — with
+  // the same toggle, snow line and winter scrub either way. Roads draw after
+  // it, so they stay visible through the cover like plowed routes.
+  albedo = mix(albedo, snowCol, snow);
 
   // ---- built-up ground ----------------------------------------------------
   // Where the town is, without paying for every building in it.
