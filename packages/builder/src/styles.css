@@ -37,6 +37,16 @@
   color: var(--text);
   font: 13px/1.5 ui-sans-serif, system-ui, 'Segoe UI', Roboto, sans-serif;
 
+  /*
+   * Anchors every absolutely-positioned descendant to the builder's own root.
+   *
+   * Without it they resolve against the initial containing block — the viewport —
+   * which is invisibly correct while the builder owns the page and wrong the instant
+   * it does not. Embedded, the sidebar collapse toggle escaped upward into the host's
+   * header. Found by the host demo, which is the only thing that could have.
+   */
+  position: relative;
+
   * {
     box-sizing: border-box;
   }

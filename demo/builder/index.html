@@ -60,6 +60,14 @@
         flex: none;
       }
       header.host h1 { margin: 0; font-size: 16px; font-weight: 600; }
+      .host-nav { display: flex; gap: 18px; flex: 1; }
+      .host-nav a {
+        color: var(--muted);
+        text-decoration: none;
+        padding: 4px 0;
+        border-bottom: 2px solid transparent;
+      }
+      .host-nav a.active { color: var(--accent); border-bottom-color: var(--accent); }
       .host-note { font-size: 12px; color: var(--muted); }
       .host-body { flex: 1; display: flex; min-height: 0; }
       /* The builder gets a bounded box, not the page. */
@@ -90,11 +98,12 @@
   <body>
     <header class="host">
       <h1>Host application</h1>
-      <button id="hostBtn">A host button</button>
-      <span class="host-note">
-        Light theme, serif, <code>content-box</code>, and its own <code>--accent</code> —
-        all of it conflicting with the builder beside it, none of it reaching in.
-      </span>
+      <nav class="host-nav">
+        <a href="#" class="active">Terrain</a>
+        <a href="#">Assets</a>
+        <a href="#">Settings</a>
+      </nav>
+      <button id="hostBtn">New project</button>
     </header>
 
     <div class="host-body">
@@ -106,6 +115,13 @@
         <p class="host-note">
           Takes the pack as bytes rather than a download, and prints what it got. This is
           the shape a real host wants — POST it, store it, hand it to a renderer.
+        </p>
+        <p class="host-note">
+          This page is styled to conflict with the builder on purpose: light against its
+          dark, serif against its sans, <code>content-box</code> against its
+          <code>border-box</code>, and the same <code>--bg</code>, <code>--line</code> and
+          <code>--accent</code> names holding different values. None of it reaches in, and
+          nothing in the builder reaches out.
         </p>
         <button id="take">Take a pack from the builder</button>
         <pre class="out" id="out">nothing yet</pre>
