@@ -70,15 +70,21 @@ function SatRingWatcher() {
   const lastPos = useRef(new THREE.Vector3(Infinity, Infinity, Infinity))
   const lastQuat = useRef(new THREE.Quaternion())
   const stillFor = useRef(0)
-  const lastKeys = useRef(['', '', '', ''])
+  /** What each ring last fetched: centre and size step. Null = nothing yet. */
+  const lastFetch = useRef<Array<{ lon: number; lat: number; step: number } | null>>([
+    null,
+    null,
+    null,
+    null,
+  ])
 
   useFrame((_, dt) => {
     if (!build || !heightField) return
 
     const active = textureMode === 'satellite' && !!imagery && boost > 0
     if (!active) {
-      if (lastKeys.current.some((k) => k !== '')) {
-        lastKeys.current = ['', '', '', '']
+      if (lastFetch.current.some((f) => f !== null)) {
+        lastFetch.current = [null, null, null, null]
         clearSatRings()
       }
       return
@@ -121,19 +127,26 @@ function SatRingWatcher() {
     const ceiling = Math.min(11 + 2 * boost, 19)
     for (let k = 0; k < 4; k++) {
       const half = Math.max(250, dist * 1.2) * Math.pow(3, k)
+      const step = Math.round(Math.log2(half))
+
+      // Refetch only when the camera demands SHARPER (footprint shrank a step) or
+      // ELSEWHERE (centre left the fetched ring). Zooming out deliberately fetches
+      // nothing: the ring already loaded stays rendered — geo-anchored imagery
+      // minifies through its mipmaps for free, the outer rings and base already
+      // cover the newly visible surround at the zoom a fetch would return anyway,
+      // and replacing sharp with coarse would cost a download to look worse.
+      const prev = lastFetch.current[k]
+      if (prev) {
+        const prevHalf = Math.pow(2, prev.step)
+        const dxM = ((cLon - prev.lon) / lonSpan) * build.widthMetres
+        const dzM = ((prev.lat - cLat) / latSpan) * build.depthMetres
+        const drifted = Math.hypot(dxM, dzM) > prevHalf * 0.34
+        if (step >= prev.step && !drifted) continue
+      }
+      lastFetch.current[k] = { lon: cLon, lat: cLat, step }
+
       const dLon = (half / build.widthMetres) * lonSpan
       const dLat = (half / build.depthMetres) * latSpan
-
-      // Centre snaps to a third of the ring, size to powers of two: metres of drift
-      // and wheel nudges change nothing; a real move re-keys the inner ring first.
-      const key = [
-        Math.round(cLon / (dLon / 3)),
-        Math.round(cLat / (dLat / 3)),
-        Math.round(Math.log2(half)),
-      ].join('|')
-      if (key === lastKeys.current[k]) continue
-      lastKeys.current[k] = key
-
       void loadSatRing(k, {
         west: cLon - dLon,
         east: cLon + dLon,
@@ -163,7 +176,11 @@ function CameraRig({
   const frameToken = useStore((s) => s.frameToken)
 
   useEffect(() => {
-    camera.near = Math.max(0.1, size * 0.0004)
+    // The near plane must not scale with the box: it used to, and on a 500 km box
+    // that put it 200 m out — which is also why the zoom floor had to be high. The
+    // renderer runs a logarithmic depth buffer, so a small constant near against a
+    // box-scaled far costs nothing in precision.
+    camera.near = Math.max(2, size * 0.00002)
     camera.far = size * 200
     camera.updateProjectionMatrix()
   }, [camera, size])
@@ -200,8 +217,11 @@ function CameraRig({
     // therefore always thrown away on reload.
     if (!ready) return
 
-    // Distance limits track the terrain size and are safe to apply at any time.
-    controls.minDistance = size * 0.008
+    // The ceiling tracks the terrain, the floor does not: proportional flooring meant
+    // a big box stopped the zoom kilometres up — 4 km on a 500 km box — exactly where
+    // the imagery close-up makes descending worth doing. Sixty metres is close enough
+    // to read a street; below that, walking (double-click) is the tool.
+    controls.minDistance = 60
     controls.maxDistance = size * 6
 
     // Re-frame when a new terrain is built, or when the terrain's extent changes.
