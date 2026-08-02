@@ -203,7 +203,6 @@ function SatRingWatcher() {
 
   /** Frame-loop scratch — allocated once, reused every frame. */
   const groundPoint = useRef(new THREE.Vector3()).current
-  const cornerRay = useRef(new THREE.Vector3()).current
 
   /** What each ring last fetched: centre and size step. Null = nothing yet. */
   const lastFetch = useRef<Array<{ lon: number; lat: number; step: number } | null>>([
@@ -239,16 +238,23 @@ function SatRingWatcher() {
       cooldown.current[k] = Math.max(0, cooldown.current[k]! - dt)
     }
 
-    // Ring 0 is sized to the ground the SCREEN can see, not to the eye distance.
-    // The whole point of the close-up is that a top-down view is one resolution
-    // edge to edge — a viewport with a sharp square in the middle is a bug, not a
-    // level of detail. Two things make the footprint the only trustworthy input:
-    // corner rays measure what is actually in frame regardless of tilt, and the
-    // orbit target cannot be trusted for height — walking mode and low passes
-    // leave it floating near the camera, which is how ring sizing shrank to a
-    // postage stamp while the camera was kilometres up. So the ground plane comes
-    // from the height field under the look point, and the viewing distance is
-    // measured to that ground, never to the target.
+    // Rings are sized by the eye's distance to the GROUND under the look point —
+    // and by nothing else. That quantity is invariant under orbiting and tilting,
+    // and the invariance is load-bearing: rings were briefly sized by the
+    // screen's ground footprint instead, and since the footprint swings ~4x as
+    // the camera tilts toward the horizon, every tilt gesture re-keyed the whole
+    // stack. Each re-key swaps to a different Esri zoom level, which is a
+    // different capture — different date, colours, registration — so the ground
+    // visibly slid and churned WHILE tilting, and the near field collapsed into
+    // one huge mediocre-zoom blanket. Height-based keys hold perfectly still
+    // under tilt: nothing refetches, the imagery stays nailed to the world, and
+    // the cascade keeps the near field sharp while coarser rings carry the
+    // compressed far field.
+    //
+    // The distance is measured to the height field under the look point, never
+    // to target.y — walking mode and low passes leave the orbit target floating
+    // near the camera, which once shrank ring sizing to a postage stamp while
+    // the camera was kilometres up.
     const target = controls?.target ?? camera.position
     const b = heightField.bounds
     const lonSpan = b.east - b.west
@@ -262,37 +268,14 @@ function SatRingWatcher() {
     groundPoint.set(target.x, groundY, target.z)
     const dist = Math.max(200, camera.position.distanceTo(groundPoint))
 
-    // Where the four screen corners land on the ground plane. A corner looking
-    // at sky (tilted views) is capped rather than infinite: past ~4x the viewing
-    // distance perspective has compressed the ground so hard that the outer
-    // rings and base cover it at the zoom a fetch would return anyway.
-    let footprint = 0
-    for (let i = 0; i < 4; i++) {
-      const ray = cornerRay
-        .set(i & 1 ? 1 : -1, i & 2 ? 1 : -1, 0.5)
-        .unproject(camera)
-        .sub(camera.position)
-      const t = ray.y < -1e-9 ? (groundY - camera.position.y) / ray.y : -1
-      const hit =
-        t > 0
-          ? Math.hypot(
-              camera.position.x + ray.x * t - target.x,
-              camera.position.z + ray.z * t - target.z,
-            )
-          : Infinity
-      footprint = Math.max(footprint, Math.min(hit, dist * 4))
-    }
-    // Every corner missed (camera under the terrain, or some degenerate pose):
-    // fall back to eye distance rather than collapsing the rings.
-    if (footprint === 0) footprint = dist * 1.2
-
     const ceiling = Math.min(11 + 2 * boost, 19)
     for (let k = 0; k < 4; k++) {
-      // Classic clipmap geometry outward from the footprint: each ring doubles in
-      // extent and drops exactly one zoom, which is what perspective needs per
+      // Classic clipmap geometry: ring 0 at 1.2x the eye-to-ground distance
+      // covers a top-down viewport corner to corner, and each ring out doubles
+      // in extent and drops exactly one zoom — what perspective needs per
       // doubling of distance. Top-down, rings 1-3 sit entirely off-screen as
       // pre-loaded pan margin; tilted, they carry the compressed far field.
-      const half = Math.max(250, footprint * 1.1) * Math.pow(2, k)
+      const half = Math.max(250, dist * 1.2) * Math.pow(2, k)
       const step = Math.round(Math.log2(half))
 
       // Refetch when the ring's key changes in EITHER direction — sharper, coarser
