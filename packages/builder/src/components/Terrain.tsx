@@ -192,6 +192,7 @@ export default function Terrain({ build, sky, fogDensity, snowLine }: Props) {
       aoStrength: settings.aoStrength,
       microDetail: settings.microDetail,
       fogDensity,
+      satOpacity: settings.satOpacity,
     }
     surface.setConfig(config)
   })

@@ -1498,6 +1498,17 @@ export default function Controls() {
               decimals={0}
               onChange={setSetting('satPatchBoost')}
             />
+            {/* Below 1 the imagery becomes a wash over the shaded procedural
+                ground — relief and imagery readable at once. Mirrored as the
+                Satellite scrub on the viewport. */}
+            <Slider
+              label="Satellite opacity"
+              value={settings.satOpacity}
+              min={0}
+              max={1}
+              step={0.01}
+              onChange={setSetting('satOpacity')}
+            />
             {/* Wheel dolly rate. OrbitControls moves a fraction of the current eye
                 distance per notch, so this is a multiplier on that fraction, not a
                 speed in metres — 2 is roughly 10% of the distance per notch. */}

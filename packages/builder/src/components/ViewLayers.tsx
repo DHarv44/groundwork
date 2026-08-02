@@ -213,6 +213,26 @@ export default function ViewLayers() {
             disabled={!settings.showFog}
           />
         </label>
+        {/* Unlike the two above, this one IS a setting — it also lives in the
+            Render tab and persists — but it belongs here too because it is
+            tuned while looking at the ground, like winter and haze. Shown only
+            when imagery is the base, since it means nothing under the others. */}
+        {settings.textureMode === 'satellite' && (
+          <label className="scrub">
+            <span>
+              Satellite
+              <b>{Math.round(settings.satOpacity * 100)}%</b>
+            </span>
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.01}
+              value={settings.satOpacity}
+              onChange={(e) => set('satOpacity', parseFloat(e.target.value))}
+            />
+          </label>
+        )}
       </div>
 
       {/* The observed layers sit apart from the derived ones because they are not

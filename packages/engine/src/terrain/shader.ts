@@ -39,6 +39,7 @@ uniform float uWaveHeight;
 
 uniform float uUseSat;        // 0 = procedural, 1 = satellite drape
 uniform float uSatDetail;     // how much procedural micro-detail survives under imagery
+uniform float uSatOpacity;    // how solidly imagery covers the procedural ground, 0-1
 // The imagery clipmap: up to three nested rings centred under the camera, each
 // roughly 4x the area and a step coarser than the one inside it, with the base
 // drape as the outermost fallback. Sampled coarse to fine, so every fragment takes
@@ -709,8 +710,13 @@ void main() {
 
     // Keep a little procedural grain so close-ups don't turn to mush.
     float g = 0.90 + 0.20 * (grain * 0.5 + 0.5) * uSatDetail * (1.0 - smoothstep(600.0, 5000.0, dist));
-    albedo = sat * g;
-    snow *= 0.25;
+    // Opacity blends toward the procedural ground computed above, not toward
+    // black — at half strength the imagery reads as a wash over shaded relief.
+    // Snow suppression eases with it: full imagery already photographs its own
+    // snow, but a translucent drape over procedural ground should keep the
+    // procedural snow underneath.
+    albedo = mix(albedo, sat * g, uSatOpacity);
+    snow *= mix(1.0, 0.25, uSatOpacity);
 
     // Mapped overlays composite OVER the imagery — the photograph is the ground
     // layer, surveyed data reads on top of it, and roads (drawn further down)

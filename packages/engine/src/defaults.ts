@@ -61,6 +61,7 @@ export const DEFAULT_SURFACE_CONFIG: Readonly<SurfaceConfig> = Object.freeze({
   aoStrength: 0.85,
   microDetail: 0.6,
   fogDensity: 0,
+  satOpacity: 1,
 })
 
 export const DEFAULT_WATER_CONFIG: Readonly<WaterConfig> = Object.freeze({

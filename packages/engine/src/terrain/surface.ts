@@ -75,6 +75,10 @@ export interface SurfaceConfig {
   aoStrength: number
   microDetail: number
   fogDensity: number
+  /** How solidly the satellite drape covers the procedural ground, 0–1. Below 1
+   * the imagery becomes a wash over the shaded procedural terrain — useful for
+   * reading relief and imagery at once. */
+  satOpacity: number
 }
 
 /**
@@ -136,6 +140,7 @@ export class TerrainSurface {
       uSatMap: { value: BLANK },
       uUseSat: { value: 0 },
       uSatDetail: { value: 1 },
+      uSatOpacity: { value: 1 },
       uSatRing0Map: { value: BLANK },
       uSatRing0Rect: { value: new THREE.Vector4(0, 0, 1, 1) },
       uSatRing0Fade: { value: 0 },
@@ -346,6 +351,7 @@ export class TerrainSurface {
     u.uAoStrength!.value = c.aoStrength
     u.uDetail!.value = c.microDetail
     u.uFogDensity!.value = c.fogDensity
+    u.uSatOpacity!.value = c.satOpacity
 
     this.mode = c.textureMode
     this.applyTextureMode()

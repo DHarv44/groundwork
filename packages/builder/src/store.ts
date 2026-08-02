@@ -40,6 +40,8 @@ export interface Settings {
   textureMode: TextureMode
   /** Extra zoom levels the close-up satellite patch may fetch past the base drape. */
   satPatchBoost: number
+  /** How solidly imagery covers the procedural ground, 0–1. */
+  satOpacity: number
   /** Scroll-wheel dolly rate. OrbitControls steps ~4.6% of the eye distance per
    * notch at 1.0, which reads as barely moving after descending close to the
    * ground — the step is proportional to a now-tiny distance. */
@@ -215,6 +217,7 @@ export const DEFAULT_SETTINGS: Settings = {
   // already stops them fetching sharper than the screen can show, so the ceiling
   // only ever bites at close range — exactly where capping it reads as mush.
   satPatchBoost: 4,
+  satOpacity: 1,
   zoomSpeed: 2,
   // The default camera sits to the south-east, so a north-east sun rakes across the
   // relief instead of flattening it from behind the viewer.
@@ -559,6 +562,7 @@ const PERSISTED_SETTINGS = [
   'detail',
   'textureMode',
   'satPatchBoost',
+  'satOpacity',
   'zoomSpeed',
   'sunAzimuth',
   'sunElevation',
