@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import * as THREE from 'three'
 import { useFrame } from '@react-three/fiber'
 import { TerrainSurface, type SkyModel, type SurfaceConfig, type TerrainBuild } from '@dharv44/groundwork-engine'
@@ -47,24 +47,54 @@ export default function Terrain({ build, sky, fogDensity, snowLine }: Props) {
 
   useEffect(() => () => satTexture?.dispose(), [satTexture])
 
-  // The close-up patch rides the same settings as the base drape — same row order,
-  // same clamping — so the shader can treat the pair as one image at two sharpnesses.
-  const satPatch = useStore((s) => s.satPatch)
-  const patchTexture = useMemo(() => {
-    if (!satPatch) return null
-    const tex = new THREE.CanvasTexture(satPatch.canvas)
-    tex.flipY = false
-    tex.wrapS = THREE.ClampToEdgeWrapping
-    tex.wrapT = THREE.ClampToEdgeWrapping
-    tex.minFilter = THREE.LinearMipmapLinearFilter
-    tex.magFilter = THREE.LinearFilter
-    tex.generateMipmaps = true
-    tex.anisotropy = 16
-    tex.needsUpdate = true
-    return tex
-  }, [satPatch])
+  // The clipmap rings ride the same settings as the base drape — same row order,
+  // same clamping — so the shader can treat the set as one image at four sharpnesses.
+  //
+  // Textures are cached per canvas, because texture identity is what the engine keys
+  // its fades on: minting a fresh texture for an *unchanged* ring would restart its
+  // fade every time a sibling re-centred, and the whole cascade would blink whenever
+  // the inner ring moved. Evicted textures are disposed on a delay — the engine keeps
+  // a withdrawn ring bound briefly while it eases out, and freeing GPU memory under a
+  // bound sampler flashes.
+  const satRings = useStore((s) => s.satRings)
+  const ringTexCache = useRef(new Map<HTMLCanvasElement, THREE.Texture>())
+  const ringLayers = useMemo(() => {
+    const cache = ringTexCache.current
+    const live = new Set<HTMLCanvasElement>()
+    const layers = satRings.map((ring) => {
+      if (!ring) return null
+      live.add(ring.canvas)
+      let tex = cache.get(ring.canvas)
+      if (!tex) {
+        tex = new THREE.CanvasTexture(ring.canvas)
+        tex.flipY = false
+        tex.wrapS = THREE.ClampToEdgeWrapping
+        tex.wrapT = THREE.ClampToEdgeWrapping
+        tex.minFilter = THREE.LinearMipmapLinearFilter
+        tex.magFilter = THREE.LinearFilter
+        tex.generateMipmaps = true
+        tex.anisotropy = 16
+        tex.needsUpdate = true
+        cache.set(ring.canvas, tex)
+      }
+      return { texture: tex, rect: ring.rect }
+    })
+    for (const [canvas, tex] of cache) {
+      if (!live.has(canvas)) {
+        cache.delete(canvas)
+        setTimeout(() => tex.dispose(), 400)
+      }
+    }
+    return layers
+  }, [satRings])
 
-  useEffect(() => () => patchTexture?.dispose(), [patchTexture])
+  useEffect(
+    () => () => {
+      for (const tex of ringTexCache.current.values()) tex.dispose()
+      ringTexCache.current.clear()
+    },
+    [],
+  )
 
   // Built once. The surface holds a uniform object that must not be replaced, so the
   // component may re-render freely but the material behind it never gets rebuilt.
@@ -80,8 +110,7 @@ export default function Terrain({ build, sky, fogDensity, snowLine }: Props) {
     surface.setSky(sky)
     surface.setLayers({
       imagery: satTexture,
-      imageryPatch: patchTexture,
-      imageryPatchRect: satPatch?.rect ?? null,
+      imageryRings: ringLayers,
       water: waterMask,
       biome: biomeMap,
       road: roadMask,

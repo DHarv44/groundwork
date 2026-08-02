@@ -347,16 +347,17 @@ interface State {
   /** True while satellite tiles are in flight, so the layer button can say so. */
   imageryLoading: boolean
   /**
-   * The close-up imagery patch: the sub-box the camera is over, refetched at a higher
-   * zoom than the base drape and composited on top of it in the shader. Null whenever
-   * the camera is wide out — the base drape is already the best available there.
+   * The imagery clipmap: up to three nested close-up levels centred where the camera
+   * looks, index 0 the sharpest and smallest. Entries are null until their fetch
+   * lands; the shader falls through missing levels to the next ring out and finally
+   * the base drape, so partial states render correctly by construction.
    */
-  satPatch: {
+  satRings: Array<{
     canvas: HTMLCanvasElement
     /** Terrain-UV rectangle the canvas covers: x0, y0 north-west; x1, y1 south-east. */
     rect: [number, number, number, number]
     zoom: number
-  } | null
+  } | null>
   /** RGBA water mask from the hydrology pass: coverage, lake flag, log drainage. */
   waterMask: THREE.DataTexture | null
   waterStats: {
@@ -468,10 +469,14 @@ interface State {
   generateDemo: () => Promise<void>
   loadImagery: () => Promise<void>
   /**
-   * Fetch the close-up patch for a sub-box the camera has settled over, or clear it
-   * by passing null. The viewer decides when and where; this only fetches and holds.
+   * Fetch one clipmap ring for the sub-box the camera is over. The viewer decides
+   * when, where and how sharp; this only fetches, clamps and holds. Ring fetches are
+   * independent — the inner ring re-centres often, the outer rarely — so each index
+   * carries its own abort.
    */
-  loadSatPatch: (sub: Bounds | null) => Promise<void>
+  loadSatRing: (index: number, sub: Bounds, maxZoom: number) => Promise<void>
+  /** Drop every ring — leaving satellite mode, or the box changing under them. */
+  clearSatRings: () => void
   /** Fetch (or recall) the road network for the built area. Safe to call repeatedly. */
   loadRoads: () => Promise<void>
 }
@@ -479,8 +484,8 @@ interface State {
 let inflight: AbortController | null = null
 /** The road/area fetch in flight, aborted by clearRoads when the box changes. */
 let roadsAbort: AbortController | null = null
-/** The close-up imagery fetch in flight — the camera moving on aborts it. */
-let satPatchAbort: AbortController | null = null
+/** The per-ring close-up fetches in flight — the camera moving on aborts them. */
+const satRingAborts: Array<AbortController | null> = [null, null, null]
 
 let hydroWorker: Worker | null = null
 
@@ -1102,7 +1107,7 @@ export const useStore = create<State>((setState, getState) => {
   build: null,
   imagery: null,
   imageryZoom: 0,
-  satPatch: null,
+  satRings: [null, null, null],
   imageryLoading: false,
   waterMask: null,
   waterStats: null,
@@ -1443,21 +1448,17 @@ export const useStore = create<State>((setState, getState) => {
     }
   },
 
-  loadSatPatch: async (sub: Bounds | null): Promise<void> => {
-    // The camera moved on; whatever was being fetched is for somewhere it no longer is.
-    satPatchAbort?.abort()
-    satPatchAbort = null
-
-    if (!sub) {
-      if (getState().satPatch) setState({ satPatch: null })
-      return
-    }
+  loadSatRing: async (index: number, sub: Bounds, maxZoom: number): Promise<void> => {
+    if (index < 0 || index > 2) return
+    // The camera moved on; whatever this ring was fetching is for somewhere it no
+    // longer is. Other rings keep their fetches — they cover different ground.
+    satRingAborts[index]?.abort()
 
     const { heightField, imagery, settings } = getState()
     if (!heightField || !imagery || settings.textureMode !== 'satellite') return
     if (settings.satPatchBoost <= 0) return
 
-    // Clamp to the box — a patch that pokes past the terrain has nothing to sit on.
+    // Clamp to the box — a ring that pokes past the terrain has nothing to sit on.
     const b = heightField.bounds
     const s: Bounds = {
       south: Math.max(sub.south, b.south),
@@ -1468,40 +1469,45 @@ export const useStore = create<State>((setState, getState) => {
     if (s.north <= s.south || s.east <= s.west) return
 
     const ctrl = new AbortController()
-    satPatchAbort = ctrl
+    satRingAborts[index] = ctrl
     try {
-      // The ceiling comes from the slider alone, not from the base zoom: on a huge box
-      // the base is capped very low, and "base plus a few" would forbid exactly the
-      // close-ups that box needs most. Each slider step is two zooms — 13/15/17/19 —
-      // and the footprint's own tile budget decides what is actually reachable.
-      const maxZoom = Math.min(11 + 2 * settings.satPatchBoost, MAX_IMAGERY_ZOOM)
-      const result = await fetchImagery(s, undefined, ctrl.signal, maxZoom)
+      const result = await fetchImagery(s, undefined, ctrl.signal, Math.min(maxZoom, MAX_IMAGERY_ZOOM))
       if (ctrl.signal.aborted) return
-      // No sharper than the base drape? Then the patch adds nothing but a seam.
-      // Returning here leaves any previous patch in place — stale-but-sharp beats
-      // a visible pop back to blur.
+      // No sharper than the base drape? Then this ring adds nothing but a seam.
+      // Returning leaves whatever the ring held before — stale-but-sharp beats a
+      // visible pop back to blur, and the geometry is geo-anchored so stale stays true.
       if (result.zoom <= getState().imageryZoom) return
 
       const lonSpan = b.east - b.west
       const latSpan = b.north - b.south
-      setState({
-        satPatch: {
-          canvas: result.canvas,
-          rect: [
-            (s.west - b.west) / lonSpan,
-            (b.north - s.north) / latSpan,
-            (s.east - b.west) / lonSpan,
-            (b.north - s.south) / latSpan,
-          ],
-          zoom: result.zoom,
-        },
-      })
+      const rings = getState().satRings.slice()
+      rings[index] = {
+        canvas: result.canvas,
+        rect: [
+          (s.west - b.west) / lonSpan,
+          (b.north - s.north) / latSpan,
+          (s.east - b.west) / lonSpan,
+          (b.north - s.south) / latSpan,
+        ],
+        zoom: result.zoom,
+      }
+      setState({ satRings: rings })
     } catch (err) {
-      // A failed close-up is not an error state — the base drape is still underneath.
+      // A failed close-up is not an error state — the coarser rings and the base
+      // drape are still underneath.
       if ((err as Error)?.name !== 'AbortError') console.warn('satellite close-up failed', err)
     } finally {
-      if (satPatchAbort === ctrl) satPatchAbort = null
+      if (satRingAborts[index] === ctrl) satRingAborts[index] = null
     }
+  },
+
+  clearSatRings: (): void => {
+    for (let k = 0; k < satRingAborts.length; k++) {
+      satRingAborts[k]?.abort()
+      satRingAborts[k] = null
+    }
+    const { satRings } = getState()
+    if (satRings.some((r) => r !== null)) setState({ satRings: [null, null, null] })
   },
 
   loadRoads: async (): Promise<void> => {

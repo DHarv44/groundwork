@@ -56,7 +56,7 @@ interface OrbitLike {
  * are moving the camera; walking with FirstPerson earns close-ups the same way
  * orbiting does.
  */
-function SatPatchWatcher() {
+function SatRingWatcher() {
   const camera = useThree((s) => s.camera)
   const controls = useThree((s) => s.controls) as OrbitLike | null
   const build = useStore((s) => s.build)
@@ -64,30 +64,31 @@ function SatPatchWatcher() {
   const textureMode = useStore((s) => s.settings.textureMode)
   const boost = useStore((s) => s.settings.satPatchBoost)
   const imagery = useStore((s) => s.imagery)
-  const loadSatPatch = useStore((s) => s.loadSatPatch)
+  const loadSatRing = useStore((s) => s.loadSatRing)
+  const clearSatRings = useStore((s) => s.clearSatRings)
 
   const lastPos = useRef(new THREE.Vector3(Infinity, Infinity, Infinity))
   const lastQuat = useRef(new THREE.Quaternion())
   const stillFor = useRef(0)
-  const lastKey = useRef('')
-  const ndc = useRef(new THREE.Vector3())
-  const dir = useRef(new THREE.Vector3())
+  const lastKeys = useRef(['', '', ''])
 
   useFrame((_, dt) => {
     if (!build || !heightField) return
 
     const active = textureMode === 'satellite' && !!imagery && boost > 0
     if (!active) {
-      if (lastKey.current !== '') {
-        lastKey.current = ''
-        void loadSatPatch(null)
+      if (lastKeys.current.some((k) => k !== '')) {
+        lastKeys.current = ['', '', '']
+        clearSatRings()
       }
       return
     }
 
     // Settled = neither position nor orientation has meaningfully changed for a
     // beat. Orientation matters on its own because tilting in place moves no metres
-    // yet completely changes which ground is on screen.
+    // yet completely changes which ground is on screen. The outer rings are so wide
+    // that ordinary movement rarely changes their keys — in practice only the inner
+    // ring chases the camera, which is exactly the cadence a clipmap wants.
     const moved =
       camera.position.distanceToSquared(lastPos.current) > 1 ||
       Math.abs(1 - Math.abs(camera.quaternion.dot(lastQuat.current))) > 1e-6
@@ -98,80 +99,47 @@ function SatPatchWatcher() {
       return
     }
     stillFor.current += dt
-    if (stillFor.current < 0.35) return
+    if (stillFor.current < 0.25) return
 
-    // The footprint is what the camera actually SEES: the four frustum corner rays
-    // dropped onto the ground plane, not a square guessed around the orbit target.
-    // That is the difference between "sharp near the middle" and "sharp viewport" —
-    // a tilted view reaches ground far beyond any target-centred square.
-    //
-    // Rays that miss the ground (looking at sky) or land absurdly far away are
-    // clamped to a horizon distance: past a few times the eye distance the fog owns
-    // the pixels anyway, and chasing the mathematical horizon would balloon the
-    // footprint until no zoom gain survived the tile budget.
+    // The rings are nested squares centred where the camera looks, each 3x the width
+    // and two zooms coarser than the one inside. Frustum coverage falls out of the
+    // nesting: near ground lands in ring 0, mid-distance in ring 1, far ground in
+    // ring 2, and the horizon in the base drape — that is the clipmap doing what
+    // one frustum-fitted rectangle never could, because a tilted view needs several
+    // resolutions at once, not one rectangle at one resolution.
     const target = controls?.target ?? camera.position
     const dist = Math.max(200, camera.position.distanceTo(target))
-    const planeY = controls ? controls.target.y : 0
-    const maxDist = dist * 5
-
-    let minX = Infinity
-    let maxX = -Infinity
-    let minZ = Infinity
-    let maxZ = -Infinity
-    for (const [cx, cy] of [
-      [-1, -1],
-      [1, -1],
-      [-1, 1],
-      [1, 1],
-    ] as const) {
-      dir.current.copy(ndc.current.set(cx, cy, 0.5).unproject(camera)).sub(camera.position).normalize()
-      const t = dir.current.y < -1e-4 ? (planeY - camera.position.y) / dir.current.y : Infinity
-      const reach = Math.min(t > 0 ? t : Infinity, maxDist)
-      const x = camera.position.x + dir.current.x * reach
-      const z = camera.position.z + dir.current.z * reach
-      minX = Math.min(minX, x)
-      maxX = Math.max(maxX, x)
-      minZ = Math.min(minZ, z)
-      maxZ = Math.max(maxZ, z)
-    }
-
-    // A little margin so panning has somewhere sharp to arrive in, then clamp to the
-    // terrain — the patch cannot cover ground the box does not have.
-    const marginX = (maxX - minX) * 0.1
-    const marginZ = (maxZ - minZ) * 0.1
-    const halfW = build.widthMetres / 2
-    const halfD = build.depthMetres / 2
-    minX = Math.max(minX - marginX, -halfW)
-    maxX = Math.min(maxX + marginX, halfW)
-    minZ = Math.max(minZ - marginZ, -halfD)
-    maxZ = Math.min(maxZ + marginZ, halfD)
-    if (maxX <= minX || maxZ <= minZ) return
-
-    // World metres → the box's lon/lat. The mesh runs x west→east and z north→south,
-    // both centred on the origin — the same convention every mask projector uses.
     const b = heightField.bounds
     const lonSpan = b.east - b.west
     const latSpan = b.north - b.south
-    const west = b.west + (minX / build.widthMetres + 0.5) * lonSpan
-    const east = b.west + (maxX / build.widthMetres + 0.5) * lonSpan
-    const north = b.north - (minZ / build.depthMetres + 0.5) * latSpan
-    const south = b.north - (maxZ / build.depthMetres + 0.5) * latSpan
+    const u = target.x / build.widthMetres + 0.5
+    const v = target.z / build.depthMetres + 0.5
+    const cLon = b.west + u * lonSpan
+    const cLat = b.north - v * latSpan
 
-    // Quantised, so metres of drift or a wheel nudge do not refetch: corners snap to
-    // a tenth of the footprint, size to powers of two. When the view IS wider than
-    // any useful patch, the store's no-gain guard skips the fetch and — deliberately
-    // — leaves the previous patch standing. Stale-but-sharp beats popping to blur.
-    const sizeStep = Math.round(Math.log2(maxX - minX))
-    const grid = (maxX - minX) * 0.1
-    const key = [
-      Math.round(minX / grid),
-      Math.round(minZ / grid),
-      sizeStep,
-    ].join('|')
-    if (key === lastKey.current) return
-    lastKey.current = key
+    const ceiling = Math.min(11 + 2 * boost, 19)
+    for (let k = 0; k < 3; k++) {
+      const half = Math.max(250, dist * 0.9) * Math.pow(3, k)
+      const dLon = (half / build.widthMetres) * lonSpan
+      const dLat = (half / build.depthMetres) * latSpan
 
-    void loadSatPatch({ west, east, south, north })
+      // Centre snaps to a third of the ring, size to powers of two: metres of drift
+      // and wheel nudges change nothing; a real move re-keys the inner ring first.
+      const key = [
+        Math.round(cLon / (dLon / 3)),
+        Math.round(cLat / (dLat / 3)),
+        Math.round(Math.log2(half)),
+      ].join('|')
+      if (key === lastKeys.current[k]) continue
+      lastKeys.current[k] = key
+
+      void loadSatRing(k, {
+        west: cLon - dLon,
+        east: cLon + dLon,
+        south: cLat - dLat,
+        north: cLat + dLat,
+      }, ceiling - 2 * k)
+    }
   })
 
   return null
@@ -330,7 +298,7 @@ export default function Viewer() {
           </>
         )}
         <CameraRig size={size} midY={midY} topY={topY} ready={!!build} />
-        <SatPatchWatcher />
+        <SatRingWatcher />
         <FirstPerson />
         <HeadingTape target={tapeRef} />
         <OrbitControls
