@@ -37,7 +37,11 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // `gw` is the scope every rule in styles.css hangs off. It has to be an element the
+  // builder owns rather than the host's container, so that dropping this into another
+  // app cannot restyle anything outside it.
   return (
+    <div className="gw">
     <div className={`app ${collapsed ? 'collapsed' : ''}`}>
       <aside className="sidebar">
         <header>
@@ -87,6 +91,7 @@ export default function App() {
           </div>
         )}
       </main>
+    </div>
     </div>
   )
 }

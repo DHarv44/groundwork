@@ -1,4 +1,25 @@
-:root {
+/**
+ * Every rule below is scoped to `.gw`, the class on the builder's root element.
+ *
+ * It used to style `button`, `select`, `input` and `main` globally, which is fine for
+ * an application that owns its page and ruinous for a component dropped into one that
+ * does not — a host's own buttons would silently take our styling. Nesting the whole
+ * file under one class is what stops that, and it costs a single wrapper element.
+ *
+ * The palette moved here from `:root` for the same reason. Names like `--bg` and
+ * `--line` are generic enough to collide with a host's own variables, and at `:root`
+ * ours would win everywhere. Inside `.gw` they reach every rule in this file and
+ * nothing outside it.
+ *
+ * Page-level rules — `*`, `html`, `body`, `#root` — are not here at all. There is no
+ * correct way to scope a rule about `body`, so they live in `page.css`, which only the
+ * standalone entry point loads.
+ *
+ * This relies on native CSS nesting, including bare element selectors inside a rule.
+ * If the whole interface ever renders unstyled at once, that is the thing to check
+ * first — a runtime without it drops the entire file rather than degrading.
+ */
+.gw {
   --bg: #0b0e13;
   --panel: #12161d;
   --panel-2: #171c25;
@@ -10,27 +31,17 @@
   --bad: #f87171;
   --sidebar-w: 372px;
   color-scheme: dark;
-}
 
-* {
-  box-sizing: border-box;
-}
-
-html,
-body,
-#root {
+  /* The builder fills whatever box the host gives it. */
   height: 100%;
-  margin: 0;
-}
-
-body {
-  background: var(--bg);
   color: var(--text);
   font: 13px/1.5 ui-sans-serif, system-ui, 'Segoe UI', Roboto, sans-serif;
-  overflow: hidden;
-}
 
-.app {
+  * {
+    box-sizing: border-box;
+  }
+
+  .app {
   display: grid;
   grid-template-columns: var(--sidebar-w) 1fr;
   height: 100%;
@@ -1224,4 +1235,6 @@ main {
     transparent
   );
   mask-image: linear-gradient(to right, transparent, #000 12%, #000 88%, transparent);
+  }
 }
+/* ^ closes .gw — every rule in this file is nested inside it. */

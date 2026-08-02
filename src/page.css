@@ -1,0 +1,31 @@
+/**
+ * The standalone page's own styling — loaded only by `main.tsx`.
+ *
+ * Everything here targets `html`, `body` and `#root`, which belong to whoever owns the
+ * page. A host embedding the builder owns those already and must not have them
+ * rewritten underneath it, so they are kept out of `styles.css` entirely rather than
+ * scoped: there is no correct way to scope a rule about `body`.
+ *
+ * The two colours are stated literally rather than read from the builder's palette,
+ * because that palette now lives inside `.gw` where it cannot leak into a host. Two
+ * duplicated values are a fair price for the page shell not reaching into the
+ * component for them.
+ */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: #0b0e13;
+  color: #dfe5ee;
+  font: 13px/1.5 ui-sans-serif, system-ui, 'Segoe UI', Roboto, sans-serif;
+  overflow: hidden;
+}
