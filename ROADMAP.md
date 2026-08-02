@@ -157,10 +157,37 @@ Strictly one-directional. Rules that keep it that way:
       terms — and asserting one we have not checked would be worse than pointing at the
       provider. Wants a licence field on the `DEM_TYPES` table, filled in per entry.
 - [ ] **3. `builder`** — extract what is left around it.
-- [ ] **4. Two demos** — an engine page that loads a pack and renders it, and a builder
-      page running against a stub consumer that just prints the manifest. If either needs
-      one line from the other side, the boundary has leaked. These are the regression
-      test for portability.
+- [~] **4. Demos** — the engine one is done: `demo/engine/`, at
+      `/demo/engine/?pack=/sample.gwpack`. Plain three.js, no React, no store, no
+      builder. Drop a `.gwpack` on it or point it at one with `?pack=`.
+
+      `npm run sample:pack` writes a synthetic island — two peaks, a saddle, ridged
+      noise, bathymetry, a coarser hydrology plane and a road over the saddle —
+      **produced by core alone**: no DEM fetch, no Overpass, no browser. That is the
+      point of it being synthetic. A pack cut from real data would prove the builder
+      works, which was never in question; this proves the engine renders a pack made by
+      something that is not the builder.
+
+      **The boundary is verified from build output, not by reading imports.** Both
+      entries build together, and the demo's HTML pulls only its own 23 kB chunk plus
+      the shared three.js one. React and zustand are entirely inside the builder's
+      chunk, which the demo never loads. If the split ever leaks, that shows up as
+      React appearing in the demo's chunk graph — mechanical, and it does not depend on
+      anyone remembering to check.
+
+      The demo also stands in for the missing road renderer: masks are deliberately not
+      in a pack, so it builds `LineSegments` from the vectors and drapes them with
+      `sampleBox`. That is a consumer using pack geometry for its own purpose with no
+      Groundwork drawing code, which is exactly the case a game would be.
+
+      Worth noting against the earlier plan: a `standalone()` wrapper now looks
+      unnecessary. The host-owns-renderer-and-loop path is about thirty lines in the
+      demo, and wrapping it would be speculative until something actually wants it.
+
+- [ ] **4b. The builder demo** — the builder running against a stub consumer that only
+      prints the manifest. Less urgent than the engine one: the builder is already
+      exercised constantly by being the app, whereas the engine had nothing proving it
+      could stand on its own until now.
 - [ ] **5. Export** — the builder writes a pack from what is already in the store.
 
 ### Rules for the export

@@ -32,7 +32,7 @@ export type {
 } from './vector'
 export { ROAD_CLASSES, ROAD_WIDTH_METRES } from './vector'
 
-export type { PackFiles, PackInput, PackInputLayer } from './packio'
+export type { PackFiles, PackInput, PackInputLayer, RasterData } from './packio'
 export {
   PACK_EXTENSION,
   buildPack,

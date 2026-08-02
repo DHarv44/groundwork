@@ -9,3 +9,7 @@ dist/
 # Emitted by `tsc -b` because tsconfig.node.json is a composite project
 vite.config.js
 vite.config.d.ts
+
+# Regenerate with `npm run sample:pack`. The generator is the fixture, not the
+# megabyte-and-a-half of binary it produces.
+public/*.gwpack

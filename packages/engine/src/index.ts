@@ -19,6 +19,8 @@ export { terrainFragmentShader, terrainVertexShader } from './terrain/shader'
 export type { SurfaceConfig, SurfaceLayers, SurfaceTextureMode } from './terrain/surface'
 export { TerrainSurface } from './terrain/surface'
 
+export { DEFAULT_SURFACE_CONFIG, DEFAULT_WATER_CONFIG } from './defaults'
+
 export { waterFragmentShader, waterVertexShader } from './water/shader'
 export type { WaterConfig } from './water/plane'
 export { WaterPlane } from './water/plane'

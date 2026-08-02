@@ -41,13 +41,27 @@ const TYPED = {
   float32: Float32Array,
 } as const
 
+/**
+ * A raster plane's samples.
+ *
+ * The buffer parameter is pinned to `ArrayBuffer` rather than left as the default
+ * `ArrayBufferLike`. It is always a real one — the views are constructed over a
+ * sliced buffer a few lines below — and the loose form makes the result unusable
+ * anywhere a `BufferSource` is wanted, which is to say anywhere a consumer would
+ * actually put it, such as straight into a `THREE.DataTexture`.
+ */
+export type RasterData =
+  | Uint8Array<ArrayBuffer>
+  | Uint16Array<ArrayBuffer>
+  | Float32Array<ArrayBuffer>
+
 /** The typed view over a raster plane, without interpreting what it means. */
 export function readRaster(
   files: PackFiles,
   id: string,
 ): {
   layer: PackLayer
-  data: Uint8Array | Uint16Array | Float32Array
+  data: RasterData
   width: number
   height: number
 } | null {
