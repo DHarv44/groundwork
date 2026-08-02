@@ -635,7 +635,14 @@ SSE-exact per doubling of distance, serving as pan margin top-down and as the fa
 when tilted. Zoom-out re-keys rings instead of retaining sharper leftovers — Esri
 captures differ per zoom level, so a retained patch reads as a colour-mismatched square;
 rings that would land no sharper than the base clear themselves; the ring feather is 15%
-because it blends capture differences, not just resolution. What remains is a single ~100 ms spike
+because it blends capture differences, not just resolution.
+
+Wheel zoom no longer belongs to OrbitControls: `ZoomToGround` raycasts the cursor
+against the height field and scales the camera about the hit — the point under the
+pointer stays pinned (measured ~9 m apparent drift over a 15 km→1.3 km dive, symmetric
+on the way out), the orbit target converges onto the ground being dived at, and the
+terrain itself is the zoom floor (25 m hover clamp in CameraRig). OrbitControls keeps
+rotate and ground-plane pan only. What remains is a single ~100 ms spike
 when a ring's canvas dimensions change (a zoom step crossing forces a canvas resize,
 which forces a GL storage realloc plus full re-upload). Rare — a handful per deep dive —
 but it is the one hitch left in the gesture. Fix if it proves noticeable: fixed-size

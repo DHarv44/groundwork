@@ -41,6 +41,132 @@ interface OrbitLike {
   update: () => void
   addEventListener: (type: string, fn: () => void) => void
   removeEventListener: (type: string, fn: () => void) => void
+  dispatchEvent?: (event: { type: string }) => void
+}
+
+/**
+ * Ground-anchored wheel zoom, replacing OrbitControls' dolly entirely.
+ *
+ * OrbitControls' zoomToCursor dollies toward a point at the orbit target's DEPTH,
+ * not toward the ground under the cursor. Over 3D terrain those are different
+ * points, so every notch slid the feature under the pointer a little sideways —
+ * felt as the map jumping around while zooming. The cure is what real map
+ * renderers do: intersect the cursor ray with the terrain itself and scale the
+ * camera about that fixed point. Scaling about the hit keeps it exactly under the
+ * cursor by construction — zero drift, in or out — and dragging the orbit target
+ * along the same scale makes it converge onto the ground being dived at, which is
+ * where subsequent orbiting wants it anyway.
+ */
+function ZoomToGround() {
+  const camera = useThree((s) => s.camera)
+  const gl = useThree((s) => s.gl)
+  const controls = useThree((s) => s.controls) as OrbitLike | null
+  const build = useStore((s) => s.build)
+  const heightField = useStore((s) => s.heightField)
+  const exaggeration = useStore((s) => s.settings.exaggeration)
+  const zoomSpeed = useStore((s) => s.settings.zoomSpeed)
+  const walking = useStore((s) => s.walking)
+
+  // The wheel handler reads through this ref so the listener binds once.
+  const live = useRef({ controls, build, heightField, exaggeration, zoomSpeed, walking })
+  live.current = { controls, build, heightField, exaggeration, zoomSpeed, walking }
+
+  useEffect(() => {
+    const el = gl.domElement
+    const dir = new THREE.Vector3()
+    const probe = new THREE.Vector3()
+    const hit = new THREE.Vector3()
+    let saveTimer: ReturnType<typeof setTimeout> | undefined
+
+    /** Terrain height (world Y) under a point, or -Infinity outside the box. */
+    const groundAt = (x: number, z: number): number => {
+      const s = live.current
+      const u = x / s.build!.widthMetres + 0.5
+      const v = z / s.build!.depthMetres + 0.5
+      if (u < 0 || u > 1 || v < 0 || v > 1) return -Infinity
+      return sampleBox(s.heightField!, u, v) * s.exaggeration
+    }
+
+    /** March the cursor ray to the terrain surface. Quadratic step spacing keeps
+     * samples dense near the camera where a close hit needs precision; a bracket
+     * is then bisected so the anchor lands on the surface, not a step past it. */
+    const marchToGround = (origin: THREE.Vector3): boolean => {
+      const s = live.current
+      const far = Math.max(s.build!.widthMetres, s.build!.depthMetres) * 4
+      let lo = 0
+      for (let i = 1; i <= 96; i++) {
+        const t = far * Math.pow(i / 96, 2)
+        probe.copy(dir).multiplyScalar(t).add(origin)
+        if (probe.y <= groundAt(probe.x, probe.z)) {
+          let a = lo
+          let b = t
+          for (let j = 0; j < 16; j++) {
+            const m = (a + b) / 2
+            probe.copy(dir).multiplyScalar(m).add(origin)
+            if (probe.y <= groundAt(probe.x, probe.z)) b = m
+            else a = m
+          }
+          hit.copy(dir).multiplyScalar((a + b) / 2).add(origin)
+          return true
+        }
+        lo = t
+      }
+      return false
+    }
+
+    const onWheel = (e: WheelEvent) => {
+      const s = live.current
+      if (!s.controls || !s.build || !s.heightField || s.walking) return
+      e.preventDefault()
+
+      const rect = el.getBoundingClientRect()
+      const nx = ((e.clientX - rect.left) / rect.width) * 2 - 1
+      const ny = -((e.clientY - rect.top) / rect.height) * 2 + 1
+      dir.set(nx, ny, 0.5).unproject(camera).sub(camera.position).normalize()
+
+      // Anchor: terrain under the cursor; failing that (sky, off the box), the
+      // cursor ray's crossing of the target's horizontal plane; failing that,
+      // the target itself. Everything below works the same on any of them.
+      if (!marchToGround(camera.position)) {
+        const t = (s.controls.target.y - camera.position.y) / dir.y
+        if (Number.isFinite(t) && t > 0) hit.copy(dir).multiplyScalar(t).add(camera.position)
+        else hit.copy(s.controls.target)
+      }
+
+      // One notch scales the camera-to-anchor distance by 0.95^speed, the same
+      // constant-ratio-per-notch law every slippy map uses. Trackpads deliver
+      // many small deltas; normalising by 100 keeps them proportional.
+      const notches = Math.min(4, Math.max(0.2, Math.abs(e.deltaY) / 100))
+      let factor = Math.pow(0.95, s.zoomSpeed * notches)
+      if (e.deltaY > 0) factor = 1 / factor
+
+      // Floors and ceilings measured against the anchor: never closer than a
+      // hover, never farther than the frame limit. The per-frame terrain clamp
+      // in CameraRig still backstops anything this arithmetic misses.
+      const d = camera.position.distanceTo(hit)
+      if (factor < 1) factor = Math.max(factor, Math.min(1, 65 / Math.max(d, 1e-6)))
+      else {
+        const maxD = (live.current.build!.widthMetres + live.current.build!.depthMetres) * 3
+        factor = Math.min(factor, Math.max(1, maxD / Math.max(d, 1e-6)))
+      }
+
+      camera.position.sub(hit).multiplyScalar(factor).add(hit)
+      s.controls.target.sub(hit).multiplyScalar(factor).add(hit)
+
+      // The controls never see this gesture, so fire their 'end' ourselves —
+      // it is what persists the camera to the session.
+      clearTimeout(saveTimer)
+      saveTimer = setTimeout(() => live.current.controls?.dispatchEvent?.({ type: 'end' }), 350)
+    }
+
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => {
+      el.removeEventListener('wheel', onWheel)
+      clearTimeout(saveTimer)
+    }
+  }, [gl, camera])
+
+  return null
 }
 
 /**
@@ -386,28 +512,19 @@ export default function Viewer() {
         <SatRingWatcher />
         <FirstPerson />
         <HeadingTape target={tapeRef} />
-        {/* zoomToCursor makes the wheel dive toward the pointer rather than the
-            orbit target — the mapping-app gesture, and the cure for the crawl out
-            of a low hover: pointing at distant ground re-aims the dolly at it, so
-            zoom-out speed recovers instead of staying proportional to the last
-            close-up distance.
-
-            screenSpacePanning must be off alongside it. With it on (the default),
-            every cursor-zoom re-places the orbit target as "a point N metres in
-            front of the camera" — floating in mid-air — so the minDistance floor
-            triggers against that phantom while the camera is still far above the
-            ground: zoom-in stalls high and no amount of scrolling descends. Off,
-            the target is re-projected onto the horizontal ground plane each zoom,
-            the measured distance is the real one, and the wheel rides down to the
-            actual floor. It also makes drag-panning slide along the ground rather
-            than the screen plane, which is the mapping-app pan. */}
+        {/* Zoom is NOT OrbitControls' job here — ZoomToGround owns the wheel,
+            anchoring every notch to the terrain under the cursor (OrbitControls'
+            own dolly, zoomToCursor included, aims at the orbit target's depth
+            instead of the ground, which slides the world sideways while zooming).
+            screenSpacePanning stays off so drag-panning moves along the ground
+            plane rather than the screen plane — the mapping-app pan. */}
+        <ZoomToGround />
         <OrbitControls
           makeDefault
           enableDamping
           dampingFactor={0.08}
           rotateSpeed={0.6}
-          zoomSpeed={settings.zoomSpeed}
-          zoomToCursor
+          enableZoom={false}
           screenSpacePanning={false}
           maxPolarAngle={Math.PI * 0.495}
         />
