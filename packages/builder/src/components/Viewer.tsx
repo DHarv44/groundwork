@@ -216,6 +216,10 @@ function SatRingWatcher() {
    * replaced the settle gate. Restarts are visually free (seeded), so this only
    * exists to stop a long zoom gesture from opening dozens of doomed fetches. */
   const cooldown = useRef([0, 0, 0, 0])
+  /** How long each ring has continuously wanted a COARSER zoom. Sharper is acted
+   * on immediately; coarser waits out this timer, so an out-and-back-in wiggle
+   * never throws sharp imagery away just to refetch it. */
+  const coarserFor = useRef([0, 0, 0, 0])
 
   useFrame((_, dt) => {
     if (!build || !heightField) return
@@ -225,6 +229,7 @@ function SatRingWatcher() {
       if (lastFetch.current.some((f) => f !== null)) {
         lastFetch.current = [null, null, null, null]
         cooldown.current = [0, 0, 0, 0]
+        coarserFor.current = [0, 0, 0, 0]
         clearSatRings()
       }
       return
@@ -291,13 +296,17 @@ function SatRingWatcher() {
       const step = Math.round(Math.log2(half))
 
       // Refetch when the ring's key changes in EITHER direction — sharper, coarser
-      // or elsewhere. Keeping a sharper ring on zoom-out sounds free (geo-anchored
-      // imagery minifies through its mipmaps), but Esri's captures differ between
-      // zoom levels — different dates, different seasons, different colour — so a
-      // retained patch reads as a mismatched square floating in the view. A
-      // uniform viewport at one zoom beats a patchwork of sharper leftovers, and
-      // the refetch is cheap anyway: the coarser tiles were cached on the way
-      // down, and the seed makes the swap invisible.
+      // or elsewhere. Keeping a sharper ring on zoom-out indefinitely sounds free
+      // (geo-anchored imagery minifies through its mipmaps), but Esri's captures
+      // differ between zoom levels — date, season, colour — so a retained patch
+      // reads as a mismatched square floating in the view. A uniform viewport at
+      // one zoom beats a patchwork of sharper leftovers.
+      //
+      // Direction matters for WHEN, though. Sharper refetches immediately — blur
+      // under the camera is the thing being fixed. Coarser waits out a short
+      // hysteresis: on a zoom-out-and-back-in wiggle, the sharp ring would be
+      // discarded only to be refetched, felt as the zoom "resetting" and having
+      // to be scrolled back up. Only a SUSTAINED zoom-out re-keys coarser.
       // The drift threshold is deliberately small: re-centres are seeded and
       // incremental now, so tracking the camera closely costs a fetch, not a blink.
       const prev = lastFetch.current[k]
@@ -306,7 +315,14 @@ function SatRingWatcher() {
         const dxM = ((cLon - prev.lon) / lonSpan) * build.widthMetres
         const dzM = ((prev.lat - cLat) / latSpan) * build.depthMetres
         const drifted = Math.hypot(dxM, dzM) > prevHalf * 0.18
-        if (step === prev.step && !drifted) continue
+        if (step === prev.step && !drifted) {
+          coarserFor.current[k] = 0
+          continue
+        }
+        if (step > prev.step && !drifted) {
+          coarserFor.current[k] = coarserFor.current[k]! + dt
+          if (coarserFor.current[k]! < 0.8) continue
+        }
       }
       // Wanted but cooling down — leave lastFetch untouched so the want survives
       // to a later frame instead of being recorded as satisfied. Outer rings wait
@@ -314,6 +330,7 @@ function SatRingWatcher() {
       // buys nothing but churn out there.
       if (cooldown.current[k]! > 0) continue
       cooldown.current[k] = 0.25 + 0.1 * k
+      coarserFor.current[k] = 0
       lastFetch.current[k] = { lon: cLon, lat: cLat, step }
 
       const dLon = (half / build.widthMetres) * lonSpan
