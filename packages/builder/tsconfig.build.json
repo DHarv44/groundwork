@@ -1,0 +1,19 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "composite": true,
+    "noEmit": false,
+    // Inherited as true for the dev config, but TS refuses it when emitting — and no
+    // import here actually carries a .ts extension, so nothing is lost.
+    "allowImportingTsExtensions": false,
+    "outDir": "dist",
+    "rootDir": "src",
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true
+  },
+  "references": [
+    { "path": "../core/tsconfig.build.json" },
+    { "path": "../engine/tsconfig.build.json" }
+  ]
+}

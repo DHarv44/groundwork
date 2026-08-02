@@ -11,7 +11,8 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "check:types": "tsc -b && tsc -p packages/core/tsconfig.json --noEmit && tsc -p packages/engine/tsconfig.json --noEmit && tsc -p packages/core/test/tsconfig.json --noEmit",
+    "build:packages": "npm run build -w @dharv44/groundwork-core && npm run build -w @dharv44/groundwork-engine && npm run build -w @dharv44/groundwork-builder",
+    "check:types": "tsc -b && tsc -p packages/core/tsconfig.json --noEmit && tsc -p packages/engine/tsconfig.json --noEmit && tsc -p packages/builder/tsconfig.json --noEmit && tsc -p packages/core/test/tsconfig.json --noEmit",
     "check:core": "esbuild packages/core/test/roundtrip.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/roundtrip.mjs --log-level=warning && node node_modules/.cache/roundtrip.mjs",
     "sample:pack": "esbuild packages/core/test/samplepack.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/samplepack.mjs --log-level=warning && node node_modules/.cache/samplepack.mjs"
   },

@@ -5,13 +5,31 @@
   "type": "module",
   "license": "MIT",
   "exports": {
-    ".": "./src/index.ts",
-    "./styles.css": "./src/styles.css"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./styles.css": "./src/styles.css",
+    "./assets/koppen_0p1.png": "./assets/koppen_0p1.png"
   },
-  "types": "./src/index.ts",
+  "types": "./dist/index.d.ts",
   "files": [
-    "src"
+    "dist",
+    "src",
+    "assets"
   ],
+  "scripts": {
+    "build": "tsc -b tsconfig.build.json",
+    "prepack": "npm run build"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DHarv44/groundwork.git",
+    "directory": "packages/builder"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
   "dependencies": {
     "@dharv44/groundwork-core": "^0.1.0",
     "@dharv44/groundwork-engine": "^0.1.0",

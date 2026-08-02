@@ -13,3 +13,6 @@ vite.config.d.ts
 # Regenerate with `npm run sample:pack`. The generator is the fixture, not the
 # megabyte-and-a-half of binary it produces.
 public/*.gwpack
+
+# Package build output — produced by build:packages / prepack
+packages/*/dist/

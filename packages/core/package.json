@@ -6,10 +6,26 @@
   "license": "MIT",
   "sideEffects": false,
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
   },
-  "types": "./src/index.ts",
+  "types": "./dist/index.d.ts",
   "files": [
+    "dist",
     "src"
-  ]
+  ],
+  "scripts": {
+    "build": "tsc -b tsconfig.build.json",
+    "prepack": "npm run build"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DHarv44/groundwork.git",
+    "directory": "packages/core"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  }
 }

@@ -16,7 +16,13 @@
     "strict": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
-    "noFallthroughCasesInSwitch": true
+    "noFallthroughCasesInSwitch": true,
+
+    // Sibling workspace types from source — see the note in engine's tsconfig.
+    "paths": {
+      "@dharv44/groundwork-core": ["../core/src/index.ts"],
+      "@dharv44/groundwork-engine": ["../engine/src/index.ts"]
+    }
   },
   "include": ["src"]
 }

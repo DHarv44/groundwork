@@ -14,6 +14,33 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [react()],
+    resolve: {
+      // The packages' `exports` point at `dist`, because that is what a published
+      // consumer must get. Locally that would mean the app stops seeing source edits
+      // until someone rebuilds dist — so dev and the in-repo demos resolve the three
+      // packages straight to source here instead. Chosen over an `exports` "source"
+      // condition because npm ignores `publishConfig.exports` swapping (that is a pnpm
+      // feature), and over a watch build because a second compiler invalidates HMR.
+      // Exact-match regexes so the styles.css subpath keeps its own mapping.
+      alias: [
+        {
+          find: /^@dharv44\/groundwork-core$/,
+          replacement: resolve(__dirname, 'packages/core/src/index.ts'),
+        },
+        {
+          find: /^@dharv44\/groundwork-engine$/,
+          replacement: resolve(__dirname, 'packages/engine/src/index.ts'),
+        },
+        {
+          find: /^@dharv44\/groundwork-builder$/,
+          replacement: resolve(__dirname, 'packages/builder/src/index.ts'),
+        },
+        {
+          find: /^@dharv44\/groundwork-builder\/styles\.css$/,
+          replacement: resolve(__dirname, 'packages/builder/src/styles.css'),
+        },
+      ],
+    },
     build: {
       rollupOptions: {
         input: {

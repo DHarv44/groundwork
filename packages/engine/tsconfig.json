@@ -11,7 +11,15 @@
     "strict": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
-    "noFallthroughCasesInSwitch": true
+    "noFallthroughCasesInSwitch": true,
+
+    // Sibling workspace types come from source, not from a built dist. Without this,
+    // building the engine would first require building core, and a stale core dist
+    // would silently supply stale types. Emitted output is unaffected — paths never
+    // rewrite import specifiers, only where the compiler looks for their types.
+    "paths": {
+      "@dharv44/groundwork-core": ["../core/src/index.ts"]
+    }
   },
   "include": ["src"]
 }

@@ -16,7 +16,16 @@
     "strict": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
-    "noFallthroughCasesInSwitch": true
+    "noFallthroughCasesInSwitch": true,
+
+    // Types for the workspace packages come from source, mirroring the Vite alias in
+    // vite.config.ts — package `exports` point at dist for consumers, and the app
+    // must not depend on dist existing or being fresh.
+    "paths": {
+      "@dharv44/groundwork-core": ["./packages/core/src/index.ts"],
+      "@dharv44/groundwork-engine": ["./packages/engine/src/index.ts"],
+      "@dharv44/groundwork-builder": ["./packages/builder/src/index.ts"]
+    }
   },
   // The builder's own source is listed so its `vite-env.d.ts` is in the program —
   // without it the `?worker` imports and `import.meta.env` lose their declarations.

@@ -9,7 +9,13 @@
     "moduleResolution": "bundler",
     "allowSyntheticDefaultImports": true,
     "strict": true,
-    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.node.tsbuildinfo"
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.node.tsbuildinfo",
+    // Composite projects must emit, and this one's output used to land next to the
+    // source as vite.config.js — which Vite loads IN PREFERENCE to vite.config.ts.
+    // Every edit to the real config left a stale shadow copy silently in charge of
+    // the dev server until the next tsc -b. Emitting into the cache removes the
+    // shadow entirely rather than merely keeping it fresh.
+    "outDir": "./node_modules/.tmp/tsconfig-node-emit"
   },
   "include": ["vite.config.ts"]
 }
