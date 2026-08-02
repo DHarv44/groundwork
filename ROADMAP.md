@@ -364,12 +364,40 @@ The lesson is already in this repo: `OSM_QUERY_VERSION` in `demcache.ts` exists 
 cached entry that cannot say what shape it is has to be thrown away rather than migrated.
 A pack shipped by someone else cannot be thrown away.
 
-### Not yet
+### Publishing — done, one token from live
 
-- **npm publishing.** Structure as packages now — that is the part that is expensive to
-  retrofit — but consume locally. Publishing is a short job once the boundary is real,
-  and with two consumers on one machine a registry is pure friction. Revisit when a third
-  consumer appears, or one we do not control.
+The TOC consumes these as installed packages now, so the "not yet" above is over.
+State of it:
+
+- **Names are `@dharv44/groundwork-core` / `-engine` / `-builder`.** Not a choice: a
+  GitHub org called `groundwork` already exists and is not ours, and GitHub Packages
+  requires the scope to match the owning account.
+- Each package builds `dist` with declarations + maps via a composite
+  `tsconfig.build.json` (project references — `paths` to sibling src alone violates
+  rootDir on emit), `exports`/`types` point at dist, `prepack` rebuilds so a publish
+  cannot ship stale output, `noEmitOnError` so a failing build writes nothing.
+- **Local dev never sees dist:** Vite aliases the package names to `src/index.ts` and
+  root tsconfig `paths` mirror it. Chosen over an exports "source" condition because
+  npm ignores `publishConfig.exports` swapping (pnpm feature), and over a watch build
+  because a second compiler fights HMR.
+- **Trap fixed on the way:** `tsc -b` used to emit `vite.config.js` beside
+  `vite.config.ts`, and Vite loads the `.js` in preference — the dev server was
+  silently running a stale shadow config. The composite emit now lands in
+  `node_modules/.tmp`.
+- The builder ships `assets/koppen_0p1.png` and declares R3F/drei as peers (they were
+  undeclared and resolving through the workspace root by accident). Whole repo moved
+  to React 19 / R3F 9 / drei 10 / react-leaflet 5 to match the consumer; the entire
+  compile-time cost was one `useRef` nullability annotation.
+- **`node smoke/run-host-smoke.mjs`** packs real tarballs, installs them in a scratch
+  Vite app outside the workspace (React 19, three 0.169, its own R3F canvas, hostile
+  CSS, `resolve.dedupe`), typechecks against the shipped `.d.ts` and bundles. The
+  in-browser half then proves CSS containment, storage namespacing, a direct-to-S3
+  terrain fetch via endpoint overrides, and a 9.1M-sample pack round-trip at 0.022 m
+  worst error — with zero console errors and no duplicate React.
+- **Publish itself is blocked on auth only:** `npm publish` dry-run validates and
+  routes to `npm.pkg.github.com` via `publishConfig`; the real run needs a classic
+  PAT with `write:packages` in `~/.npmrc`. GitHub Packages does not accept OAuth
+  tokens, so this is a user step by nature.
 - **A CI check for the `core` zero-import rule.** A grep over `packages/core/src` for
   `from 'three'` / `from 'react'`. Not because we would do it by accident today, but
   because in six months something will *almost* fit and the rule should be what says no.

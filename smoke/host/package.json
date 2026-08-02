@@ -1,0 +1,27 @@
+{
+  "name": "smoke-host",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "//": "The three @dharv44/groundwork-* deps are deliberately absent here — the runner installs them from freshly packed tarballs, version-agnostically. Listing file: paths would pin tarball filenames that rot on every version bump.",
+  "scripts": {
+    "build": "vite build",
+    "check": "tsc --noEmit",
+    "preview": "vite preview --port 5199 --strictPort"
+  },
+  "dependencies": {
+    "@react-three/drei": "^10.0.0",
+    "@react-three/fiber": "^9.0.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "three": "^0.169.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@types/three": "^0.169.0",
+    "@vitejs/plugin-react": "^4.3.3",
+    "typescript": "^5.6.3",
+    "vite": "^6.0.1"
+  }
+}

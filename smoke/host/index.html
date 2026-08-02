@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Smoke host — foreign React 19 app embedding Groundwork</title>
+    <style>
+      /* The host's own opinionated globals — the builder must survive them. */
+      * { box-sizing: content-box; }
+      html, body { height: 100%; margin: 0; }
+      body { font: 14px/1.5 Georgia, serif; background: #f4f6f9; color: #1e2732; display: flex; flex-direction: column; }
+      button { background: #2f6fd0; color: #fff; border: 1px solid #2a63ba; font: inherit; padding: 6px 12px; cursor: pointer; }
+      header { padding: 10px 16px; background: #fff; border-bottom: 1px solid #d3d9e3; display: flex; gap: 14px; align-items: center; }
+      #own-canvas { width: 160px; height: 60px; }
+      .row { flex: 1; display: flex; min-height: 0; }
+      #slot { flex: 1; min-width: 0; }
+      aside { width: 340px; padding: 12px; overflow: auto; background: #fff; border-left: 1px solid #d3d9e3; }
+      pre { font: 11px/1.5 Consolas, monospace; white-space: pre-wrap; word-break: break-word; background: #f4f6f9; border: 1px solid #d3d9e3; padding: 8px; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <strong>Foreign host</strong>
+      <button id="host-btn">Host button</button>
+      <!-- The host's OWN R3F canvas, mounted before the builder ever loads. -->
+      <div id="own-canvas"></div>
+    </header>
+    <div class="row">
+      <div id="slot"></div>
+      <aside>
+        <button id="run">Run smoke checks</button>
+        <pre id="out">idle</pre>
+      </aside>
+    </div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
