@@ -1,6 +1,6 @@
 {
   "name": "@dharv44/groundwork-engine",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Terrain renderer. Plain three.js — owns neither the renderer nor the frame loop.",
   "type": "module",
   "license": "MIT",

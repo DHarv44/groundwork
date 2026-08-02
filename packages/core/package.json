@@ -1,6 +1,6 @@
 {
   "name": "@dharv44/groundwork-core",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Terrain data model, pack format, geodesy and sampling. Imports nothing.",
   "type": "module",
   "license": "MIT",
