@@ -104,6 +104,7 @@ export default function Terrain({ build, sky, fogDensity, snowLine }: Props) {
       roadDarkness: settings.roadDarkness,
       roadClearing: settings.roadClearing,
       roadTint: settings.roadTint,
+      roadShoulder: settings.roadShoulder,
 
       // Each kind switches independently, and the toggle simply zeroes its weight —
       // the mask is one texture, so there is nothing to rebuild when one goes off.

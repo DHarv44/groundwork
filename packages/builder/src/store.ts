@@ -122,8 +122,19 @@ export interface Settings {
   roadVerge: number
   /** Longest side of the road mask, in pixels. */
   roadResolution: number
+  /**
+   * Narrowest a road is drawn, in mask pixels — the legibility floor.
+   *
+   * Every printed map widens roads past true scale once they stop being resolvable;
+   * this is how far past. The width slider scales truth, this one guarantees
+   * visibility, and they earn separate controls because pushing width to make small
+   * roads visible makes the motorways cartoonish first.
+   */
+  roadFloor: number
   /** How dark a metalled surface reads against the ground. */
   roadDarkness: number
+  /** How brightly the cleared band lifts against the ground, so the surface reads. */
+  roadShoulder: number
   /** How strongly the corridor suppresses timber. Biome-owned. */
   roadClearing: number
   /** How far the surface takes the local ground colour rather than asphalt. Biome-owned. */
@@ -240,7 +251,12 @@ export const DEFAULT_SETTINGS: Settings = {
   roadWidth: 1,
   roadVerge: 3,
   roadResolution: 2048,
+  // 2.4 rather than the bare minimum: at one-and-a-bit pixels a road is technically
+  // present and practically invisible, which is exactly the complaint that made this
+  // a setting.
+  roadFloor: 2.4,
   roadDarkness: 0.55,
+  roadShoulder: 0.3,
   // Kept identical to BASE in climate.ts, for the same reason as the block above: these
   // are the values in force for the moment before a class is known.
   roadClearing: 0.6,
@@ -502,7 +518,9 @@ const PERSISTED_SETTINGS = [
   'roadWidth',
   'roadVerge',
   'roadResolution',
+  'roadFloor',
   'roadDarkness',
+  'roadShoulder',
   'roadClearing',
   'roadTint',
   'showOsmWater',
@@ -832,6 +850,7 @@ export const useStore = create<State>((setState, getState) => {
       resolution: settings.roadResolution,
       widthScale: settings.roadWidth,
       vergeScale: settings.roadVerge,
+      minPixels: settings.roadFloor,
       classes: settings.roadClasses,
     }
 
@@ -1112,7 +1131,7 @@ export const useStore = create<State>((setState, getState) => {
     if (key === 'exaggeration' || key === 'detail') scheduleRebuild()
     if (key in DEFAULT_TUNING) scheduleWater()
     // Painting decisions, not data ones — redraw the mask, never re-request it.
-    if (key === 'roadWidth' || key === 'roadVerge' || key === 'roadResolution') {
+    if (key === 'roadWidth' || key === 'roadVerge' || key === 'roadResolution' || key === 'roadFloor') {
       scheduleRoadMask()
     }
     // Checking the layer is what asks for the data, the same way switching to satellite

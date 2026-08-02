@@ -62,6 +62,8 @@ export interface SurfaceConfig {
   roadDarkness: number
   roadClearing: number
   roadTint: number
+  /** How brightly the verge band lifts against the ground, so the dark surface reads. */
+  roadShoulder: number
 
   /** Already zeroed by the caller when the layer is switched off. */
   osmWater: number
@@ -166,6 +168,7 @@ export class TerrainSurface {
       uRoadDarkness: { value: 0 },
       uRoadClearing: { value: 0 },
       uRoadTint: { value: 0 },
+      uRoadShoulder: { value: 0 },
       uAreaMap: { value: BLANK },
       uHasAreas: { value: 0 },
       uOsmWater: { value: 0 },
@@ -280,6 +283,7 @@ export class TerrainSurface {
     u.uRoadDarkness!.value = c.roadDarkness
     u.uRoadClearing!.value = c.roadClearing
     u.uRoadTint!.value = c.roadTint
+    u.uRoadShoulder!.value = c.roadShoulder
     u.uOsmWater!.value = c.osmWater
     u.uOsmWood!.value = c.osmWood
     u.uOsmBuilt!.value = c.osmBuilt

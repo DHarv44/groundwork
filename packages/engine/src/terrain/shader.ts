@@ -86,6 +86,7 @@ uniform float uShowRoads;
 uniform float uRoadDarkness;
 uniform float uRoadClearing;   // how strongly the corridor takes the timber back
 uniform float uRoadTint;       // 0 metalled grey, 1 the local ground scraped bare
+uniform float uRoadShoulder;   // corridor band brightened so the dark surface reads
 // Mapped areas: R water, G woodland, B built-up. Surveyed ground, so where it disagrees
 // with what was derived from the DEM it is generally the derivation that is wrong.
 uniform sampler2D uAreaMap;
@@ -325,14 +326,18 @@ void main() {
   // than drawn on top of it is the timber standing back from it.
   float roadSurface = 0.0;
   float roadCorridor = 0.0;
+  float roadVerge = 0.0;
   float roadClass = 0.0;
   if (uHasRoads > 0.5 && uShowRoads > 0.5 && vSide < 0.5) {
     vec4 rm = texture2D(uRoadMap, vUv);
     roadSurface = rm.r;
     roadClass = rm.g;
     // The mask ramps the corridor outward in steps; this feathers across them so the
-    // clearing thins into the woods instead of ending on a line.
-    roadCorridor = smoothstep(0.04, 0.75, rm.b) * uRoadClearing;
+    // clearing thins into the woods instead of ending on a line. The raw band is kept
+    // separately from the timber-clearing strength: the shoulder brightening below
+    // wants the band itself, not the band scaled by how hard it fells trees.
+    roadVerge = smoothstep(0.04, 0.75, rm.b);
+    roadCorridor = roadVerge * uRoadClearing;
   }
 
   // Mapped ground, resolved alongside the roads and for the same reason — woodland and
@@ -682,6 +687,18 @@ void main() {
   // there, and roads are the one layer where that check is exact — these are surveyed
   // lines, so if they do not sit on the roads in the photograph then the projection is
   // wrong and everything else drawn from the same box is wrong with it.
+  // The shoulder: the verge band lightened, the way a real roadside reads — mown
+  // grass, gravel, dust thrown off the surface. It is what makes the dark carriageway
+  // legible from altitude: asphalt on dark ground is a line nobody can see, asphalt
+  // inside a pale band is a road. Kept off the surface itself, faded over imagery
+  // like the roads are, and applied even where the surface contributes nothing yet,
+  // because the band extends past the tarmac by construction.
+  if (roadVerge > 0.003) {
+    float shoulderBand = roadVerge * (1.0 - roadSurface) * uRoadShoulder;
+    shoulderBand *= mix(1.0, 0.4, uUseSat);
+    albedo = mix(albedo, albedo * 1.45 + soil * 0.10 + vec3(0.008), clamp(shoulderBand, 0.0, 1.0));
+  }
+
   if (roadSurface > 0.003) {
     float cov = roadSurface * mix(1.0, 0.5, uUseSat);
 

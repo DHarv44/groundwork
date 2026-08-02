@@ -907,6 +907,16 @@ export default function Controls() {
                 onChange={setSetting('roadWidth')}
               />
               <Slider
+                label="Visibility floor"
+                value={settings.roadFloor}
+                min={1}
+                max={6}
+                step={0.1}
+                suffix=" px"
+                decimals={1}
+                onChange={setSetting('roadFloor')}
+              />
+              <Slider
                 label="Cleared verge"
                 value={settings.roadVerge}
                 min={0}
@@ -941,6 +951,14 @@ export default function Controls() {
                 max={1}
                 step={0.01}
                 onChange={setSetting('roadDarkness')}
+              />
+              <Slider
+                label="Shoulder contrast"
+                value={settings.roadShoulder}
+                min={0}
+                max={1}
+                step={0.01}
+                onChange={setSetting('roadShoulder')}
               />
               <label className="slider">
                 <span className="slider-head">
@@ -1054,6 +1072,19 @@ export default function Controls() {
                 decimals={2}
                 onChange={setSetting('roadWidth')}
               />
+              {/* Width scales truth; the floor guarantees legibility. Separate controls
+                  because pushing width until back roads show makes motorways cartoonish
+                  long before the small stuff arrives. */}
+              <Slider
+                label="Visibility floor"
+                value={settings.roadFloor}
+                min={1}
+                max={6}
+                step={0.1}
+                suffix=" px"
+                decimals={1}
+                onChange={setSetting('roadFloor')}
+              />
               <Slider
                 label="Cleared verge"
                 value={settings.roadVerge}
@@ -1089,6 +1120,16 @@ export default function Controls() {
                 max={1}
                 step={0.01}
                 onChange={setSetting('roadDarkness')}
+              />
+              {/* The dark surface only reads against something lighter. This lifts the
+                  verge band the way a real roadside does — mown grass, gravel, dust. */}
+              <Slider
+                label="Shoulder contrast"
+                value={settings.roadShoulder}
+                min={0}
+                max={1}
+                step={0.01}
+                onChange={setSetting('roadShoulder')}
               />
               <label className="slider">
                 <span className="slider-head">
