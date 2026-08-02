@@ -54,6 +54,9 @@ uniform float uSatRing1Fade;
 uniform sampler2D uSatRing2Map;
 uniform vec4 uSatRing2Rect;
 uniform float uSatRing2Fade;
+uniform sampler2D uSatRing3Map;
+uniform vec4 uSatRing3Rect;
+uniform float uSatRing3Fade;
 
 uniform float uMinElev;
 uniform float uMaxElev;
@@ -676,6 +679,12 @@ void main() {
     // rectangles onto the ground — and multiplies in its fade so a ring that is
     // still arriving eases in over the one beneath instead of popping.
     {
+      vec2 span3 = max(uSatRing3Rect.zw - uSatRing3Rect.xy, vec2(1e-6));
+      vec2 rUv3 = (vUv - uSatRing3Rect.xy) / span3;
+      vec2 edge3 = min(rUv3, 1.0 - rUv3);
+      float in3 = smoothstep(0.0, 0.06, min(edge3.x, edge3.y)) * uSatRing3Fade;
+      if (in3 > 0.0) sat = mix(sat, srgbToLinear(texture2D(uSatRing3Map, rUv3).rgb), in3);
+
       vec2 span2 = max(uSatRing2Rect.zw - uSatRing2Rect.xy, vec2(1e-6));
       vec2 rUv2 = (vUv - uSatRing2Rect.xy) / span2;
       vec2 edge2 = min(rUv2, 1.0 - rUv2);

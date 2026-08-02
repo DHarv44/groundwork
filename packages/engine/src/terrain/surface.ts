@@ -95,7 +95,7 @@ export interface SurfaceLayers {
   /** Satellite or aerial imagery draped on the surface. */
   imagery?: THREE.Texture | null
   /**
-   * The imagery clipmap: up to three nested close-up rings, index 0 sharpest and
+   * The imagery clipmap: up to four nested close-up rings, index 0 sharpest and
    * smallest. The shader samples coarse to fine so each fragment takes the sharpest
    * ring covering it, and the surface fades each ring in as it (re)arrives — the
    * swap eases rather than pops. Missing entries (null, or a short array) simply
@@ -145,6 +145,9 @@ export class TerrainSurface {
       uSatRing2Map: { value: BLANK },
       uSatRing2Rect: { value: new THREE.Vector4(0, 0, 1, 1) },
       uSatRing2Fade: { value: 0 },
+      uSatRing3Map: { value: BLANK },
+      uSatRing3Rect: { value: new THREE.Vector4(0, 0, 1, 1) },
+      uSatRing3Fade: { value: 0 },
       uWaterMap: { value: BLANK },
       uHasWater: { value: 0 },
       uRivers: { value: 0 },
@@ -248,15 +251,15 @@ export class TerrainSurface {
    * popping. A withdrawn ring keeps its texture bound until the ease-out finishes;
    * releasing it immediately would blink the imagery off a frame early.
    */
-  private readonly ringFade = [0, 0, 0]
-  private readonly ringTarget = [0, 0, 0]
-  private readonly ringPrev: Array<THREE.Texture | null> = [null, null, null]
+  private readonly ringFade = [0, 0, 0, 0]
+  private readonly ringTarget = [0, 0, 0, 0]
+  private readonly ringPrev: Array<THREE.Texture | null> = [null, null, null, null]
 
   setLayers(layers: SurfaceLayers): void {
     const u = this.uniforms
     u.uSatMap!.value = layers.imagery ?? BLANK
 
-    for (let k = 0; k < 3; k++) {
+    for (let k = 0; k < 4; k++) {
       const ring = layers.imageryRings?.[k] ?? null
       if (!ring) {
         this.ringTarget[k] = 0
@@ -357,7 +360,7 @@ export class TerrainSurface {
     // Ring fades: ~180 ms in, a little quicker out. The ramp lives here rather than
     // in the host because it is presentation, not state — hosts say which rings
     // exist, the surface makes their arrival watchable.
-    for (let k = 0; k < 3; k++) {
+    for (let k = 0; k < 4; k++) {
       const target = this.ringTarget[k]!
       const fade = this.ringFade[k]!
       const next =

@@ -70,7 +70,7 @@ function SatRingWatcher() {
   const lastPos = useRef(new THREE.Vector3(Infinity, Infinity, Infinity))
   const lastQuat = useRef(new THREE.Quaternion())
   const stillFor = useRef(0)
-  const lastKeys = useRef(['', '', ''])
+  const lastKeys = useRef(['', '', '', ''])
 
   useFrame((_, dt) => {
     if (!build || !heightField) return
@@ -78,7 +78,7 @@ function SatRingWatcher() {
     const active = textureMode === 'satellite' && !!imagery && boost > 0
     if (!active) {
       if (lastKeys.current.some((k) => k !== '')) {
-        lastKeys.current = ['', '', '']
+        lastKeys.current = ['', '', '', '']
         clearSatRings()
       }
       return
@@ -99,13 +99,14 @@ function SatRingWatcher() {
       return
     }
     stillFor.current += dt
-    if (stillFor.current < 0.25) return
+    if (stillFor.current < 0.18) return
 
     // The rings are nested squares centred where the camera looks, each 3x the width
-    // and two zooms coarser than the one inside. Frustum coverage falls out of the
-    // nesting: near ground lands in ring 0, mid-distance in ring 1, far ground in
-    // ring 2, and the horizon in the base drape — that is the clipmap doing what
-    // one frustum-fitted rectangle never could, because a tilted view needs several
+    // and two zooms coarser than the one inside — four of them, reaching ~32x the
+    // eye distance before the base drape takes over. Frustum coverage falls out of
+    // the nesting: near ground lands in ring 0, the far field steps down through
+    // rings 1-3, the horizon takes the base — a clipmap doing what one
+    // frustum-fitted rectangle never could, because a tilted view needs several
     // resolutions at once, not one rectangle at one resolution.
     const target = controls?.target ?? camera.position
     const dist = Math.max(200, camera.position.distanceTo(target))
@@ -118,8 +119,8 @@ function SatRingWatcher() {
     const cLat = b.north - v * latSpan
 
     const ceiling = Math.min(11 + 2 * boost, 19)
-    for (let k = 0; k < 3; k++) {
-      const half = Math.max(250, dist * 0.9) * Math.pow(3, k)
+    for (let k = 0; k < 4; k++) {
+      const half = Math.max(250, dist * 1.2) * Math.pow(3, k)
       const dLon = (half / build.widthMetres) * lonSpan
       const dLat = (half / build.depthMetres) * latSpan
 

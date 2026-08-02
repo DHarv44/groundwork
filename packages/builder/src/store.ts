@@ -347,7 +347,7 @@ interface State {
   /** True while satellite tiles are in flight, so the layer button can say so. */
   imageryLoading: boolean
   /**
-   * The imagery clipmap: up to three nested close-up levels centred where the camera
+   * The imagery clipmap: up to four nested close-up levels centred where the camera
    * looks, index 0 the sharpest and smallest. Entries are null until their fetch
    * lands; the shader falls through missing levels to the next ring out and finally
    * the base drape, so partial states render correctly by construction.
@@ -485,7 +485,7 @@ let inflight: AbortController | null = null
 /** The road/area fetch in flight, aborted by clearRoads when the box changes. */
 let roadsAbort: AbortController | null = null
 /** The per-ring close-up fetches in flight — the camera moving on aborts them. */
-const satRingAborts: Array<AbortController | null> = [null, null, null]
+const satRingAborts: Array<AbortController | null> = [null, null, null, null]
 
 let hydroWorker: Worker | null = null
 
@@ -1107,7 +1107,7 @@ export const useStore = create<State>((setState, getState) => {
   build: null,
   imagery: null,
   imageryZoom: 0,
-  satRings: [null, null, null],
+  satRings: [null, null, null, null],
   imageryLoading: false,
   waterMask: null,
   waterStats: null,
@@ -1449,7 +1449,7 @@ export const useStore = create<State>((setState, getState) => {
   },
 
   loadSatRing: async (index: number, sub: Bounds, maxZoom: number): Promise<void> => {
-    if (index < 0 || index > 2) return
+    if (index < 0 || index > 3) return
     // The camera moved on; whatever this ring was fetching is for somewhere it no
     // longer is. Other rings keep their fetches — they cover different ground.
     satRingAborts[index]?.abort()
@@ -1507,7 +1507,7 @@ export const useStore = create<State>((setState, getState) => {
       satRingAborts[k] = null
     }
     const { satRings } = getState()
-    if (satRings.some((r) => r !== null)) setState({ satRings: [null, null, null] })
+    if (satRings.some((r) => r !== null)) setState({ satRings: [null, null, null, null] })
   },
 
   loadRoads: async (): Promise<void> => {
