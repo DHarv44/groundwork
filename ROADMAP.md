@@ -193,11 +193,28 @@ Strictly one-directional. Rules that keep it that way:
       sample. The code was right the whole time and the instrument was lying. Add a
       cache-busting query, or verify in Node where the problem does not exist.
 
-- [ ] **5b-iii. The water field, now that it is measured.** 7.92 MB compressed, 58% of
-      what is left. Its alpha channel is constant and its lake flag is a single bit, so
-      three channels — or two — carry the same information. Worth checking what the
-      hydrology pass actually needs before cutting, rather than guessing which channels
-      are load-bearing. A `uint8` delta filter may also be worth trying on it.
+- [x] **5b-iii. De-interleave the hydrology field.** **13.7 MB → 10.9 MB**, and the
+      whole journey is **46.9 MB → 10.9 MB**.
+
+      Measured the options before writing any of it, having just been caught assuming.
+      The intuitive fix — drop the unused alpha channel — reached only 7.23 MB from
+      7.92. Planar with a per-channel delta reached **5.14 MB**.
+
+      The reason is worth keeping: in that box the lake flag and the alpha channel each
+      hold exactly **one distinct value**. A constant channel costs almost nothing once
+      deflate can see it as a run, and interleaving is precisely what stops it seeing
+      that. So separating channels beats trimming them — and it adapts, because which
+      channels are empty depends on the place. A box with lakes populates the flag; this
+      one has none, correctly.
+
+      Byte-exact on the way back: 0 wrong bytes in 30,294,660.
+
+- [ ] **5b-iv. Where the remaining 10.9 MB sits.** Elevation 5.30, water 5.14, vectors
+      0.44. Both rasters are now near what lossless will give at this resolution, so
+      further gains mean either dropping precision — the quantisation is far finer than
+      the source data's real vertical accuracy, so there is honest room — or not
+      shipping the hydrology field at all and having the consumer derive it. Neither is
+      obviously right; both change what a pack *is* rather than how it is packed.
 - [x] **5c. Named places** — done. Settlements and named summits are folded into the
       **existing** union query, so it is still one request. That placement is the whole
       point: Overpass charges by the request rather than the byte — an IP gets very few

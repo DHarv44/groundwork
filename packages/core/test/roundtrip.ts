@@ -115,7 +115,16 @@ check(
 
 // A derived field at its own resolution — the hydrology pass runs at a routing
 // resolution of its own, and forcing it onto the elevation grid would resample twice.
+// Also a multi-channel uint8 plane, so it exercises the planar filter. The channels
+// carry deliberately different values: a field where every channel agreed would survive
+// even if the de-interleaving were wrong, which is the failure worth catching.
 const coarse = new Uint8Array(16 * 12 * 4)
+for (let i = 0; i < 16 * 12; i++) {
+  coarse[i * 4] = i & 0xff
+  coarse[i * 4 + 1] = (i * 7) & 0xff
+  coarse[i * 4 + 2] = 200
+  coarse[i * 4 + 3] = 255
+}
 coarse[0] = 42
 const mixed = buildPack({
   id: 'mixed',
@@ -130,6 +139,12 @@ const waterBack = readRaster(mixed, 'water')
 check('an off-grid layer keeps its own size', waterBack?.width === 16 && waterBack?.height === 12)
 check('an off-grid layer reads back', waterBack?.data[0] === 42)
 check('elevation is unaffected by it', readHeightField(mixed).width === W)
+
+const waterLayer = mixed.manifest.layers.find((l) => l.id === 'water')!
+check('a multi-channel uint8 plane is de-interleaved', waterLayer.filter === 'delta8-planar')
+let planarBad = 0
+for (let i = 0; i < coarse.length; i++) if (waterBack!.data[i] !== coarse[i]) planarBad++
+check('every channel survives de-interleaving', planarBad === 0, `${planarBad} bytes differ`)
 
 let threw = ''
 try {

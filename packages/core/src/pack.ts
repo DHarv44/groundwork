@@ -54,9 +54,17 @@ export interface PackLayer {
    * becomes long runs of 0x00 and 0xff. Entirely lossless: it reorders and predicts,
    * it does not discard.
    *
+   * `delta8-planar` is the same idea for a multi-channel `uint8` plane: each channel is
+   * gathered together and differenced on its own. Interleaved, a noisy channel sits
+   * between every pair of smooth ones and deflate can find little; separated, each
+   * compresses on its own terms. It also makes a *constant* channel free, which matters
+   * because the hydrology field's alpha always is and its lake flag is wherever a box
+   * has no lakes — and separating them beats dropping them, because which channels are
+   * empty varies from one place to the next.
+   *
    * Absent means the bytes are the samples, which is what every earlier pack has.
    */
-  filter?: 'delta16-split'
+  filter?: 'delta16-split' | 'delta8-planar'
   /**
    * For quantised integer planes: the real values that map to 0 and to the type's
    * maximum. Absent on `float32` planes and on integer planes that mean their own

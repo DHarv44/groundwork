@@ -80,6 +80,45 @@ function undoDelta16Split(src: Uint8Array): Uint16Array<ArrayBuffer> {
 }
 
 /**
+ * De-interleave a multi-channel `uint8` plane, differencing each channel on its own.
+ *
+ * Measured on a real hydrology field: 7.92 MB interleaved, 5.14 MB like this. Dropping
+ * the unused alpha channel instead only reached 7.23 MB — because a constant channel
+ * costs almost nothing once deflate can *see* it as a run, and interleaving is exactly
+ * what stops it. That is also why this beats trimming channels outright: which ones are
+ * empty depends on the place, and separating them lets each box pay only for what it
+ * actually has.
+ */
+function applyDelta8Planar(src: Uint8Array, channels: number): Uint8Array {
+  const n = src.length / channels
+  const out = new Uint8Array(src.length)
+  for (let c = 0; c < channels; c++) {
+    const base = c * n
+    let prev = 0
+    for (let i = 0; i < n; i++) {
+      const v = src[i * channels + c]!
+      out[base + i] = (v - prev) & 0xff
+      prev = v
+    }
+  }
+  return out
+}
+
+function undoDelta8Planar(src: Uint8Array, channels: number): Uint8Array<ArrayBuffer> {
+  const n = src.length / channels
+  const out = new Uint8Array(src.length)
+  for (let c = 0; c < channels; c++) {
+    const base = c * n
+    let prev = 0
+    for (let i = 0; i < n; i++) {
+      prev = (prev + src[base + i]!) & 0xff
+      out[i * channels + c] = prev
+    }
+  }
+  return out
+}
+
+/**
  * A raster plane's samples.
  *
  * The buffer parameter is pinned to `ArrayBuffer` rather than left as the default
@@ -122,6 +161,13 @@ export function readRaster(
       throw new Error(`pack layer "${id}": delta16-split only applies to uint16, not ${layer.format}`)
     }
     return { layer, data: undoDelta16Split(new Uint8Array(buf)), width, height }
+  }
+
+  if (layer.filter === 'delta8-planar') {
+    if (layer.format !== 'uint8') {
+      throw new Error(`pack layer "${id}": delta8-planar only applies to uint8, not ${layer.format}`)
+    }
+    return { layer, data: undoDelta8Planar(new Uint8Array(buf), layer.channels), width, height }
   }
 
   return { layer, data: new TYPED[layer.format](buf), width, height }
@@ -245,12 +291,21 @@ export function buildPack(input: PackInput): PackFiles {
           `(${lw}×${lh}×${l.channels})`,
       )
     }
-    rasters.set(l.id, l.data.buffer as ArrayBuffer)
+    // Interleaved multi-channel bytes are the case deflate handles worst, so they get
+    // separated. A single channel is already planar and gains nothing from the pass.
+    const format = formatOf(l.data)
+    const planar = format === 'uint8' && l.channels > 1
+    const body = planar
+      ? applyDelta8Planar(l.data as Uint8Array, l.channels)
+      : (l.data as Uint8Array | Uint16Array | Float32Array)
+
+    rasters.set(l.id, body.buffer as ArrayBuffer)
     layers.push({
       id: l.id,
       file: `${l.id}.bin`,
-      format: formatOf(l.data),
+      format,
       channels: l.channels,
+      ...(planar ? { filter: 'delta8-planar' as const } : {}),
       ...(l.width !== undefined ? { width: l.width } : {}),
       ...(l.height !== undefined ? { height: l.height } : {}),
       ...(l.min !== undefined ? { min: l.min } : {}),
