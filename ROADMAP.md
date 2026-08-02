@@ -320,10 +320,29 @@ Strictly one-directional. Rules that keep it that way:
       unnecessary. The host-owns-renderer-and-loop path is about thirty lines in the
       demo, and wrapping it would be speculative until something actually wants it.
 
-- [ ] **4b. The builder demo** — the builder running against a stub consumer that only
-      prints the manifest. Less urgent than the engine one: the builder is already
-      exercised constantly by being the app, whereas the engine had nothing proving it
-      could stand on its own until now.
+- [x] **4b. The builder demo** — done. `demo/builder/`, a pretend host application.
+
+      Worth being clear why this was not redundant, having first written it off as such.
+      The standalone app proves very little: same repo, same Vite config, same dev
+      proxies, same `public/`, and it owns the whole page. The demo host is deliberately
+      hostile — `* { box-sizing: content-box }`, a serif body font, pink dashed buttons,
+      and its own `--bg`, `--line`, `--accent` variables holding *different values under
+      the same names*. The builder is confined to a flex child it does not control.
+
+      Results, measured rather than eyeballed: the host's button stays pink, dashed,
+      Georgia and `content-box`; the builder's stays dark, solid, `ui-sans-serif` and
+      `border-box`. The `box-sizing` one matters most — it is the rule most likely to
+      break a layout silently, and it lands on the right side of the boundary.
+
+      Storage isolation is real: with `storagePrefix` set, `indexedDB.databases()`
+      shows `host-demo.terrain` and `terrain-builder` side by side, and the two sets of
+      localStorage keys coexist. Both apps can be open at once without fighting.
+
+      The stub consumer takes the pack as **bytes** and reads it straight back, which
+      is what a real host wants — POST it, store it, hand it to a renderer. That drove
+      a genuine API addition: `buildPackFrom` and `packBytesFrom` split the assembly
+      from the download, because intercepting a browser download to get at your own
+      data is not an interface.
 - [ ] **5. Export** — the builder writes a pack from what is already in the store.
 
 ### Rules for the export

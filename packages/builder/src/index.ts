@@ -24,7 +24,13 @@ export type { BuilderConfig, BuilderEndpoints } from './config'
 export { builderConfig, configureBuilder, storageKey } from './config'
 
 export type { PackExportInput, PackExportSummary } from './lib/packexport'
-export { exportPack, summarisePack } from './lib/packexport'
+export {
+  buildPackFrom,
+  exportPack,
+  packBytesFrom,
+  packFileName,
+  summarisePack,
+} from './lib/packexport'
 
 export { useStore } from './store'
 export type { Settings } from './store'

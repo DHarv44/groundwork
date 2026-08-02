@@ -23,6 +23,9 @@ export default defineConfig(({ mode }) => {
           // ever leaks, this entry starts pulling React and the store into its chunk,
           // and the build output says so without anyone having to remember to check.
           engine: resolve(__dirname, 'demo/engine/index.html'),
+          // The builder's equivalent: a pretend host with hostile global CSS, its own
+          // storage namespace, and the builder confined to a box it does not own.
+          host: resolve(__dirname, 'demo/builder/index.html'),
         },
       },
     },

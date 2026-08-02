@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Host app — embedding the Groundwork builder</title>
+    <style>
+      /*
+        Deliberately hostile host styling.
+
+        This is the point of the page: every rule here is the sort of thing a real
+        application has and a badly-behaved component would trample or be trampled by.
+        If the builder still looks right inside this, its styles are genuinely scoped.
+      */
+      * { box-sizing: content-box; }           /* opposite of what the builder wants */
+      :root {
+        --bg: #fff0f5;                          /* same variable names, wrong values */
+        --panel: #ffe4e1;
+        --line: #ff69b4;
+        --text: #8b0000;
+        --accent: #ff1493;
+        --muted: #c71585;
+      }
+      html, body { height: 100%; margin: 0; }
+      body {
+        background: var(--bg);
+        color: var(--text);
+        font: 15px/1.6 Georgia, 'Times New Roman', serif;
+        display: flex;
+        flex-direction: column;
+      }
+      button {
+        background: var(--accent);
+        color: #fff;
+        border: 3px dashed var(--line);
+        border-radius: 0;
+        padding: 6px 14px;
+        font: inherit;
+        cursor: pointer;
+      }
+      select, input { border: 3px dotted var(--line); background: #fff; font: inherit; }
+      main { border: 6px solid var(--line); }
+      p { margin: 0 0 8px; }
+
+      header.host {
+        padding: 10px 16px;
+        background: var(--panel);
+        border-bottom: 3px solid var(--line);
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        flex: none;
+      }
+      header.host h1 { margin: 0; font-size: 17px; }
+      .host-note { font-size: 12px; color: var(--muted); }
+      .host-body { flex: 1; display: flex; min-height: 0; }
+      /* The builder gets a bounded box, not the page. */
+      #slot { flex: 1; min-width: 0; border-right: 3px solid var(--line); }
+      aside.host {
+        width: 300px;
+        padding: 14px;
+        overflow-y: auto;
+        background: var(--panel);
+        flex: none;
+      }
+      aside.host h2 { font-size: 14px; margin: 0 0 8px; }
+      pre.out {
+        background: #fff;
+        border: 2px solid var(--line);
+        padding: 8px;
+        font: 11px/1.45 ui-monospace, Consolas, monospace;
+        color: #333;
+        white-space: pre-wrap;
+        word-break: break-word;
+        max-height: 46vh;
+        overflow: auto;
+      }
+    </style>
+  </head>
+  <body>
+    <header class="host">
+      <h1>Host application</h1>
+      <button id="hostBtn">A host button</button>
+      <span class="host-note">
+        Pink, serif and dashed — the host's own styling. The builder beside it should be
+        untouched by any of it.
+      </span>
+    </header>
+
+    <div class="host-body">
+      <!-- The builder mounts here, in a box the host controls. -->
+      <div id="slot"></div>
+
+      <aside class="host">
+        <h2>Stub consumer</h2>
+        <p class="host-note">
+          Takes the pack as bytes rather than a download, and prints what it got. This is
+          the shape a real host wants — POST it, store it, hand it to a renderer.
+        </p>
+        <button id="take">Take a pack from the builder</button>
+        <pre class="out" id="out">nothing yet</pre>
+      </aside>
+    </div>
+
+    <script type="module" src="./main.tsx"></script>
+  </body>
+</html>

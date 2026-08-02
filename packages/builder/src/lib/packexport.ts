@@ -7,6 +7,7 @@ import {
   type HeightField,
   type PackAttribution,
   type PackArea,
+  type PackFiles,
   type PackInputLayer,
   type PackPlace,
   type PackRoad,
@@ -137,7 +138,15 @@ export function summarisePack(input: PackExportInput): PackExportSummary {
   }
 }
 
-export async function exportPack(input: PackExportInput): Promise<void> {
+/**
+ * Assemble the pack without writing it anywhere.
+ *
+ * Separate from `exportPack` because a browser download is one consumer of a pack and
+ * not the interesting one. A host embedding the builder wants the bytes — to POST
+ * them, to put them in its own asset store, to hand them straight to a renderer — and
+ * should not have to intercept a download to get at them.
+ */
+export function buildPackFrom(input: PackExportInput): PackFiles {
   const { heightField: hf, osm, waterMask, baseName } = input
 
   const layers: PackInputLayer[] = []
@@ -146,7 +155,7 @@ export async function exportPack(input: PackExportInput): Promise<void> {
     if (water) layers.push(water)
   }
 
-  const files = buildPack({
+  return buildPack({
     id: baseName,
     name: baseName.replace(/[_-]+/g, ' ').trim() || baseName,
     heights: hf,
@@ -156,10 +165,23 @@ export async function exportPack(input: PackExportInput): Promise<void> {
     generator: 'groundwork',
     createdAt: input.createdAt,
   })
+}
 
-  const bytes = await packToBytes(files)
+/** The pack as bytes, ready to be stored, sent, or opened again. */
+export async function packBytesFrom(input: PackExportInput): Promise<Uint8Array> {
+  return packToBytes(buildPackFrom(input))
+}
+
+/** The filename a pack should be given, extension included. */
+export function packFileName(baseName: string): string {
+  return `${baseName}${PACK_EXTENSION}`
+}
+
+/** Build a pack and hand it to the browser as a download. */
+export async function exportPack(input: PackExportInput): Promise<void> {
+  const bytes = await packBytesFrom(input)
   downloadBlob(
     new Blob([bytes.buffer as ArrayBuffer], { type: 'application/zip' }),
-    `${baseName}${PACK_EXTENSION}`,
+    packFileName(input.baseName),
   )
 }
