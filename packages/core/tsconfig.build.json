@@ -11,6 +11,11 @@
   "compilerOptions": {
     "composite": true,
     "noEmit": false,
+    // A failing build must write nothing. The default (false) is how a broken
+    // pre-composite engine build once scattered core's compiled output into src/ —
+    // tsc emits what it can even mid-error, and out-of-rootDir files land in
+    // computed paths outside outDir.
+    "noEmitOnError": true,
     "outDir": "dist",
     "rootDir": "src",
     "declaration": true,

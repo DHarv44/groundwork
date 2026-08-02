@@ -3,6 +3,7 @@
   "compilerOptions": {
     "composite": true,
     "noEmit": false,
+    "noEmitOnError": true,
     // Inherited as true for the dev config, but TS refuses it when emitting — and no
     // import here actually carries a .ts extension, so nothing is lost.
     "allowImportingTsExtensions": false,
