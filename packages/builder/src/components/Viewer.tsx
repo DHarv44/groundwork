@@ -18,15 +18,16 @@ function RendererBridge() {
   const gl = useThree((s) => s.gl)
   const scene = useThree((s) => s.scene)
   const camera = useThree((s) => s.camera)
+  const controls = useThree((s) => s.controls)
   useEffect(() => {
     rendererRef.current = gl
     if (builderConfig().devHooks) {
-      ;(window as unknown as Record<string, unknown>).__viewer = { gl, scene, camera }
+      ;(window as unknown as Record<string, unknown>).__viewer = { gl, scene, camera, controls }
     }
     return () => {
       if (rendererRef.current === gl) rendererRef.current = null
     }
-  }, [gl, scene, camera])
+  }, [gl, scene, camera, controls])
   return null
 }
 
@@ -42,16 +43,21 @@ interface OrbitLike {
 }
 
 /**
- * Watches where the camera settles and asks for a sharper satellite patch there.
+ * Streams sharper satellite rings to wherever the camera is looking, while it moves.
  *
  * The base drape is one bounded texture over the whole box — over 24 m per pixel on a
- * big box — so zooming the camera in only magnifies it. This drives the close-up:
- * when the camera has been still for a beat over a small enough footprint, the store
- * refetches that sub-box at a higher zoom and the shader composites it over the base.
+ * big box — so zooming the camera in only magnifies it. This drives the close-up
+ * clipmap that composites over it, and it deliberately never waits for the camera to
+ * stop: ring keys are evaluated every frame, a fetch starts the moment a key changes,
+ * and a superseded fetch is simply aborted. Detail chases the camera instead of
+ * arriving after it. The store seeds every new ring with the imagery already on
+ * screen, so a mid-gesture refetch costs nothing visually — the worst case is the
+ * same picture, briefly not yet sharper. Per-ring cooldowns keep a continuous zoom
+ * from starting more fetches than it can use.
  *
- * All the judgement lives here — when the camera counts as settled, how big the
- * footprint is, when the patch stops being worth having — and none of the fetching:
- * `loadSatPatch` owns the network, the abort, and the no-sharper-than-base skip.
+ * All the judgement lives here — how big the footprint is, when a ring must refetch,
+ * when it stops being worth having — and none of the fetching: `loadSatRing` owns
+ * the network, the abort, the seeding and the no-sharper-than-base skip.
  * Frame-driven rather than event-driven so it needs no knowledge of which controls
  * are moving the camera; walking with FirstPerson earns close-ups the same way
  * orbiting does.
@@ -67,9 +73,6 @@ function SatRingWatcher() {
   const loadSatRing = useStore((s) => s.loadSatRing)
   const clearSatRings = useStore((s) => s.clearSatRings)
 
-  const lastPos = useRef(new THREE.Vector3(Infinity, Infinity, Infinity))
-  const lastQuat = useRef(new THREE.Quaternion())
-  const stillFor = useRef(0)
   /** What each ring last fetched: centre and size step. Null = nothing yet. */
   const lastFetch = useRef<Array<{ lon: number; lat: number; step: number } | null>>([
     null,
@@ -77,6 +80,10 @@ function SatRingWatcher() {
     null,
     null,
   ])
+  /** Seconds until each ring may start another fetch — the churn limiter that
+   * replaced the settle gate. Restarts are visually free (seeded), so this only
+   * exists to stop a long zoom gesture from opening dozens of doomed fetches. */
+  const cooldown = useRef([0, 0, 0, 0])
 
   useFrame((_, dt) => {
     if (!build || !heightField) return
@@ -85,27 +92,15 @@ function SatRingWatcher() {
     if (!active) {
       if (lastFetch.current.some((f) => f !== null)) {
         lastFetch.current = [null, null, null, null]
+        cooldown.current = [0, 0, 0, 0]
         clearSatRings()
       }
       return
     }
 
-    // Settled = neither position nor orientation has meaningfully changed for a
-    // beat. Orientation matters on its own because tilting in place moves no metres
-    // yet completely changes which ground is on screen. The outer rings are so wide
-    // that ordinary movement rarely changes their keys — in practice only the inner
-    // ring chases the camera, which is exactly the cadence a clipmap wants.
-    const moved =
-      camera.position.distanceToSquared(lastPos.current) > 1 ||
-      Math.abs(1 - Math.abs(camera.quaternion.dot(lastQuat.current))) > 1e-6
-    lastPos.current.copy(camera.position)
-    lastQuat.current.copy(camera.quaternion)
-    if (moved) {
-      stillFor.current = 0
-      return
+    for (let k = 0; k < 4; k++) {
+      cooldown.current[k] = Math.max(0, cooldown.current[k]! - dt)
     }
-    stillFor.current += dt
-    if (stillFor.current < 0.18) return
 
     // The rings are nested squares centred where the camera looks, each 3x the width
     // and two zooms coarser than the one inside — four of them, reaching ~32x the
@@ -135,14 +130,22 @@ function SatRingWatcher() {
       // minifies through its mipmaps for free, the outer rings and base already
       // cover the newly visible surround at the zoom a fetch would return anyway,
       // and replacing sharp with coarse would cost a download to look worse.
+      // The drift threshold is deliberately small: re-centres are seeded and
+      // incremental now, so tracking the camera closely costs a fetch, not a blink.
       const prev = lastFetch.current[k]
       if (prev) {
         const prevHalf = Math.pow(2, prev.step)
         const dxM = ((cLon - prev.lon) / lonSpan) * build.widthMetres
         const dzM = ((prev.lat - cLat) / latSpan) * build.depthMetres
-        const drifted = Math.hypot(dxM, dzM) > prevHalf * 0.34
+        const drifted = Math.hypot(dxM, dzM) > prevHalf * 0.18
         if (step >= prev.step && !drifted) continue
       }
+      // Wanted but cooling down — leave lastFetch untouched so the want survives
+      // to a later frame instead of being recorded as satisfied. Outer rings wait
+      // longer: their uploads are bigger and their keys barely move, so eagerness
+      // buys nothing but churn out there.
+      if (cooldown.current[k]! > 0) continue
+      cooldown.current[k] = 0.25 + 0.1 * k
       lastFetch.current[k] = { lon: cLon, lat: cLat, step }
 
       const dLon = (half / build.widthMetres) * lonSpan

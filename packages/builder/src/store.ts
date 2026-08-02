@@ -8,7 +8,13 @@ import type { Bounds } from './lib/geo'
 import { DEFAULT_BOUNDS, boundsAreaKm2, climaticSnowLine, climaticTreeLine } from './lib/geo'
 import type { HeightField } from './lib/opentopo'
 import { DEM_SOURCES, fetchHeightField, validateRequest } from './lib/opentopo'
-import { MAX_IMAGERY_ZOOM, fetchImagery, prefetchImagery } from './lib/imagery'
+import {
+  MAX_IMAGERY_ZOOM,
+  fetchImagery,
+  fetchImageryProgressive,
+  prefetchImagery,
+  ringZoomFor,
+} from './lib/imagery'
 import {
   NoRoadDataError,
   DEFAULT_ROAD_CLASSES,
@@ -357,6 +363,13 @@ interface State {
     /** Terrain-UV rectangle the canvas covers: x0, y0 north-west; x1, y1 south-east. */
     rect: [number, number, number, number]
     zoom: number
+    /**
+     * Bumped each time more tiles have been drawn into the same canvas. The
+     * canvas is the texture's identity — stable across a whole fetch so the
+     * engine's fade never restarts mid-sharpen — and the version is what tells
+     * the renderer the pixels under that identity changed and need re-upload.
+     */
+    version: number
   } | null>
   /** A bulk imagery prefetch in progress, for the panel to show. Null when idle. */
   prefetch: { done: number; total: number; toZoom: number } | null
@@ -495,6 +508,24 @@ let inflight: AbortController | null = null
 let roadsAbort: AbortController | null = null
 /** The per-ring close-up fetches in flight — the camera moving on aborts them. */
 const satRingAborts: Array<AbortController | null> = [null, null, null, null]
+/**
+ * Each ring slot's one persistent canvas, drawn into for the life of the session.
+ * Reuse is what keeps continuous refetching affordable: the renderer keys texture
+ * identity on the canvas, so re-centres re-upload pixels into the same GPU texture
+ * instead of allocating a new multi-megabyte one and disposing the old — a churn
+ * that measurably grinds the driver down mid-gesture.
+ */
+const satRingCanvases: Array<HTMLCanvasElement | null> = [null, null, null, null]
+/** Scratch for seeding: a ring re-centring must read its own previous pixels, and
+ * they live in the very canvas about to be resized and overwritten. */
+let satRingScratch: HTMLCanvasElement | null = null
+/**
+ * Globally monotonic ring version. Per-fetch counters would restart at zero and
+ * collide with the previous fetch's zero — the renderer would see an unchanged
+ * version on the same canvas, skip the re-upload, and display the old pixels
+ * under the new rectangle: imagery from somewhere else entirely.
+ */
+let satRingVersion = 0
 /** The bulk imagery prefetch in flight. */
 let prefetchAbort: AbortController | null = null
 
@@ -1484,33 +1515,130 @@ export const useStore = create<State>((setState, getState) => {
     }
     if (s.north <= s.south || s.east <= s.west) return
 
+    // No sharper than the base drape? Then this ring adds nothing but a seam.
+    // Skipping leaves whatever the ring held before — stale-but-sharp beats a
+    // visible pop back to blur, and the geometry is geo-anchored so stale stays true.
+    const zoom = ringZoomFor(s, Math.min(maxZoom, MAX_IMAGERY_ZOOM))
+    if (zoom <= getState().imageryZoom) return
+
+    const lonSpan = b.east - b.west
+    const latSpan = b.north - b.south
+    const rect: [number, number, number, number] = [
+      (s.west - b.west) / lonSpan,
+      (b.north - s.north) / latSpan,
+      (s.east - b.west) / lonSpan,
+      (b.north - s.south) / latSpan,
+    ]
+
     const ctrl = new AbortController()
     satRingAborts[index] = ctrl
-    try {
-      const result = await fetchImagery(s, undefined, ctrl.signal, Math.min(maxZoom, MAX_IMAGERY_ZOOM))
-      if (ctrl.signal.aborted) return
-      // No sharper than the base drape? Then this ring adds nothing but a seam.
-      // Returning leaves whatever the ring held before — stale-but-sharp beats a
-      // visible pop back to blur, and the geometry is geo-anchored so stale stays true.
-      if (result.zoom <= getState().imageryZoom) return
 
-      const lonSpan = b.east - b.west
-      const latSpan = b.north - b.south
+    // The slot's one persistent canvas — created once, redrawn forever after.
+    const ringCanvas = satRingCanvases[index] ?? document.createElement('canvas')
+    satRingCanvases[index] = ringCanvas
+
+    // Snapshot this ring's own previous pixels before the fetch resizes and
+    // overwrites the canvas they live in. Safe on one shared scratch because the
+    // snapshot, the resize and the seed all run synchronously before the fetch's
+    // first await — no other ring's load can interleave between them.
+    const prev = getState().satRings[index]
+    let prevRect: [number, number, number, number] | null = null
+    if (prev) {
+      const scratch = (satRingScratch ??= document.createElement('canvas'))
+      if (scratch.width !== prev.canvas.width) scratch.width = prev.canvas.width
+      if (scratch.height !== prev.canvas.height) scratch.height = prev.canvas.height
+      scratch.getContext('2d')!.drawImage(prev.canvas, 0, 0)
+      prevRect = prev.rect
+    }
+
+    // Published the moment it is seeded and re-published as tiles sharpen it.
+    // Flushes are throttled because each one is a full-canvas GPU re-upload;
+    // the trailing flush after the await catches whatever landed since.
+    let lastFlush = 0
+    const flush = () => {
+      if (ctrl.signal.aborted) return
       const rings = getState().satRings.slice()
-      rings[index] = {
-        canvas: result.canvas,
-        rect: [
-          (s.west - b.west) / lonSpan,
-          (b.north - s.north) / latSpan,
-          (s.east - b.west) / lonSpan,
-          (b.north - s.south) / latSpan,
-        ],
-        zoom: result.zoom,
-      }
+      rings[index] = { canvas: ringCanvas, rect, zoom, version: ++satRingVersion }
       setState({ satRings: rings })
+    }
+
+    try {
+      await fetchImageryProgressive(s, {
+        maxZoom: Math.min(maxZoom, MAX_IMAGERY_ZOOM),
+        signal: ctrl.signal,
+        canvas: ringCanvas,
+        seed: (canvas) => {
+          // Paint the canvas with exactly what the viewer already sees there —
+          // base drape, then the other rings coarse to fine, with this ring's
+          // own snapshot taking its place in that order. All are plate-carrée,
+          // so this is pure rectangle arithmetic. The swap is therefore
+          // invisible: a re-centre shows the same picture it replaced, and
+          // arriving tiles only ever sharpen it. This is the clipmap upsample
+          // trick — the parent level stands in until the child arrives.
+          const ctx = canvas.getContext('2d')!
+          const { imagery, satRings } = getState()
+          if (imagery) {
+            ctx.drawImage(
+              imagery,
+              rect[0] * imagery.width,
+              rect[1] * imagery.height,
+              (rect[2] - rect[0]) * imagery.width,
+              (rect[3] - rect[1]) * imagery.height,
+              0,
+              0,
+              canvas.width,
+              canvas.height,
+            )
+          } else {
+            ctx.fillStyle = '#3c4a3a'
+            ctx.fillRect(0, 0, canvas.width, canvas.height)
+          }
+          const dk = [canvas.width / (rect[2] - rect[0]), canvas.height / (rect[3] - rect[1])]
+          for (let j = 3; j >= 0; j--) {
+            const source =
+              j === index
+                ? prevRect && satRingScratch
+                  ? { canvas: satRingScratch, rect: prevRect }
+                  : null
+                : satRings[j]
+            if (!source) continue
+            const ox0 = Math.max(rect[0], source.rect[0])
+            const oy0 = Math.max(rect[1], source.rect[1])
+            const ox1 = Math.min(rect[2], source.rect[2])
+            const oy1 = Math.min(rect[3], source.rect[3])
+            if (ox1 <= ox0 || oy1 <= oy0) continue
+            const sk = [
+              source.canvas.width / (source.rect[2] - source.rect[0]),
+              source.canvas.height / (source.rect[3] - source.rect[1]),
+            ]
+            ctx.drawImage(
+              source.canvas,
+              (ox0 - source.rect[0]) * sk[0]!,
+              (oy0 - source.rect[1]) * sk[1]!,
+              (ox1 - ox0) * sk[0]!,
+              (oy1 - oy0) * sk[1]!,
+              (ox0 - rect[0]) * dk[0]!,
+              (oy0 - rect[1]) * dk[1]!,
+              (ox1 - ox0) * dk[0]!,
+              (oy1 - oy0) * dk[1]!,
+            )
+          }
+          lastFlush = performance.now()
+          flush()
+        },
+        onTile: () => {
+          const now = performance.now()
+          if (now - lastFlush >= 180) {
+            lastFlush = now
+            flush()
+          }
+        },
+      })
+      flush()
     } catch (err) {
       // A failed close-up is not an error state — the coarser rings and the base
-      // drape are still underneath.
+      // drape are still underneath, and the seeded canvas already published is
+      // coherent imagery, just not yet sharpened.
       if ((err as Error)?.name !== 'AbortError') console.warn('satellite close-up failed', err)
     } finally {
       if (satRingAborts[index] === ctrl) satRingAborts[index] = null

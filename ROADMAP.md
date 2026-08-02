@@ -620,6 +620,18 @@ legible at any scale precisely because shrinking the box does not make it thinne
 
 ## Known issues
 
+### Satellite close-up streaming — one spike left
+
+The clipmap was reworked from settle-then-rebuild to streaming (fetch during motion,
+seeded re-centres, per-tile progressive draw into one persistent canvas per ring, one
+persistent GPU texture per ring). Measured during a continuous pan-and-dive: p50 6.9 ms,
+p95 10.4 ms, three frames over 16 ms in 5.5 s. What remains is a single ~100 ms spike
+when a ring's canvas dimensions change (a zoom step crossing forces a canvas resize,
+which forces a GL storage realloc plus full re-upload). Rare — a handful per deep dive —
+but it is the one hitch left in the gesture. Fix if it proves noticeable: fixed-size
+ring canvases so storage never reallocates, at the cost of some oversampling on small
+rings.
+
 ### Montane/plains transition reads as closed forest
 
 Measured against Esri imagery on a Front Range tile, the transition band comes out at

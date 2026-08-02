@@ -57,16 +57,18 @@ export default function Terrain({ build, sky, fogDensity, snowLine }: Props) {
   // a withdrawn ring bound briefly while it eases out, and freeing GPU memory under a
   // bound sampler flashes.
   const satRings = useStore((s) => s.satRings)
-  const ringTexCache = useRef(new Map<HTMLCanvasElement, THREE.Texture>())
+  const ringTexCache = useRef(
+    new Map<HTMLCanvasElement, { tex: THREE.Texture; version: number }>(),
+  )
   const ringLayers = useMemo(() => {
     const cache = ringTexCache.current
     const live = new Set<HTMLCanvasElement>()
     const layers = satRings.map((ring) => {
       if (!ring) return null
       live.add(ring.canvas)
-      let tex = cache.get(ring.canvas)
-      if (!tex) {
-        tex = new THREE.CanvasTexture(ring.canvas)
+      let entry = cache.get(ring.canvas)
+      if (!entry) {
+        const tex = new THREE.CanvasTexture(ring.canvas)
         tex.flipY = false
         tex.wrapS = THREE.ClampToEdgeWrapping
         tex.wrapT = THREE.ClampToEdgeWrapping
@@ -75,13 +77,20 @@ export default function Terrain({ build, sky, fogDensity, snowLine }: Props) {
         tex.generateMipmaps = true
         tex.anisotropy = 16
         tex.needsUpdate = true
-        cache.set(ring.canvas, tex)
+        entry = { tex, version: ring.version }
+        cache.set(ring.canvas, entry)
+      } else if (entry.version !== ring.version) {
+        // Same canvas, new pixels: the ring sharpened in place. Re-upload under
+        // the same texture identity so the engine's fade does not restart.
+        entry.version = ring.version
+        entry.tex.needsUpdate = true
       }
-      return { texture: tex, rect: ring.rect }
+      return { texture: entry.tex, rect: ring.rect }
     })
-    for (const [canvas, tex] of cache) {
+    for (const [canvas, entry] of cache) {
       if (!live.has(canvas)) {
         cache.delete(canvas)
+        const tex = entry.tex
         setTimeout(() => tex.dispose(), 400)
       }
     }
@@ -90,7 +99,7 @@ export default function Terrain({ build, sky, fogDensity, snowLine }: Props) {
 
   useEffect(
     () => () => {
-      for (const tex of ringTexCache.current.values()) tex.dispose()
+      for (const entry of ringTexCache.current.values()) entry.tex.dispose()
       ringTexCache.current.clear()
     },
     [],

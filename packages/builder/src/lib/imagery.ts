@@ -7,6 +7,14 @@ const TILE = 256
 const MAX_TILES = 144
 const MAX_PIXELS = 4096
 
+// Clipmap rings run on a smaller budget than the one-shot base drape. A ring
+// refreshes continuously while the camera moves, and every refresh ends in a
+// full-canvas GPU upload — 2048² is ~17 MB a flush, 4096² would be ~67 MB and a
+// dropped frame every time. The inner ring is small enough on the ground that
+// 2048 pixels still lands at Esri's sharpest zoom where it matters, up close.
+const RING_MAX_TILES = 64
+const RING_MAX_PIXELS = 2048
+
 /** Esri serves down to z19; past it there is nothing sharper to fetch. */
 export const MAX_IMAGERY_ZOOM = 19
 
@@ -66,14 +74,25 @@ async function loadTile(
   }
 }
 
-/** Pick the highest zoom whose tile mosaic stays within our tile and pixel budgets. */
-function chooseZoom(b: Bounds, maxZoom: number): number {
+/** Pick the highest zoom whose tile mosaic stays within the given budgets. */
+function chooseZoom(
+  b: Bounds,
+  maxZoom: number,
+  maxTiles: number = MAX_TILES,
+  maxPixels: number = MAX_PIXELS,
+): number {
   for (let z = Math.min(maxZoom, MAX_IMAGERY_ZOOM); z >= 1; z--) {
     const nx = Math.floor(lonToTileX(b.east, z)) - Math.floor(lonToTileX(b.west, z)) + 1
     const ny = Math.floor(latToTileY(b.south, z)) - Math.floor(latToTileY(b.north, z)) + 1
-    if (nx * ny <= MAX_TILES && nx * TILE <= MAX_PIXELS && ny * TILE <= MAX_PIXELS) return z
+    if (nx * ny <= maxTiles && nx * TILE <= maxPixels && ny * TILE <= maxPixels) return z
   }
   return 1
+}
+
+/** The zoom a clipmap ring over this box would fetch at — so callers can skip a
+ * ring that would land no sharper than what is already underneath it. */
+export function ringZoomFor(b: Bounds, maxZoom: number): number {
+  return chooseZoom(b, maxZoom, RING_MAX_TILES, RING_MAX_PIXELS)
 }
 
 export interface ImageryResult {
@@ -224,5 +243,132 @@ export async function fetchImagery(
     const syBot = (latToTileY(latBot, z) - ty0) * TILE
     octx.drawImage(mosaic, sx, syTop, sw, Math.max(0.5, syBot - syTop), 0, row, out.width, 1)
   }
+  return { canvas: out, zoom: z, tilesLoaded: loaded, tilesTotal: total }
+}
+
+export interface ProgressiveImageryOptions {
+  maxZoom?: number
+  signal?: AbortSignal
+  /**
+   * Called once with the empty output canvas before any tile lands. The caller
+   * paints a plausible stand-in here — typically the imagery already on screen,
+   * resampled — so the canvas is publishable immediately and tiles only ever
+   * sharpen it, never replace something with nothing.
+   */
+  seed?: (canvas: HTMLCanvasElement, zoom: number) => void
+  /** Fires after each tile is drawn into the canvas — the caller decides when
+   * the accumulated sharpness is worth a GPU re-upload. */
+  onTile?: (loaded: number, total: number) => void
+  /**
+   * Reuse this canvas as the output, resized only when the tile layout demands
+   * different dimensions. Streaming rings pass their slot's persistent canvas, so
+   * a refetch allocates nothing — no fresh canvas, no fresh GPU texture, no
+   * disposal churn. Continuous camera motion triggers refetches several times a
+   * second; allocating a multi-megabyte canvas and texture for each one is what
+   * grinds the driver down mid-gesture.
+   */
+  canvas?: HTMLCanvasElement
+}
+
+/**
+ * The streaming counterpart to `fetchImagery`, built for clipmap rings.
+ *
+ * Where `fetchImagery` is stitch-everything-then-reproject-then-return — fine
+ * for a one-shot base drape, a guaranteed hitch when run four times per camera
+ * move — this draws each tile straight into the final plate-carrée canvas the
+ * moment it decodes, centre-out so sharpness appears where the viewer is
+ * looking first. There is no intermediate Mercator mosaic and no monolithic
+ * row-resample pass: each tile reprojects only the output rows it covers, a
+ * cost that amortises to well under a millisecond per tile.
+ *
+ * Rows are assigned to whichever tile contains the row's vertical centre, so
+ * every output row has exactly one writer and tile seams cannot flicker as
+ * neighbours land in arbitrary order.
+ */
+export async function fetchImageryProgressive(
+  bounds: Bounds,
+  opts: ProgressiveImageryOptions = {},
+): Promise<ImageryResult> {
+  const { signal } = opts
+  const z = chooseZoom(bounds, opts.maxZoom ?? MAX_IMAGERY_ZOOM, RING_MAX_TILES, RING_MAX_PIXELS)
+  const tx0 = Math.floor(lonToTileX(bounds.west, z))
+  const tx1 = Math.floor(lonToTileX(bounds.east, z))
+  const ty0 = Math.floor(latToTileY(bounds.north, z))
+  const ty1 = Math.floor(latToTileY(bounds.south, z))
+
+  const out = opts.canvas ?? document.createElement('canvas')
+  const w = (tx1 - tx0 + 1) * TILE
+  const h = Math.min(RING_MAX_PIXELS, (ty1 - ty0 + 1) * TILE)
+  // Assigning width/height clears a canvas even when the value is unchanged, so
+  // only touch them on a real dimension change — reuse depends on it.
+  if (out.width !== w) out.width = w
+  if (out.height !== h) out.height = h
+  const octx = out.getContext('2d')!
+  octx.imageSmoothingQuality = 'high'
+  opts.seed?.(out, z)
+
+  // Horizontal is linear in longitude, so it is one scale and offset for the
+  // whole run; vertical is the Mercator stretch, precomputed per output row.
+  const sx = (lonToTileX(bounds.west, z) - tx0) * TILE
+  const sw = (lonToTileX(bounds.east, z) - lonToTileX(bounds.west, z)) * TILE
+  const kx = out.width / sw
+  const rowSy = new Float64Array(out.height + 1)
+  for (let r = 0; r <= out.height; r++) {
+    const lat = bounds.north - (r / out.height) * (bounds.north - bounds.south)
+    rowSy[r] = (latToTileY(lat, z) - ty0) * TILE
+  }
+
+  const wanted: Array<{ x: number; y: number; d: number }> = []
+  const cx = (tx0 + tx1) / 2
+  const cy = (ty0 + ty1) / 2
+  for (let y = ty0; y <= ty1; y++)
+    for (let x = tx0; x <= tx1; x++)
+      wanted.push({ x, y, d: (x - cx) * (x - cx) + (y - cy) * (y - cy) })
+  wanted.sort((a, b) => a.d - b.d)
+
+  const total = wanted.length
+  let done = 0
+  let loaded = 0
+  let next = 0
+  await Promise.all(
+    Array.from({ length: 8 }, async () => {
+      while (next < wanted.length) {
+        if (signal?.aborted) throw new DOMException('aborted', 'AbortError')
+        const t = wanted[next++]!
+        const img = await loadTile(z, t.x, t.y, signal)
+        // Cache hits resolve even after an abort — and the canvas may already be
+        // hosting the ring's NEXT fetch, so drawing with this run's geometry
+        // would smear stale tiles across it. Check again now, not just up top.
+        if (signal?.aborted) {
+          img?.close()
+          throw new DOMException('aborted', 'AbortError')
+        }
+        if (img) {
+          const myTop = (t.y - ty0) * TILE
+          const myBot = myTop + TILE
+          const dx = ((t.x - tx0) * TILE - sx) * kx
+          const dw = TILE * kx
+          // First row whose centre falls inside this tile's Mercator span.
+          let lo = 0
+          let hi = out.height
+          while (lo < hi) {
+            const mid = (lo + hi) >> 1
+            if ((rowSy[mid]! + rowSy[mid + 1]!) / 2 < myTop) lo = mid + 1
+            else hi = mid
+          }
+          for (let r = lo; r < out.height; r++) {
+            if ((rowSy[r]! + rowSy[r + 1]!) / 2 >= myBot) break
+            const syTop = Math.max(rowSy[r]!, myTop)
+            const syBot = Math.min(rowSy[r + 1]!, myBot)
+            octx.drawImage(img, 0, syTop - myTop, TILE, Math.max(0.5, syBot - syTop), dx, r, dw, 1)
+          }
+          img.close()
+          loaded++
+        }
+        opts.onTile?.(++done, total)
+      }
+    }),
+  )
+  if (signal?.aborted) throw new DOMException('aborted', 'AbortError')
   return { canvas: out, zoom: z, tilesLoaded: loaded, tilesTotal: total }
 }
