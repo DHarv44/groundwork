@@ -23,7 +23,9 @@ function labelFor(deg: number): string {
 export default function HeadingTape({
   target,
 }: {
-  target: React.RefObject<HTMLCanvasElement>
+  // React 19: useRef<T>(null) is RefObject<T | null>, and the code already guards
+  // against the null anyway — the old annotation was stricter than the caller.
+  target: React.RefObject<HTMLCanvasElement | null>
 }) {
   const camera = useThree((s) => s.camera)
   const dir = useRef(new THREE.Vector3())

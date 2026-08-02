@@ -17,9 +17,9 @@ import {
   packFileName,
   summarisePack,
   useStore,
-} from '@groundwork/builder'
-import '@groundwork/builder/styles.css'
-import { packFromBytes, readHeightField } from '@groundwork/core'
+} from '@dharv44/groundwork-builder'
+import '@dharv44/groundwork-builder/styles.css'
+import { packFromBytes, readHeightField } from '@dharv44/groundwork-core'
 
 /**
  * Configured before mounting, which is the contract.

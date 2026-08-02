@@ -1,5 +1,5 @@
 /**
- * Geodesy is now `@groundwork/core`.
+ * Geodesy is now `@dharv44/groundwork-core`.
  *
  * Re-exported here so existing imports keep resolving while the split proceeds — the
  * call sites move to the package as each area is touched, rather than in one sweep
@@ -9,7 +9,7 @@
  * lands, how a box is worded for a person, and the climate curves that set the
  * viewer's defaults. None of those belong in a data-model package.
  */
-export type { Bounds } from '@groundwork/core'
+export type { Bounds } from '@dharv44/groundwork-core'
 export {
   boundsAreaKm2,
   boundsExtentMetres,
@@ -19,9 +19,9 @@ export {
   lonToTileX,
   metresPerDegLat,
   metresPerDegLon,
-} from '@groundwork/core'
+} from '@dharv44/groundwork-core'
 
-import type { Bounds } from '@groundwork/core'
+import type { Bounds } from '@dharv44/groundwork-core'
 
 /**
  * Where a first run lands, before anything is in local storage.

@@ -1,6 +1,6 @@
 import { useEffect, useMemo } from 'react'
 import { useFrame } from '@react-three/fiber'
-import { SkyDome as SkyDomeObject, type SkyModel } from '@groundwork/engine'
+import { SkyDome as SkyDomeObject, type SkyModel } from '@dharv44/groundwork-engine'
 
 export default function SkyDome({
   sky,

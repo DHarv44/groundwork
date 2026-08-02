@@ -9,8 +9,8 @@
  * builder work, it probably belongs inside the package instead.
  */
 import { createRoot } from 'react-dom/client'
-import { Builder } from '@groundwork/builder'
-import '@groundwork/builder/styles.css'
+import { Builder } from '@dharv44/groundwork-builder'
+import '@dharv44/groundwork-builder/styles.css'
 import './page.css'
 
 createRoot(document.getElementById('root')!).render(<Builder />)

@@ -2,7 +2,7 @@
  * The engine's portability test, in the form of something usable.
  *
  * It loads a pack and renders it with plain three.js — no React, no store, no builder.
- * The imports below are the whole point: `@groundwork/engine` and `@groundwork/core`
+ * The imports below are the whole point: `@dharv44/groundwork-engine` and `@dharv44/groundwork-core`
  * and nothing else. The moment this page needs a line from `src/`, the boundary has
  * leaked and the engine is not actually portable, whatever the folder layout says.
  *
@@ -22,7 +22,7 @@ import {
   type HeightField,
   type PackFiles,
   type PackVectors,
-} from '@groundwork/core'
+} from '@dharv44/groundwork-core'
 import {
   DEFAULT_SURFACE_CONFIG,
   DEFAULT_WATER_CONFIG,
@@ -32,7 +32,7 @@ import {
   buildTerrain,
   computeSky,
   type TerrainBuild,
-} from '@groundwork/engine'
+} from '@dharv44/groundwork-engine'
 
 const el = <T extends HTMLElement>(id: string) => document.getElementById(id) as T
 const statusEl = el<HTMLDivElement>('status')

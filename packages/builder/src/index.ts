@@ -1,12 +1,12 @@
 /**
- * @groundwork/builder — the authoring tool.
+ * @dharv44/groundwork-builder — the authoring tool.
  *
  * Mounts as a component rather than owning a page. Everything the host controls —
  * storage namespace, service endpoints, asset base — goes through `configureBuilder`,
  * which must be called before the component mounts.
  *
- *   import { Builder, configureBuilder } from '@groundwork/builder'
- *   import '@groundwork/builder/styles.css'
+ *   import { Builder, configureBuilder } from '@dharv44/groundwork-builder'
+ *   import '@dharv44/groundwork-builder/styles.css'
  *
  *   configureBuilder({ storagePrefix: 'my-app.terrain' })
  *   <Builder />

@@ -12,7 +12,7 @@ import {
   type PackPlace,
   type PackRoad,
   type PackVectors,
-} from '@groundwork/core'
+} from '@dharv44/groundwork-core'
 import type * as THREE from 'three'
 import type { OsmData } from './overpass'
 import { DEM_SOURCES } from './opentopo'

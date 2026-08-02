@@ -1,5 +1,5 @@
 /**
- * @groundwork/engine — the terrain renderer.
+ * @dharv44/groundwork-engine — the terrain renderer.
  *
  * Plain three.js, not R3F: React Three Fiber would pin a React version and a
  * reconciler onto every consumer, and this has to drop into whatever is already

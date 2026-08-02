@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { boundsExtentMetres, sampleBilinear, type HeightField } from '@groundwork/core'
+import { boundsExtentMetres, sampleBilinear, type HeightField } from '@dharv44/groundwork-core'
 
 export interface TerrainBuild {
   geometry: THREE.BufferGeometry
@@ -24,7 +24,7 @@ export interface TerrainBuild {
 const MAX_NORMAL_TEX = 4096
 
 /**
- * Sampling moved to `@groundwork/core`: anything standing on the surface has to read
+ * Sampling moved to `@dharv44/groundwork-core`: anything standing on the surface has to read
  * it the same way the vertices were placed, and that has to hold for a consumer that
  * has a pack but not this mesh builder. Re-exported because call sites import it here.
  */

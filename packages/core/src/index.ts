@@ -1,5 +1,5 @@
 /**
- * @groundwork/core — the terrain data model.
+ * @dharv44/groundwork-core — the terrain data model.
  *
  * Imports nothing: no three.js, no React, no DOM. The package tsconfig omits the DOM
  * lib so that holds by construction. What it buys is that a headless baker, a pack

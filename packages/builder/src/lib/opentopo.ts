@@ -1,5 +1,5 @@
 import { fromArrayBuffer } from 'geotiff'
-import { boundsAreaKm2, type Bounds, type HeightField } from '@groundwork/core'
+import { boundsAreaKm2, type Bounds, type HeightField } from '@dharv44/groundwork-core'
 import { builderConfig } from '../config'
 import {
   DAILY_QUOTA,
@@ -189,7 +189,7 @@ export const DEM_SOURCES: DemSource[] = [
 ]
 
 /**
- * The height field itself is the data model, so it lives in `@groundwork/core` — a
+ * The height field itself is the data model, so it lives in `@dharv44/groundwork-core` — a
  * pack reader has to understand one without knowing OpenTopography exists. Re-exported
  * from here because this is where everything already imports it from.
  */

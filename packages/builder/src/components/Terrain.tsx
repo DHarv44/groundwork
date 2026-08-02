@@ -1,7 +1,7 @@
 import { useEffect, useMemo } from 'react'
 import * as THREE from 'three'
 import { useFrame } from '@react-three/fiber'
-import { TerrainSurface, type SkyModel, type SurfaceConfig, type TerrainBuild } from '@groundwork/engine'
+import { TerrainSurface, type SkyModel, type SurfaceConfig, type TerrainBuild } from '@dharv44/groundwork-engine'
 import { useStore } from '../store'
 
 /**

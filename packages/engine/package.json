@@ -1,5 +1,5 @@
 {
-  "name": "@groundwork/engine",
+  "name": "@dharv44/groundwork-engine",
   "version": "0.1.0",
   "description": "Terrain renderer. Plain three.js — owns neither the renderer nor the frame loop.",
   "type": "module",
@@ -13,7 +13,7 @@
     "src"
   ],
   "dependencies": {
-    "@groundwork/core": "*"
+    "@dharv44/groundwork-core": "*"
   },
   "peerDependencies": {
     "three": ">=0.160.0"

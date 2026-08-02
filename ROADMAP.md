@@ -185,7 +185,7 @@ Strictly one-directional. Rules that keep it that way:
 
       **A trap worth knowing about, which nearly caused a correct change to be
       reverted.** Verifying from the browser console by dynamically importing
-      `/node_modules/@groundwork/core/src/index.ts` can get a *stale* copy: Vite treats
+      `/node_modules/@dharv44/groundwork-core/src/index.ts` can get a *stale* copy: Vite treats
       that path as a dependency rather than source, so it kept serving the pre-filter
       transform while the app itself — importing the bare specifier — had the new one.
       The result was two copies of core in one page, the export filtering correctly and
