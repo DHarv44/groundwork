@@ -44,6 +44,17 @@ export interface MaskOptions {
   /** Cleared corridor width, as a multiple of the road surface width. */
   vergeScale: number
   /**
+   * Narrowest a road may be drawn, in mask pixels — the legibility floor.
+   *
+   * A residential street is 6 m wide; on a 100 km box a mask pixel is 50 m, so drawn
+   * to scale the street is a twelfth of a pixel and antialiasing turns the network
+   * into haze. Every printed map solves this the same way: below a certain size,
+   * roads stop being drawn to scale and start being drawn legibly. This is that
+   * size, and it is a slider because how legible is a display choice, not a fact
+   * about the ground.
+   */
+  minPixels: number
+  /**
    * Which road classes to draw, from the Roads tab.
    *
    * Filtered here rather than at fetch time. Everything the box carries is already in
@@ -81,18 +92,12 @@ export interface Masks extends MaskStats {
 }
 
 /**
- * Narrowest a road may be drawn, in mask pixels.
- *
- * A residential street is 6 m wide. On a 100 km box at 2048 px the mask has one texel
- * per 50 m, so drawn to scale the street is a twelfth of a pixel — antialiasing turns
- * it into a barely-there grey haze and the network vanishes. Every map ever printed has
- * the same problem and every one solves it the same way: below a certain size, roads
- * stop being drawn to scale and start being drawn legibly.
+ * Hard lower bound on the legibility floor, whatever the slider says.
  *
  * Kept a shade above 1 so a road always lands on a whole pixel somewhere along its
  * length rather than dithering in and out between two.
  */
-const MIN_PIXELS = 1.4
+const FLOOR_MIN = 1.05
 
 /** Longest side, clamped — these are two textures and they live on the GPU. */
 const MAX_RESOLUTION = 4096
@@ -300,11 +305,12 @@ export function buildMasks(data: OsmData, opts: MaskOptions): Masks {
   const present = new Set(geo.paths.keys())
   const widened = new Set<RoadClass>()
 
+  const floor = Math.max(FLOOR_MIN, opts.minPixels)
   const strokeWidth = (cls: RoadClass, multiplier: number): number => {
     const metres = ROAD_CLASSES[cls].width * opts.widthScale * multiplier
     const px = metres * pxPerMetre
-    if (px < MIN_PIXELS && multiplier === 1 && present.has(cls)) widened.add(cls)
-    return Math.max(MIN_PIXELS * multiplier, px)
+    if (px < floor && multiplier === 1 && present.has(cls)) widened.add(cls)
+    return Math.max(floor * multiplier, px)
   }
 
   // ---- areas -------------------------------------------------------------------

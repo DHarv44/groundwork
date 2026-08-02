@@ -16,7 +16,7 @@ export type { SkyModel } from './atmosphere'
 export { computeSky } from './atmosphere'
 
 export { terrainFragmentShader, terrainVertexShader } from './terrain/shader'
-export type { SurfaceConfig, SurfaceLayers, SurfaceTextureMode } from './terrain/surface'
+export type { ImageryRing, SurfaceConfig, SurfaceLayers, SurfaceTextureMode } from './terrain/surface'
 export { TerrainSurface } from './terrain/surface'
 
 export { DEFAULT_SURFACE_CONFIG, DEFAULT_WATER_CONFIG } from './defaults'

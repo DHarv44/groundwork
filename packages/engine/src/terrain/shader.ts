@@ -39,6 +39,24 @@ uniform float uWaveHeight;
 
 uniform float uUseSat;        // 0 = procedural, 1 = satellite drape
 uniform float uSatDetail;     // how much procedural micro-detail survives under imagery
+// The imagery clipmap: up to three nested rings centred under the camera, each
+// roughly 4x the area and a step coarser than the one inside it, with the base
+// drape as the outermost fallback. Sampled coarse to fine, so every fragment takes
+// the sharpest ring that covers it — which is how texels-per-screen-pixel stays
+// near constant from your feet to the horizon, the same law the big map renderers
+// enforce with tile quadtrees. Fade ramps each ring in as it (re)arrives.
+uniform sampler2D uSatRing0Map;
+uniform vec4 uSatRing0Rect;   // terrain UV: xy = NW corner, zw = SE
+uniform float uSatRing0Fade;  // 0 absent, ramping to 1 as the ring lands
+uniform sampler2D uSatRing1Map;
+uniform vec4 uSatRing1Rect;
+uniform float uSatRing1Fade;
+uniform sampler2D uSatRing2Map;
+uniform vec4 uSatRing2Rect;
+uniform float uSatRing2Fade;
+uniform sampler2D uSatRing3Map;
+uniform vec4 uSatRing3Rect;
+uniform float uSatRing3Fade;
 
 uniform float uMinElev;
 uniform float uMaxElev;
@@ -86,6 +104,7 @@ uniform float uShowRoads;
 uniform float uRoadDarkness;
 uniform float uRoadClearing;   // how strongly the corridor takes the timber back
 uniform float uRoadTint;       // 0 metalled grey, 1 the local ground scraped bare
+uniform float uRoadShoulder;   // corridor band brightened so the dark surface reads
 // Mapped areas: R water, G woodland, B built-up. Surveyed ground, so where it disagrees
 // with what was derived from the DEM it is generally the derivation that is wrong.
 uniform sampler2D uAreaMap;
@@ -325,14 +344,18 @@ void main() {
   // than drawn on top of it is the timber standing back from it.
   float roadSurface = 0.0;
   float roadCorridor = 0.0;
+  float roadVerge = 0.0;
   float roadClass = 0.0;
   if (uHasRoads > 0.5 && uShowRoads > 0.5 && vSide < 0.5) {
     vec4 rm = texture2D(uRoadMap, vUv);
     roadSurface = rm.r;
     roadClass = rm.g;
     // The mask ramps the corridor outward in steps; this feathers across them so the
-    // clearing thins into the woods instead of ending on a line.
-    roadCorridor = smoothstep(0.04, 0.75, rm.b) * uRoadClearing;
+    // clearing thins into the woods instead of ending on a line. The raw band is kept
+    // separately from the timber-clearing strength: the shoulder brightening below
+    // wants the band itself, not the band scaled by how hard it fells trees.
+    roadVerge = smoothstep(0.04, 0.75, rm.b);
+    roadCorridor = roadVerge * uRoadClearing;
   }
 
   // Mapped ground, resolved alongside the roads and for the same reason — woodland and
@@ -650,10 +673,54 @@ void main() {
   // ---- satellite drape ----------------------------------------------------
   if (uUseSat > 0.5) {
     vec3 sat = srgbToLinear(texture2D(uSatMap, vUv).rgb);
+
+    // The clipmap cascade, coarse ring first so finer rings paint over it. Each
+    // ring feathers at its own boundary — the resolution steps must not draw their
+    // rectangles onto the ground — and multiplies in its fade so a ring that is
+    // still arriving eases in over the one beneath instead of popping. The feather
+    // is wide (15% of the ring) because it blends more than resolution: Esri's
+    // captures differ between zoom levels — date, season, colour — and a narrow
+    // feather draws that difference as a rectangle onto the ground.
+    {
+      vec2 span3 = max(uSatRing3Rect.zw - uSatRing3Rect.xy, vec2(1e-6));
+      vec2 rUv3 = (vUv - uSatRing3Rect.xy) / span3;
+      vec2 edge3 = min(rUv3, 1.0 - rUv3);
+      float in3 = smoothstep(0.0, 0.15, min(edge3.x, edge3.y)) * uSatRing3Fade;
+      if (in3 > 0.0) sat = mix(sat, srgbToLinear(texture2D(uSatRing3Map, rUv3).rgb), in3);
+
+      vec2 span2 = max(uSatRing2Rect.zw - uSatRing2Rect.xy, vec2(1e-6));
+      vec2 rUv2 = (vUv - uSatRing2Rect.xy) / span2;
+      vec2 edge2 = min(rUv2, 1.0 - rUv2);
+      float in2 = smoothstep(0.0, 0.15, min(edge2.x, edge2.y)) * uSatRing2Fade;
+      if (in2 > 0.0) sat = mix(sat, srgbToLinear(texture2D(uSatRing2Map, rUv2).rgb), in2);
+
+      vec2 span1 = max(uSatRing1Rect.zw - uSatRing1Rect.xy, vec2(1e-6));
+      vec2 rUv1 = (vUv - uSatRing1Rect.xy) / span1;
+      vec2 edge1 = min(rUv1, 1.0 - rUv1);
+      float in1 = smoothstep(0.0, 0.15, min(edge1.x, edge1.y)) * uSatRing1Fade;
+      if (in1 > 0.0) sat = mix(sat, srgbToLinear(texture2D(uSatRing1Map, rUv1).rgb), in1);
+
+      vec2 span0 = max(uSatRing0Rect.zw - uSatRing0Rect.xy, vec2(1e-6));
+      vec2 rUv0 = (vUv - uSatRing0Rect.xy) / span0;
+      vec2 edge0 = min(rUv0, 1.0 - rUv0);
+      float in0 = smoothstep(0.0, 0.15, min(edge0.x, edge0.y)) * uSatRing0Fade;
+      if (in0 > 0.0) sat = mix(sat, srgbToLinear(texture2D(uSatRing0Map, rUv0).rgb), in0);
+    }
+
     // Keep a little procedural grain so close-ups don't turn to mush.
     float g = 0.90 + 0.20 * (grain * 0.5 + 0.5) * uSatDetail * (1.0 - smoothstep(600.0, 5000.0, dist));
     albedo = sat * g;
     snow *= 0.25;
+
+    // Mapped overlays composite OVER the imagery — the photograph is the ground
+    // layer, surveyed data reads on top of it, and roads (drawn further down)
+    // top everything. In procedural mode these signals steer the ground colours
+    // themselves; over a photograph a recolour would fight real pixels, so they
+    // render as frank translucent overlays instead. Water wins over the land
+    // uses, as it does on any chart.
+    if (osmWood > 0.001) albedo = mix(albedo, vec3(0.035, 0.085, 0.030), min(osmWood, 1.0) * 0.45);
+    if (osmBuilt > 0.001) albedo = mix(albedo, vec3(0.28, 0.26, 0.23), min(osmBuilt, 1.0) * 0.35);
+    if (osmWater > 0.001) albedo = mix(albedo, vec3(0.030, 0.095, 0.160), min(osmWater, 1.0) * 0.60);
   }
 
   // ---- built-up ground ----------------------------------------------------
@@ -682,6 +749,18 @@ void main() {
   // there, and roads are the one layer where that check is exact — these are surveyed
   // lines, so if they do not sit on the roads in the photograph then the projection is
   // wrong and everything else drawn from the same box is wrong with it.
+  // The shoulder: the verge band lightened, the way a real roadside reads — mown
+  // grass, gravel, dust thrown off the surface. It is what makes the dark carriageway
+  // legible from altitude: asphalt on dark ground is a line nobody can see, asphalt
+  // inside a pale band is a road. Kept off the surface itself, and OFF over imagery
+  // entirely — by the time roads paint, albedo over satellite IS the photograph, which
+  // already contains its real shoulders; brightening a blurred band on top of it just
+  // draws pale worms along every road. (Learned by doing exactly that.)
+  if (roadVerge > 0.003) {
+    float shoulderBand = roadVerge * (1.0 - roadSurface) * uRoadShoulder * (1.0 - uUseSat);
+    albedo = mix(albedo, albedo * 1.45 + soil * 0.10 + vec3(0.008), clamp(shoulderBand, 0.0, 1.0));
+  }
+
   if (roadSurface > 0.003) {
     float cov = roadSurface * mix(1.0, 0.5, uUseSat);
 

@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from 'react'
 import { DEFAULT_SETTINGS, useStore, type BiomeKey, type Settings } from '../store'
 import { KOPPEN_CODES, colorFor } from '../lib/koppen'
 import { FOREST_MAX, GROUND_WARMTH_MAX } from '../lib/biomeMap'
-import { DAILY_QUOTA, cacheClear, cacheStats, quotaUsed } from '../lib/demcache'
+import { DAILY_QUOTA, cacheClear, cacheStats, quotaUsed, tileCacheStats } from '../lib/demcache'
+import { MAX_IMAGERY_ZOOM, baseImageryZoom, estimateImageryPrefetch } from '../lib/imagery'
 import { decodePreset, deletePreset, encodePreset, loadPresets, savePreset } from '../lib/presets'
 import { DEM_SOURCES } from '../lib/opentopo'
 import { AREA_LABEL, ROAD_CLASSES, ROAD_CLASS_NOTE, ROAD_ORDER } from '../lib/overpass'
@@ -193,7 +194,24 @@ export default function Controls() {
     loadRoads,
     roads,
     waterMask,
+    prefetch,
+    startPrefetch,
+    cancelPrefetch,
   } = useStore()
+
+  // The tile cache is invisible by default, and the prefetch below can write hundreds
+  // of megabytes to this machine — so the number is shown, and refreshed whenever a
+  // prefetch finishes.
+  const [tileStats, setTileStats] = useState({ count: 0, megabytes: 0 })
+  useEffect(() => {
+    let live = true
+    void tileCacheStats().then((s) => {
+      if (live) setTileStats(s)
+    })
+    return () => {
+      live = false
+    }
+  }, [prefetch])
 
   // The class the sliders act on: your pick, falling back to the dominant one.
   const editing =
@@ -907,6 +925,16 @@ export default function Controls() {
                 onChange={setSetting('roadWidth')}
               />
               <Slider
+                label="Visibility floor"
+                value={settings.roadFloor}
+                min={1}
+                max={6}
+                step={0.1}
+                suffix=" px"
+                decimals={1}
+                onChange={setSetting('roadFloor')}
+              />
+              <Slider
                 label="Cleared verge"
                 value={settings.roadVerge}
                 min={0}
@@ -941,6 +969,14 @@ export default function Controls() {
                 max={1}
                 step={0.01}
                 onChange={setSetting('roadDarkness')}
+              />
+              <Slider
+                label="Shoulder contrast"
+                value={settings.roadShoulder}
+                min={0}
+                max={1}
+                step={0.01}
+                onChange={setSetting('roadShoulder')}
               />
               <label className="slider">
                 <span className="slider-head">
@@ -1054,6 +1090,19 @@ export default function Controls() {
                 decimals={2}
                 onChange={setSetting('roadWidth')}
               />
+              {/* Width scales truth; the floor guarantees legibility. Separate controls
+                  because pushing width until back roads show makes motorways cartoonish
+                  long before the small stuff arrives. */}
+              <Slider
+                label="Visibility floor"
+                value={settings.roadFloor}
+                min={1}
+                max={6}
+                step={0.1}
+                suffix=" px"
+                decimals={1}
+                onChange={setSetting('roadFloor')}
+              />
               <Slider
                 label="Cleared verge"
                 value={settings.roadVerge}
@@ -1089,6 +1138,16 @@ export default function Controls() {
                 max={1}
                 step={0.01}
                 onChange={setSetting('roadDarkness')}
+              />
+              {/* The dark surface only reads against something lighter. This lifts the
+                  verge band the way a real roadside does — mown grass, gravel, dust. */}
+              <Slider
+                label="Shoulder contrast"
+                value={settings.roadShoulder}
+                min={0}
+                max={1}
+                step={0.01}
+                onChange={setSetting('roadShoulder')}
               />
               <label className="slider">
                 <span className="slider-head">
@@ -1426,6 +1485,91 @@ export default function Controls() {
               step={0.01}
               onChange={setSetting('aoStrength')}
             />
+            {/* Sharpness ceiling for the close-up that follows the camera: each step is
+                two tile zooms (13/15/17/19 — from ~20 m to ~0.3 m per pixel). 0 turns
+                the mechanism off. The footprint's own tile budget decides what is
+                actually reachable at any moment; this only caps how far it may go. */}
+            <Slider
+              label="Satellite close-up"
+              value={settings.satPatchBoost}
+              min={0}
+              max={4}
+              step={1}
+              decimals={0}
+              onChange={setSetting('satPatchBoost')}
+            />
+            {/* Wheel dolly rate. OrbitControls moves a fraction of the current eye
+                distance per notch, so this is a multiplier on that fraction, not a
+                speed in metres — 2 is roughly 10% of the distance per notch. */}
+            <Slider
+              label="Zoom speed"
+              value={settings.zoomSpeed}
+              min={0.5}
+              max={4}
+              step={0.1}
+              decimals={1}
+              onChange={setSetting('zoomSpeed')}
+            />
+            {/* Bulk prefetch: warm the tile cache for the whole box so every close-up
+                anywhere in it runs the instant path. The bill is computed and shown
+                before anything fetches — pyramids quadruple per level, and the gap
+                between two minutes and an afternoon is invisible until priced. */}
+            {heightField &&
+              (() => {
+                if (prefetch) {
+                  const pct = prefetch.total
+                    ? Math.round((prefetch.done / prefetch.total) * 100)
+                    : 0
+                  return (
+                    <div className="grid2">
+                      <span className="note">
+                        Prefetching to z{prefetch.toZoom} — {prefetch.done.toLocaleString()}/
+                        {prefetch.total.toLocaleString()} ({pct}%)
+                      </span>
+                      <button onClick={cancelPrefetch}>Cancel</button>
+                    </div>
+                  )
+                }
+                const base = baseImageryZoom(heightField.bounds)
+                const options: Array<{ z: number; tiles: number; megabytes: number }> = []
+                for (let z = base + 1; z <= MAX_IMAGERY_ZOOM; z++) {
+                  const e = estimateImageryPrefetch(heightField.bounds, z)
+                  // The cap is politeness as much as practicality: past this the
+                  // prefetch stops being "warm my area" and starts being a scrape.
+                  if (e.tiles > 30000) break
+                  options.push({ z, ...e })
+                }
+                if (options.length === 0) {
+                  return (
+                    <p className="note">
+                      This box is too large to prefetch beyond its base imagery — zoom
+                      the close-up live instead, or draw a smaller box.
+                    </p>
+                  )
+                }
+                return (
+                  <>
+                    <div className="grid2">
+                      {options.map((o) => (
+                        <button
+                          key={o.z}
+                          onClick={() => void startPrefetch(o.z)}
+                          title={`${o.tiles.toLocaleString()} tiles · ~${Math.max(1, Math.round(o.megabytes))} MB`}
+                        >
+                          Prefetch z{o.z} · ~{Math.max(1, Math.round(o.megabytes))} MB
+                        </button>
+                      ))}
+                    </div>
+                    <p className="note">
+                      Cached tiles: {tileStats.count.toLocaleString()} ·{' '}
+                      {tileStats.megabytes.toFixed(0)} MB. Stored in this browser&apos;s
+                      IndexedDB on this machine — nothing leaves it or syncs anywhere.
+                      Clear cache removes it, and so does clearing this site&apos;s data
+                      in the browser.
+                    </p>
+                  </>
+                )
+              })()}
             <div className="toggles">
               <Toggle
                 label="Cast shadows"

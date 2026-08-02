@@ -50,6 +50,7 @@ export const DEFAULT_SURFACE_CONFIG: Readonly<SurfaceConfig> = Object.freeze({
   roadDarkness: 0.55,
   roadClearing: 0.6,
   roadTint: 0.35,
+  roadShoulder: 0.3,
 
   osmWater: 1,
   osmWood: 0.7,

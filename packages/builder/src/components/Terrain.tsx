@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import * as THREE from 'three'
 import { useFrame } from '@react-three/fiber'
 import { TerrainSurface, type SkyModel, type SurfaceConfig, type TerrainBuild } from '@dharv44/groundwork-engine'
@@ -47,6 +47,80 @@ export default function Terrain({ build, sky, fogDensity, snowLine }: Props) {
 
   useEffect(() => () => satTexture?.dispose(), [satTexture])
 
+  // The clipmap rings ride the same settings as the base drape — same row order,
+  // same clamping — so the shader can treat the set as one image at four sharpnesses.
+  //
+  // Textures are cached per canvas, because texture identity is what the engine keys
+  // its fades on: minting a fresh texture for an *unchanged* ring would restart its
+  // fade every time a sibling re-centred, and the whole cascade would blink whenever
+  // the inner ring moved. Evicted textures are disposed on a delay — the engine keeps
+  // a withdrawn ring bound briefly while it eases out, and freeing GPU memory under a
+  // bound sampler flashes.
+  const satRings = useStore((s) => s.satRings)
+  const ringTexCache = useRef(
+    new Map<HTMLCanvasElement, { tex: THREE.Texture; version: number; w: number; h: number }>(),
+  )
+  const ringLayers = useMemo(() => {
+    const cache = ringTexCache.current
+    const live = new Set<HTMLCanvasElement>()
+    const layers = satRings.map((ring) => {
+      if (!ring) return null
+      live.add(ring.canvas)
+      let entry = cache.get(ring.canvas)
+      // A texture may NEVER outlive a resize of its canvas. three.js backs the
+      // texture with immutable GPU storage sized at the first upload; once the
+      // canvas changes dimensions, every later re-upload lands cropped or scaled
+      // against that stale storage, and the drape stops corresponding to its
+      // rect — imagery visibly displaced, panning at the wrong rate, unfixable
+      // by needsUpdate, healed only by anything that mints a fresh texture
+      // (which is why switching texture modes "fixed" it). Ring re-keys resize
+      // their canvas whenever the zoom crosses a tile-count threshold, so this
+      // check is load-bearing on every zoom gesture.
+      if (entry && (entry.w !== ring.canvas.width || entry.h !== ring.canvas.height)) {
+        const old = entry.tex
+        setTimeout(() => old.dispose(), 400)
+        cache.delete(ring.canvas)
+        entry = undefined
+      }
+      if (!entry) {
+        const tex = new THREE.CanvasTexture(ring.canvas)
+        tex.flipY = false
+        tex.wrapS = THREE.ClampToEdgeWrapping
+        tex.wrapT = THREE.ClampToEdgeWrapping
+        tex.minFilter = THREE.LinearMipmapLinearFilter
+        tex.magFilter = THREE.LinearFilter
+        tex.generateMipmaps = true
+        tex.anisotropy = 16
+        tex.needsUpdate = true
+        entry = { tex, version: ring.version, w: ring.canvas.width, h: ring.canvas.height }
+        cache.set(ring.canvas, entry)
+      } else if (entry.version !== ring.version) {
+        // Same canvas, same dimensions, new pixels: the ring sharpened in place.
+        // Re-upload under the same texture identity so the engine's fade does
+        // not restart.
+        entry.version = ring.version
+        entry.tex.needsUpdate = true
+      }
+      return { texture: entry.tex, rect: ring.rect }
+    })
+    for (const [canvas, entry] of cache) {
+      if (!live.has(canvas)) {
+        cache.delete(canvas)
+        const tex = entry.tex
+        setTimeout(() => tex.dispose(), 400)
+      }
+    }
+    return layers
+  }, [satRings])
+
+  useEffect(
+    () => () => {
+      for (const entry of ringTexCache.current.values()) entry.tex.dispose()
+      ringTexCache.current.clear()
+    },
+    [],
+  )
+
   // Built once. The surface holds a uniform object that must not be replaced, so the
   // component may re-render freely but the material behind it never gets rebuilt.
   const surface = useMemo(() => new TerrainSurface(build), [])
@@ -61,6 +135,7 @@ export default function Terrain({ build, sky, fogDensity, snowLine }: Props) {
     surface.setSky(sky)
     surface.setLayers({
       imagery: satTexture,
+      imageryRings: ringLayers,
       water: waterMask,
       biome: biomeMap,
       road: roadMask,
@@ -104,6 +179,7 @@ export default function Terrain({ build, sky, fogDensity, snowLine }: Props) {
       roadDarkness: settings.roadDarkness,
       roadClearing: settings.roadClearing,
       roadTint: settings.roadTint,
+      roadShoulder: settings.roadShoulder,
 
       // Each kind switches independently, and the toggle simply zeroes its weight —
       // the mask is one texture, so there is nothing to rebuild when one goes off.

@@ -8,15 +8,21 @@ import type { Bounds } from './lib/geo'
 import { DEFAULT_BOUNDS, boundsAreaKm2, climaticSnowLine, climaticTreeLine } from './lib/geo'
 import type { HeightField } from './lib/opentopo'
 import { DEM_SOURCES, fetchHeightField, validateRequest } from './lib/opentopo'
-import { fetchImagery } from './lib/imagery'
+import {
+  MAX_IMAGERY_ZOOM,
+  fetchImagery,
+  fetchImageryProgressive,
+  prefetchImagery,
+  ringZoomFor,
+} from './lib/imagery'
 import {
   NoRoadDataError,
-  fetchOsm,
   DEFAULT_ROAD_CLASSES,
   type AreaKind,
   type OsmData,
   type RoadClass,
 } from './lib/overpass'
+import { fetchOsmTiles } from './lib/osmtiles'
 import type { MaskOptions, Masks } from './lib/roadmask'
 import { roadCacheGet, roadCachePut } from './lib/demcache'
 import { biomeOf, ensureKoppen, fetchNormals, profileFor, type Biome } from './lib/climate'
@@ -32,6 +38,12 @@ export interface Settings {
   exaggeration: number
   detail: number
   textureMode: TextureMode
+  /** Extra zoom levels the close-up satellite patch may fetch past the base drape. */
+  satPatchBoost: number
+  /** Scroll-wheel dolly rate. OrbitControls steps ~4.6% of the eye distance per
+   * notch at 1.0, which reads as barely moving after descending close to the
+   * ground — the step is proportional to a now-tiny distance. */
+  zoomSpeed: number
   sunAzimuth: number
   sunElevation: number
   haze: number
@@ -122,8 +134,19 @@ export interface Settings {
   roadVerge: number
   /** Longest side of the road mask, in pixels. */
   roadResolution: number
+  /**
+   * Narrowest a road is drawn, in mask pixels — the legibility floor.
+   *
+   * Every printed map widens roads past true scale once they stop being resolvable;
+   * this is how far past. The width slider scales truth, this one guarantees
+   * visibility, and they earn separate controls because pushing width to make small
+   * roads visible makes the motorways cartoonish first.
+   */
+  roadFloor: number
   /** How dark a metalled surface reads against the ground. */
   roadDarkness: number
+  /** How brightly the cleared band lifts against the ground, so the surface reads. */
+  roadShoulder: number
   /** How strongly the corridor suppresses timber. Biome-owned. */
   roadClearing: number
   /** How far the surface takes the local ground colour rather than asphalt. Biome-owned. */
@@ -188,6 +211,11 @@ export const DEFAULT_SETTINGS: Settings = {
   exaggeration: 1.6,
   detail: 768,
   textureMode: 'procedural',
+  // 4 = the rings may reach Esri's deepest zoom (19, ~0.3 m/px). The ring budget
+  // already stops them fetching sharper than the screen can show, so the ceiling
+  // only ever bites at close range — exactly where capping it reads as mush.
+  satPatchBoost: 4,
+  zoomSpeed: 2,
   // The default camera sits to the south-east, so a north-east sun rakes across the
   // relief instead of flattening it from behind the viewer.
   sunAzimuth: 70,
@@ -240,7 +268,12 @@ export const DEFAULT_SETTINGS: Settings = {
   roadWidth: 1,
   roadVerge: 3,
   roadResolution: 2048,
+  // 2.4 rather than the bare minimum: at one-and-a-bit pixels a road is technically
+  // present and practically invisible, which is exactly the complaint that made this
+  // a setting.
+  roadFloor: 2.4,
   roadDarkness: 0.55,
+  roadShoulder: 0.3,
   // Kept identical to BASE in climate.ts, for the same reason as the block above: these
   // are the values in force for the moment before a class is known.
   roadClearing: 0.6,
@@ -327,6 +360,27 @@ interface State {
   imageryZoom: number
   /** True while satellite tiles are in flight, so the layer button can say so. */
   imageryLoading: boolean
+  /**
+   * The imagery clipmap: up to four nested close-up levels centred where the camera
+   * looks, index 0 the sharpest and smallest. Entries are null until their fetch
+   * lands; the shader falls through missing levels to the next ring out and finally
+   * the base drape, so partial states render correctly by construction.
+   */
+  satRings: Array<{
+    canvas: HTMLCanvasElement
+    /** Terrain-UV rectangle the canvas covers: x0, y0 north-west; x1, y1 south-east. */
+    rect: [number, number, number, number]
+    zoom: number
+    /**
+     * Bumped each time more tiles have been drawn into the same canvas. The
+     * canvas is the texture's identity — stable across a whole fetch so the
+     * engine's fade never restarts mid-sharpen — and the version is what tells
+     * the renderer the pixels under that identity changed and need re-upload.
+     */
+    version: number
+  } | null>
+  /** A bulk imagery prefetch in progress, for the panel to show. Null when idle. */
+  prefetch: { done: number; total: number; toZoom: number } | null
   /** RGBA water mask from the hydrology pass: coverage, lake flag, log drainage. */
   waterMask: THREE.DataTexture | null
   waterStats: {
@@ -437,11 +491,48 @@ interface State {
   generate: () => Promise<void>
   generateDemo: () => Promise<void>
   loadImagery: () => Promise<void>
+  /**
+   * Fetch one clipmap ring for the sub-box the camera is over. The viewer decides
+   * when, where and how sharp; this only fetches, clamps and holds. Ring fetches are
+   * independent — the inner ring re-centres often, the outer rarely — so each index
+   * carries its own abort.
+   */
+  loadSatRing: (index: number, sub: Bounds, maxZoom: number, attempt?: number) => Promise<void>
+  /** Drop every ring — leaving satellite mode, or the box changing under them. */
+  clearSatRings: () => void
+  /**
+   * Warm the imagery tile cache for the whole box down to `toZoom`. User-initiated
+   * only — the caller shows the cost first — cancellable, and free to re-run: cached
+   * tiles are skipped, so a cancelled prefetch resumes where it stopped.
+   */
+  startPrefetch: (toZoom: number) => Promise<void>
+  cancelPrefetch: () => void
   /** Fetch (or recall) the road network for the built area. Safe to call repeatedly. */
   loadRoads: () => Promise<void>
 }
 
 let inflight: AbortController | null = null
+/** The road/area fetch in flight, aborted by clearRoads when the box changes. */
+let roadsAbort: AbortController | null = null
+/** The per-ring close-up fetches in flight — the camera moving on aborts them. */
+const satRingAborts: Array<AbortController | null> = [null, null, null, null]
+/**
+ * Each ring slot's one persistent canvas, drawn into for the life of the session.
+ * Reuse is what keeps continuous refetching affordable: the renderer keys texture
+ * identity on the canvas, so re-centres re-upload pixels into the same GPU texture
+ * instead of allocating a new multi-megabyte one and disposing the old — a churn
+ * that measurably grinds the driver down mid-gesture.
+ */
+const satRingCanvases: Array<HTMLCanvasElement | null> = [null, null, null, null]
+/**
+ * Globally monotonic ring version. Per-fetch counters would restart at zero and
+ * collide with the previous fetch's zero — the renderer would see an unchanged
+ * version on the same canvas, skip the re-upload, and display the old pixels
+ * under the new rectangle: imagery from somewhere else entirely.
+ */
+let satRingVersion = 0
+/** The bulk imagery prefetch in flight. */
+let prefetchAbort: AbortController | null = null
 
 let hydroWorker: Worker | null = null
 
@@ -467,6 +558,8 @@ const PERSISTED_SETTINGS = [
   'exaggeration',
   'detail',
   'textureMode',
+  'satPatchBoost',
+  'zoomSpeed',
   'sunAzimuth',
   'sunElevation',
   'haze',
@@ -500,7 +593,9 @@ const PERSISTED_SETTINGS = [
   'roadWidth',
   'roadVerge',
   'roadResolution',
+  'roadFloor',
   'roadDarkness',
+  'roadShoulder',
   'roadClearing',
   'roadTint',
   'showOsmWater',
@@ -830,6 +925,7 @@ export const useStore = create<State>((setState, getState) => {
       resolution: settings.roadResolution,
       widthScale: settings.roadWidth,
       vergeScale: settings.roadVerge,
+      minPixels: settings.roadFloor,
       classes: settings.roadClasses,
     }
 
@@ -905,6 +1001,29 @@ export const useStore = create<State>((setState, getState) => {
     })
   }
 
+  /**
+   * Progress text, throttled — and the throttle is load-bearing, not cosmetic.
+   *
+   * React 19 re-renders external-store subscribers synchronously, and any update that
+   * arrives while the previous flush is still running counts toward its nested-update
+   * limit of 50. A tile fetch that completes as one microtask burst — everything
+   * cached, or a fast proxy answering together — can fire every per-tile callback
+   * back-to-back: 72 satellite tiles, or 165 elevation tiles, each calling setState.
+   * That threw "Maximum update depth exceeded" out of the *store*, surfaced through
+   * whatever fetch was in flight, and read as a network failure. The road tiles never
+   * tripped it only because their count sits under the limit.
+   *
+   * One message every ~120 ms is also all a human can read. The final state is not
+   * throttled away: every load path ends by setting its own completion message.
+   */
+  let lastNoteAt = 0
+  function noteProgress(note: string): void {
+    const now = performance.now()
+    if (now - lastNoteAt < 120) return
+    lastNoteAt = now
+    setState({ message: note })
+  }
+
   let roadTimer: ReturnType<typeof setTimeout> | null = null
   function scheduleRoadMask(): void {
     if (roadTimer !== null) clearTimeout(roadTimer)
@@ -916,6 +1035,16 @@ export const useStore = create<State>((setState, getState) => {
 
   /** Drop the OSM data and its masks — called whenever the area changes under us. */
   function clearRoads(): void {
+    // A fetch for the old box must not keep running under the new one. This was the
+    // Overpass path's quiet self-competition bug — an orphaned request holding one of
+    // the per-IP queue slots against its own successor. Tiles have no slots, but an
+    // orphan still burns bandwidth and can land its stale result after the fresh one.
+    roadsAbort?.abort()
+    roadsAbort = null
+    // The bulk prefetch dies with the box too — it was warming tiles for ground the
+    // app is about to leave. What it already cached stays cached.
+    prefetchAbort?.abort()
+    prefetchAbort = null
     getState().roadMask?.dispose()
     getState().areaMask?.dispose()
     // A new box means new data, so the worker's held copy and its projected geometry
@@ -1030,6 +1159,8 @@ export const useStore = create<State>((setState, getState) => {
   build: null,
   imagery: null,
   imageryZoom: 0,
+  satRings: [null, null, null, null],
+  prefetch: null,
   imageryLoading: false,
   waterMask: null,
   waterStats: null,
@@ -1104,7 +1235,7 @@ export const useStore = create<State>((setState, getState) => {
     if (key === 'exaggeration' || key === 'detail') scheduleRebuild()
     if (key in DEFAULT_TUNING) scheduleWater()
     // Painting decisions, not data ones — redraw the mask, never re-request it.
-    if (key === 'roadWidth' || key === 'roadVerge' || key === 'roadResolution') {
+    if (key === 'roadWidth' || key === 'roadVerge' || key === 'roadResolution' || key === 'roadFloor') {
       scheduleRoadMask()
     }
     // Checking the layer is what asks for the data, the same way switching to satellite
@@ -1277,7 +1408,7 @@ export const useStore = create<State>((setState, getState) => {
         () => {
           fromCache = true
         },
-        (done, total) => setState({ message: `Elevation tiles ${done}/${total}…` }),
+        (done, total) => noteProgress(`Elevation tiles ${done}/${total}…`),
       )
       if (signal.aborted) return
       await finishBuild(heightField, signal, fromCache)
@@ -1328,7 +1459,7 @@ export const useStore = create<State>((setState, getState) => {
     try {
       setState({ imageryLoading: true, message: 'Fetching satellite imagery…' })
       const result = await fetchImagery(heightField.bounds, (done, total) => {
-        setState({ message: `Satellite tiles ${done}/${total}…` })
+        noteProgress(`Satellite tiles ${done}/${total}…`)
       })
       setState({
         imagery: result.canvas,
@@ -1336,13 +1467,219 @@ export const useStore = create<State>((setState, getState) => {
         imageryLoading: false,
         message: '',
       })
-    } catch {
+    } catch (err) {
+      // An abort is the caller's doing, not a failure to report.
+      if ((err as Error)?.name === 'AbortError') {
+        setState({ imageryLoading: false, message: '' })
+        return
+      }
+      // The reason travels. The old blanket message turned every transient hiccup
+      // into "unavailable for this area", which reads as a fact about the place and
+      // sent the debugging at the wrong target entirely.
+      //
+      // The full stack is stashed as well: the recurring failure here is a React
+      // "maximum update depth" throw that surfaces through this catch and nowhere
+      // else — no console.error, no window error event — so this is the only place
+      // its stack can be captured at all.
+      try {
+        localStorage.setItem(
+          'gw.imageryError',
+          JSON.stringify({
+            at: Date.now(),
+            message: err instanceof Error ? err.message : String(err),
+            stack: err instanceof Error ? err.stack : null,
+          }),
+        )
+      } catch {
+        /* diagnostics must never break the failure path they observe */
+      }
       setState({
         imageryLoading: false,
         message: '',
-        error: 'Satellite imagery unavailable for this area.',
+        error: `Satellite imagery failed (${err instanceof Error ? err.message : String(err)}) — click Satellite to retry.`,
       })
     }
+  },
+
+  loadSatRing: async (index: number, sub: Bounds, maxZoom: number, attempt = 0): Promise<void> => {
+    if (index < 0 || index > 3) return
+    // The camera moved on; whatever this ring was fetching is for somewhere it no
+    // longer is. Other rings keep their fetches — they cover different ground.
+    satRingAborts[index]?.abort()
+
+    const { heightField, imagery, settings } = getState()
+    if (!heightField || !imagery || settings.textureMode !== 'satellite') return
+    if (settings.satPatchBoost <= 0) return
+
+    // Clamp to the box — a ring that pokes past the terrain has nothing to sit on.
+    const b = heightField.bounds
+    const s: Bounds = {
+      south: Math.max(sub.south, b.south),
+      north: Math.min(sub.north, b.north),
+      west: Math.max(sub.west, b.west),
+      east: Math.min(sub.east, b.east),
+    }
+    if (s.north <= s.south || s.east <= s.west) return
+
+    // No sharper than the base drape? Then this ring adds nothing but a seam —
+    // and a seam is exactly what it would show: Esri's captures differ between
+    // zoom levels, so a leftover patch reads as a mismatched square on the base.
+    // Drop whatever the slot held; at this height the base IS the uniform view.
+    const zoom = ringZoomFor(s, Math.min(maxZoom, MAX_IMAGERY_ZOOM))
+    if (zoom <= getState().imageryZoom) {
+      const rings = getState().satRings
+      if (rings[index]) {
+        const next = rings.slice()
+        next[index] = null
+        setState({ satRings: next })
+      }
+      return
+    }
+
+    const lonSpan = b.east - b.west
+    const latSpan = b.north - b.south
+    const rect: [number, number, number, number] = [
+      (s.west - b.west) / lonSpan,
+      (b.north - s.north) / latSpan,
+      (s.east - b.west) / lonSpan,
+      (b.north - s.south) / latSpan,
+    ]
+
+    const ctrl = new AbortController()
+    satRingAborts[index] = ctrl
+
+    // The slot's one persistent canvas — created once, redrawn forever after.
+    const ringCanvas = satRingCanvases[index] ?? document.createElement('canvas')
+    satRingCanvases[index] = ringCanvas
+
+    // Published the moment it is seeded and re-published as tiles sharpen it.
+    // Flushes are throttled because each one is a full-canvas GPU re-upload;
+    // the trailing flush after the await catches whatever landed since.
+    let lastFlush = 0
+    const flush = () => {
+      if (ctrl.signal.aborted) return
+      const rings = getState().satRings.slice()
+      rings[index] = { canvas: ringCanvas, rect, zoom, version: ++satRingVersion }
+      setState({ satRings: rings })
+    }
+
+    try {
+      const result = await fetchImageryProgressive(s, {
+        maxZoom: Math.min(maxZoom, MAX_IMAGERY_ZOOM),
+        signal: ctrl.signal,
+        canvas: ringCanvas,
+        seed: (canvas) => {
+          // Seed from the BASE DRAPE ONLY. The base is immutable for the life of
+          // a build and proven-registered, so the canvas after seeding is a pure
+          // function of (base + this fetch's tiles) — one geometry, always.
+          // Seeding from sibling rings or this ring's own previous pixels was
+          // sharper for a moment, but it made every seed a copy of mutable
+          // shared state: one transiently inconsistent ring and the corruption
+          // propagated through every later seed, sticking until a mode switch
+          // cleared all rings. A brief soft blip on re-key (cached tiles re-land
+          // in a beat) is the price of making that class of bug impossible.
+          const ctx = canvas.getContext('2d')!
+          const { imagery } = getState()
+          if (imagery) {
+            ctx.drawImage(
+              imagery,
+              rect[0] * imagery.width,
+              rect[1] * imagery.height,
+              (rect[2] - rect[0]) * imagery.width,
+              (rect[3] - rect[1]) * imagery.height,
+              0,
+              0,
+              canvas.width,
+              canvas.height,
+            )
+          } else {
+            ctx.fillStyle = '#3c4a3a'
+            ctx.fillRect(0, 0, canvas.width, canvas.height)
+          }
+          lastFlush = performance.now()
+          flush()
+        },
+        onTile: () => {
+          const now = performance.now()
+          if (now - lastFlush >= 180) {
+            lastFlush = now
+            flush()
+          }
+        },
+      })
+      flush()
+      // A fetch that came home with tiles missing leaves base-soft patches in an
+      // otherwise sharp ring — read as the imagery being wrong, because visually
+      // it is. The watcher marked this key satisfied when the fetch STARTED, so
+      // nothing would ever repair it. One delayed retry covers the transient
+      // failures; tiles that are genuinely absent upstream just miss again
+      // quietly and the base-seeded ground (correctly placed, merely soft)
+      // remains.
+      if (
+        attempt === 0 &&
+        !ctrl.signal.aborted &&
+        result.tilesTotal > 0 &&
+        result.tilesLoaded < result.tilesTotal
+      ) {
+        setTimeout(() => {
+          if (satRingAborts[index] === null && getState().settings.textureMode === 'satellite') {
+            void getState().loadSatRing(index, sub, maxZoom, 1)
+          }
+        }, 1500)
+      }
+    } catch (err) {
+      // A failed close-up is not an error state — the coarser rings and the base
+      // drape are still underneath, and the seeded canvas already published is
+      // coherent imagery, just not yet sharpened.
+      if ((err as Error)?.name !== 'AbortError') console.warn('satellite close-up failed', err)
+    } finally {
+      if (satRingAborts[index] === ctrl) satRingAborts[index] = null
+    }
+  },
+
+  clearSatRings: (): void => {
+    for (let k = 0; k < satRingAborts.length; k++) {
+      satRingAborts[k]?.abort()
+      satRingAborts[k] = null
+    }
+    const { satRings } = getState()
+    if (satRings.some((r) => r !== null)) setState({ satRings: [null, null, null, null] })
+  },
+
+  startPrefetch: async (toZoom: number): Promise<void> => {
+    const { heightField, prefetch } = getState()
+    if (!heightField || prefetch) return
+
+    prefetchAbort?.abort()
+    const ctrl = new AbortController()
+    prefetchAbort = ctrl
+    const bounds = heightField.bounds
+    setState({ prefetch: { done: 0, total: 0, toZoom } })
+    try {
+      await prefetchImagery(
+        bounds,
+        toZoom,
+        (done, total) => {
+          // Throttled the same way the loaders' messages are, and for the same
+          // reason — thousands of cached tiles resolve as one microtask burst.
+          if (done % 16 === 0 || done === total) setState({ prefetch: { done, total, toZoom } })
+        },
+        ctrl.signal,
+      )
+    } catch (err) {
+      if ((err as Error)?.name !== 'AbortError') console.warn('imagery prefetch failed', err)
+    } finally {
+      if (prefetchAbort === ctrl) prefetchAbort = null
+      // Cleared even on failure or cancel: the panel shows progress only while work
+      // is genuinely happening, and a cancelled prefetch kept everything it landed.
+      if (getState().prefetch?.toZoom === toZoom) setState({ prefetch: null })
+    }
+  },
+
+  cancelPrefetch: (): void => {
+    prefetchAbort?.abort()
+    prefetchAbort = null
+    setState({ prefetch: null })
   },
 
   loadRoads: async (): Promise<void> => {
@@ -1365,8 +1702,12 @@ export const useStore = create<State>((setState, getState) => {
     }
 
     try {
-      const network = await fetchOsm(bounds, undefined, (note) => setState({ message: note }))
-      // The area may have been rebuilt while Overpass was thinking.
+      roadsAbort = new AbortController()
+      // Throttled for the same reason as the other tile fetches: a fully-cached box
+      // answers as one microtask burst, and MAX_TILES is 64 against React's nested
+      // limit of 50 — this path was one budget tweak from the same crash.
+      const network = await fetchOsmTiles(bounds, roadsAbort.signal, noteProgress)
+      // The area may have been rebuilt while the tiles were coming down.
       if (getState().heightField?.bounds !== bounds) return
 
       void roadCachePut(network)

@@ -62,6 +62,8 @@ export interface SurfaceConfig {
   roadDarkness: number
   roadClearing: number
   roadTint: number
+  /** How brightly the verge band lifts against the ground, so the dark surface reads. */
+  roadShoulder: number
 
   /** Already zeroed by the caller when the layer is switched off. */
   osmWater: number
@@ -82,9 +84,24 @@ export interface SurfaceConfig {
  * and the shader is written to fall through to its procedural path for any of these
  * that is absent.
  */
+/** One level of the imagery clipmap: a texture and the terrain-UV rectangle it covers. */
+export interface ImageryRing {
+  texture: THREE.Texture
+  /** x0, y0 = north-west corner; x1, y1 = south-east, in terrain UV space. */
+  rect: readonly [number, number, number, number]
+}
+
 export interface SurfaceLayers {
   /** Satellite or aerial imagery draped on the surface. */
   imagery?: THREE.Texture | null
+  /**
+   * The imagery clipmap: up to four nested close-up rings, index 0 sharpest and
+   * smallest. The shader samples coarse to fine so each fragment takes the sharpest
+   * ring covering it, and the surface fades each ring in as it (re)arrives — the
+   * swap eases rather than pops. Missing entries (null, or a short array) simply
+   * fall through to the next ring out, and ultimately to the base drape.
+   */
+  imageryRings?: ReadonlyArray<ImageryRing | null> | null
   /** RGBA hydrology field: coverage, lake flag, log drainage. */
   water?: THREE.Texture | null
   /** RGBA climate field: aridity, riparian, ground warmth, tree cover. */
@@ -119,6 +136,18 @@ export class TerrainSurface {
       uSatMap: { value: BLANK },
       uUseSat: { value: 0 },
       uSatDetail: { value: 1 },
+      uSatRing0Map: { value: BLANK },
+      uSatRing0Rect: { value: new THREE.Vector4(0, 0, 1, 1) },
+      uSatRing0Fade: { value: 0 },
+      uSatRing1Map: { value: BLANK },
+      uSatRing1Rect: { value: new THREE.Vector4(0, 0, 1, 1) },
+      uSatRing1Fade: { value: 0 },
+      uSatRing2Map: { value: BLANK },
+      uSatRing2Rect: { value: new THREE.Vector4(0, 0, 1, 1) },
+      uSatRing2Fade: { value: 0 },
+      uSatRing3Map: { value: BLANK },
+      uSatRing3Rect: { value: new THREE.Vector4(0, 0, 1, 1) },
+      uSatRing3Fade: { value: 0 },
       uWaterMap: { value: BLANK },
       uHasWater: { value: 0 },
       uRivers: { value: 0 },
@@ -166,6 +195,7 @@ export class TerrainSurface {
       uRoadDarkness: { value: 0 },
       uRoadClearing: { value: 0 },
       uRoadTint: { value: 0 },
+      uRoadShoulder: { value: 0 },
       uAreaMap: { value: BLANK },
       uHasAreas: { value: 0 },
       uOsmWater: { value: 0 },
@@ -214,9 +244,36 @@ export class TerrainSurface {
     ;(u.uGroundTint!.value as THREE.Color).copy(sky.groundTint)
   }
 
+  /**
+   * Per-ring fade state. Each ring eases toward its target — 1 while the layer set
+   * carries it, 0 after it is withdrawn — and a changed texture restarts its ramp
+   * from zero so a re-centred ring eases in over what it replaces instead of
+   * popping. A withdrawn ring keeps its texture bound until the ease-out finishes;
+   * releasing it immediately would blink the imagery off a frame early.
+   */
+  private readonly ringFade = [0, 0, 0, 0]
+  private readonly ringTarget = [0, 0, 0, 0]
+  private readonly ringPrev: Array<THREE.Texture | null> = [null, null, null, null]
+
   setLayers(layers: SurfaceLayers): void {
     const u = this.uniforms
     u.uSatMap!.value = layers.imagery ?? BLANK
+
+    for (let k = 0; k < 4; k++) {
+      const ring = layers.imageryRings?.[k] ?? null
+      if (!ring) {
+        this.ringTarget[k] = 0
+        continue
+      }
+      if (ring.texture !== this.ringPrev[k]) {
+        this.ringPrev[k] = ring.texture
+        this.ringFade[k] = 0
+      }
+      this.ringTarget[k] = 1
+      u[`uSatRing${k}Map`]!.value = ring.texture
+      const [x0, y0, x1, y1] = ring.rect
+      ;(u[`uSatRing${k}Rect`]!.value as THREE.Vector4).set(x0, y0, x1, y1)
+    }
     u.uWaterMap!.value = layers.water ?? BLANK
     u.uHasWater!.value = layers.water ? 1 : 0
     u.uBiomeMap!.value = layers.biome ?? BLANK
@@ -280,6 +337,7 @@ export class TerrainSurface {
     u.uRoadDarkness!.value = c.roadDarkness
     u.uRoadClearing!.value = c.roadClearing
     u.uRoadTint!.value = c.roadTint
+    u.uRoadShoulder!.value = c.roadShoulder
     u.uOsmWater!.value = c.osmWater
     u.uOsmWood!.value = c.osmWood
     u.uOsmBuilt!.value = c.osmBuilt
@@ -298,6 +356,22 @@ export class TerrainSurface {
   /** Advance animated uniforms. Call once a frame, before the host renders. */
   update(dt: number): void {
     this.uniforms.uTime!.value = (this.uniforms.uTime!.value as number) + dt
+
+    // Ring fades: ~180 ms in, a little quicker out. The ramp lives here rather than
+    // in the host because it is presentation, not state — hosts say which rings
+    // exist, the surface makes their arrival watchable.
+    for (let k = 0; k < 4; k++) {
+      const target = this.ringTarget[k]!
+      const fade = this.ringFade[k]!
+      const next =
+        target > fade ? Math.min(target, fade + dt / 0.18) : Math.max(target, fade - dt / 0.12)
+      this.ringFade[k] = next
+      this.uniforms[`uSatRing${k}Fade`]!.value = next
+      if (next === 0 && target === 0 && this.ringPrev[k]) {
+        this.ringPrev[k] = null
+        this.uniforms[`uSatRing${k}Map`]!.value = BLANK
+      }
+    }
 
     // The very first program compiled for a fresh ShaderMaterial can latch stale
     // uniform locations, freezing whatever was bound at compile time — so force one
