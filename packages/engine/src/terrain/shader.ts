@@ -690,12 +690,12 @@ void main() {
   // The shoulder: the verge band lightened, the way a real roadside reads — mown
   // grass, gravel, dust thrown off the surface. It is what makes the dark carriageway
   // legible from altitude: asphalt on dark ground is a line nobody can see, asphalt
-  // inside a pale band is a road. Kept off the surface itself, faded over imagery
-  // like the roads are, and applied even where the surface contributes nothing yet,
-  // because the band extends past the tarmac by construction.
+  // inside a pale band is a road. Kept off the surface itself, and OFF over imagery
+  // entirely — by the time roads paint, albedo over satellite IS the photograph, which
+  // already contains its real shoulders; brightening a blurred band on top of it just
+  // draws pale worms along every road. (Learned by doing exactly that.)
   if (roadVerge > 0.003) {
-    float shoulderBand = roadVerge * (1.0 - roadSurface) * uRoadShoulder;
-    shoulderBand *= mix(1.0, 0.4, uUseSat);
+    float shoulderBand = roadVerge * (1.0 - roadSurface) * uRoadShoulder * (1.0 - uUseSat);
     albedo = mix(albedo, albedo * 1.45 + soil * 0.10 + vec3(0.008), clamp(shoulderBand, 0.0, 1.0));
   }
 
