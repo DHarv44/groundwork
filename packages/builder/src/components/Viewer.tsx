@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef } from 'react'
 import * as THREE from 'three'
-import { Canvas, useThree } from '@react-three/fiber'
+import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { OrbitControls } from '@react-three/drei'
 import { useStore } from '../store'
 import SkyDome from './SkyDome'
@@ -39,6 +39,109 @@ interface OrbitLike {
   update: () => void
   addEventListener: (type: string, fn: () => void) => void
   removeEventListener: (type: string, fn: () => void) => void
+}
+
+/**
+ * Watches where the camera settles and asks for a sharper satellite patch there.
+ *
+ * The base drape is one bounded texture over the whole box — over 24 m per pixel on a
+ * big box — so zooming the camera in only magnifies it. This drives the close-up:
+ * when the camera has been still for a beat over a small enough footprint, the store
+ * refetches that sub-box at a higher zoom and the shader composites it over the base.
+ *
+ * All the judgement lives here — when the camera counts as settled, how big the
+ * footprint is, when the patch stops being worth having — and none of the fetching:
+ * `loadSatPatch` owns the network, the abort, and the no-sharper-than-base skip.
+ * Frame-driven rather than event-driven so it needs no knowledge of which controls
+ * are moving the camera; walking with FirstPerson earns close-ups the same way
+ * orbiting does.
+ */
+function SatPatchWatcher() {
+  const camera = useThree((s) => s.camera)
+  const controls = useThree((s) => s.controls) as OrbitLike | null
+  const build = useStore((s) => s.build)
+  const heightField = useStore((s) => s.heightField)
+  const textureMode = useStore((s) => s.settings.textureMode)
+  const boost = useStore((s) => s.settings.satPatchBoost)
+  const imagery = useStore((s) => s.imagery)
+  const loadSatPatch = useStore((s) => s.loadSatPatch)
+
+  const lastPos = useRef(new THREE.Vector3(Infinity, Infinity, Infinity))
+  const stillFor = useRef(0)
+  const lastKey = useRef('')
+
+  useFrame((_, dt) => {
+    if (!build || !heightField) return
+
+    const active = textureMode === 'satellite' && !!imagery && boost > 0
+    if (!active) {
+      if (lastKey.current !== '') {
+        lastKey.current = ''
+        void loadSatPatch(null)
+      }
+      return
+    }
+
+    // Settled = the camera has barely moved for a third of a second. Distance alone
+    // is enough: orbiting, panning and walking all move the camera position.
+    const moved = camera.position.distanceToSquared(lastPos.current) > 1
+    lastPos.current.copy(camera.position)
+    if (moved) {
+      stillFor.current = 0
+      return
+    }
+    stillFor.current += dt
+    if (stillFor.current < 0.35) return
+
+    // The footprint: centred on what the camera orbits (or, walking, roughly the
+    // ground underfoot), sized by how far away the camera is. The 0.75 makes the
+    // patch comfortably overfill a 50° view so its feathered edge stays off screen.
+    const target = controls?.target ?? camera.position
+    const dist = Math.max(200, camera.position.distanceTo(target))
+    const half = dist * 0.75
+    const span = Math.min(build.widthMetres, build.depthMetres)
+
+    // Wide out, the base drape is already the best available — carrying a patch
+    // there would just re-render the middle of it through a seam.
+    if (half * 2 > span * 0.6) {
+      if (lastKey.current !== '') {
+        lastKey.current = ''
+        void loadSatPatch(null)
+      }
+      return
+    }
+
+    // World metres → the box's lon/lat. The mesh runs x west→east and z north→south,
+    // both centred on the origin — the same convention every mask projector uses.
+    const b = heightField.bounds
+    const u = target.x / build.widthMetres + 0.5
+    const v = target.z / build.depthMetres + 0.5
+    const lonSpan = b.east - b.west
+    const latSpan = b.north - b.south
+    const cLon = b.west + u * lonSpan
+    const cLat = b.north - v * latSpan
+    const dLon = (half / build.widthMetres) * lonSpan
+    const dLat = (half / build.depthMetres) * latSpan
+
+    // Quantised, so drift of a few metres or a nudge of the wheel does not refetch —
+    // the centre snaps to a fraction of the patch size and the size to powers of two.
+    const key = [
+      Math.round(cLon / (dLon * 0.5)),
+      Math.round(cLat / (dLat * 0.5)),
+      Math.round(Math.log2(half)),
+    ].join('|')
+    if (key === lastKey.current) return
+    lastKey.current = key
+
+    void loadSatPatch({
+      west: cLon - dLon,
+      east: cLon + dLon,
+      south: cLat - dLat,
+      north: cLat + dLat,
+    })
+  })
+
+  return null
 }
 
 /** Positions the camera to frame a freshly built terrain and sets sane clip planes. */
@@ -194,6 +297,7 @@ export default function Viewer() {
           </>
         )}
         <CameraRig size={size} midY={midY} topY={topY} ready={!!build} />
+        <SatPatchWatcher />
         <FirstPerson />
         <HeadingTape target={tapeRef} />
         <OrbitControls

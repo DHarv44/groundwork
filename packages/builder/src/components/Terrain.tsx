@@ -47,6 +47,25 @@ export default function Terrain({ build, sky, fogDensity, snowLine }: Props) {
 
   useEffect(() => () => satTexture?.dispose(), [satTexture])
 
+  // The close-up patch rides the same settings as the base drape — same row order,
+  // same clamping — so the shader can treat the pair as one image at two sharpnesses.
+  const satPatch = useStore((s) => s.satPatch)
+  const patchTexture = useMemo(() => {
+    if (!satPatch) return null
+    const tex = new THREE.CanvasTexture(satPatch.canvas)
+    tex.flipY = false
+    tex.wrapS = THREE.ClampToEdgeWrapping
+    tex.wrapT = THREE.ClampToEdgeWrapping
+    tex.minFilter = THREE.LinearMipmapLinearFilter
+    tex.magFilter = THREE.LinearFilter
+    tex.generateMipmaps = true
+    tex.anisotropy = 16
+    tex.needsUpdate = true
+    return tex
+  }, [satPatch])
+
+  useEffect(() => () => patchTexture?.dispose(), [patchTexture])
+
   // Built once. The surface holds a uniform object that must not be replaced, so the
   // component may re-render freely but the material behind it never gets rebuilt.
   const surface = useMemo(() => new TerrainSurface(build), [])
@@ -61,6 +80,8 @@ export default function Terrain({ build, sky, fogDensity, snowLine }: Props) {
     surface.setSky(sky)
     surface.setLayers({
       imagery: satTexture,
+      imageryPatch: patchTexture,
+      imageryPatchRect: satPatch?.rect ?? null,
       water: waterMask,
       biome: biomeMap,
       road: roadMask,

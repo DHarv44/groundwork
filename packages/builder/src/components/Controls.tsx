@@ -1467,6 +1467,19 @@ export default function Controls() {
               step={0.01}
               onChange={setSetting('aoStrength')}
             />
+            {/* How many zoom levels past the base drape the close-up patch may fetch
+                when the camera settles. 0 turns the mechanism off; each step doubles
+                the ground resolution under the camera. */}
+            <Slider
+              label="Satellite close-up"
+              value={settings.satPatchBoost}
+              min={0}
+              max={4}
+              step={1}
+              suffix=" zooms"
+              decimals={0}
+              onChange={setSetting('satPatchBoost')}
+            />
             <div className="toggles">
               <Toggle
                 label="Cast shadows"
