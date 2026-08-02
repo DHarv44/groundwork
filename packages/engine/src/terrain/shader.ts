@@ -708,15 +708,16 @@ void main() {
       if (in0 > 0.0) sat = mix(sat, srgbToLinear(texture2D(uSatRing0Map, rUv0).rgb), in0);
     }
 
-    // Keep a little procedural grain so close-ups don't turn to mush.
+    // At full opacity the photograph IS the ground: no procedural grain, no
+    // procedural snow — nothing of the modelled terrain shows through. Both
+    // leaks return only as the drape is made translucent, where the procedural
+    // ground is deliberately part of the picture. (The close-up grain was meant
+    // to hide upscaled-imagery mush, but it read as terrain bleeding through
+    // the photo — the wrong trade at 100%.)
     float g = 0.90 + 0.20 * (grain * 0.5 + 0.5) * uSatDetail * (1.0 - smoothstep(600.0, 5000.0, dist));
-    // Opacity blends toward the procedural ground computed above, not toward
-    // black — at half strength the imagery reads as a wash over shaded relief.
-    // Snow suppression eases with it: full imagery already photographs its own
-    // snow, but a translucent drape over procedural ground should keep the
-    // procedural snow underneath.
+    g = mix(g, 1.0, uSatOpacity);
     albedo = mix(albedo, sat * g, uSatOpacity);
-    snow *= mix(1.0, 0.25, uSatOpacity);
+    snow *= 1.0 - uSatOpacity;
 
     // Mapped overlays composite OVER the imagery — the photograph is the ground
     // layer, surveyed data reads on top of it, and roads (drawn further down)
