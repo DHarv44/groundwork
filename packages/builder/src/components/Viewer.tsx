@@ -219,6 +219,10 @@ function CameraRig({
   const camera = useThree((s) => s.camera) as THREE.PerspectiveCamera
   const controls = useThree((s) => s.controls) as OrbitLike | null
   const frameToken = useStore((s) => s.frameToken)
+  const heightField = useStore((s) => s.heightField)
+  const build = useStore((s) => s.build)
+  const exaggeration = useStore((s) => s.settings.exaggeration)
+  const walking = useStore((s) => s.walking)
 
   useEffect(() => {
     // The near plane must not scale with the box: it used to, and on a 500 km box
@@ -229,6 +233,21 @@ function CameraRig({
     camera.far = size * 200
     camera.updateProjectionMatrix()
   }, [camera, size])
+
+  // Terrain collision. OrbitControls' zoom floor measures distance to the orbit
+  // target, and the target lives on an abstract horizontal plane — not on the
+  // ground. Over high terrain a descent can therefore carry the camera straight
+  // through the surface into empty sky-dome blue. The terrain itself is the only
+  // honest floor: sample the height field under the camera every frame and keep
+  // the eye a hover above it. Walking mode manages its own camera and is exempt.
+  useFrame(() => {
+    if (!build || !heightField || walking) return
+    const u = camera.position.x / build.widthMetres + 0.5
+    const v = camera.position.z / build.depthMetres + 0.5
+    if (u < 0 || u > 1 || v < 0 || v > 1) return
+    const floor = sampleBox(heightField, u, v) * exaggeration + 25
+    if (camera.position.y < floor) camera.position.y = floor
+  })
 
   const framedToken = useRef(-1)
   const framedSize = useRef(-1)
@@ -371,7 +390,17 @@ export default function Viewer() {
             orbit target — the mapping-app gesture, and the cure for the crawl out
             of a low hover: pointing at distant ground re-aims the dolly at it, so
             zoom-out speed recovers instead of staying proportional to the last
-            close-up distance. */}
+            close-up distance.
+
+            screenSpacePanning must be off alongside it. With it on (the default),
+            every cursor-zoom re-places the orbit target as "a point N metres in
+            front of the camera" — floating in mid-air — so the minDistance floor
+            triggers against that phantom while the camera is still far above the
+            ground: zoom-in stalls high and no amount of scrolling descends. Off,
+            the target is re-projected onto the horizontal ground plane each zoom,
+            the measured distance is the real one, and the wheel rides down to the
+            actual floor. It also makes drag-panning slide along the ground rather
+            than the screen plane, which is the mapping-app pan. */}
         <OrbitControls
           makeDefault
           enableDamping
@@ -379,6 +408,7 @@ export default function Viewer() {
           rotateSpeed={0.6}
           zoomSpeed={settings.zoomSpeed}
           zoomToCursor
+          screenSpacePanning={false}
           maxPolarAngle={Math.PI * 0.495}
         />
       </Canvas>

@@ -211,7 +211,10 @@ export const DEFAULT_SETTINGS: Settings = {
   exaggeration: 1.6,
   detail: 768,
   textureMode: 'procedural',
-  satPatchBoost: 3,
+  // 4 = the rings may reach Esri's deepest zoom (19, ~0.3 m/px). The ring budget
+  // already stops them fetching sharper than the screen can show, so the ceiling
+  // only ever bites at close range — exactly where capping it reads as mush.
+  satPatchBoost: 4,
   zoomSpeed: 2,
   // The default camera sits to the south-east, so a north-east sun rakes across the
   // relief instead of flattening it from behind the viewer.
