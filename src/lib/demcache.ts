@@ -178,8 +178,13 @@ interface CachedRoads {
  * v3 stitched them into rings correctly but still dropped inner ones, so an island was
  * flooded and a clearing filled in. Those entries hold no hole information at all, which
  * cannot be recovered without asking again.
+ *
+ * v4 asked for no named places. An entry written then comes back with no settlements or
+ * summits, which is indistinguishable from a box that genuinely has none — open ocean
+ * and empty desert are common and correct answers here, so there is nothing in the data
+ * to tell the two apart. Exactly the case this version exists for.
  */
-const OSM_QUERY_VERSION = 4
+const OSM_QUERY_VERSION = 5
 
 /**
  * Keyed on the box alone.

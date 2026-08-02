@@ -169,11 +169,30 @@ Strictly one-directional. Rules that keep it that way:
       constant and its lake flag is a single bit, so three channels — or two — would
       carry the same information. Worth measuring what the hydrology pass actually
       needs before cutting, rather than guessing which channels are load-bearing.
-- [ ] **5c. Named places** — `node["place"~"^(city|town|village|hamlet)$"]` folded into
-      the **existing** single Overpass union query, so it stays one request. The pack
-      already carries the slot and writes it empty. Names are the one thing that cannot
-      be recovered from geometry, and anything built on a pack anchors its
-      human-readable references to them.
+- [x] **5c. Named places** — done. Settlements and named summits are folded into the
+      **existing** union query, so it is still one request. That placement is the whole
+      point: Overpass charges by the request rather than the byte — an IP gets very few
+      query slots and acquiring one means queueing — so a second query for names would
+      have cost as much as everything else put together, while adding two node clauses
+      costs a coordinate pair each against the hundreds in a way.
+
+      A Hawaii box returns 104 places: `city: Hilo (59 m) pop 44186`, villages and
+      hamlets, and 92 peaks up to 4173 m. Names come back correctly encoded, ʻokina and
+      macrons intact.
+
+      Cross-checked rather than eyeballed: Hilo lands at x 0.864, y 0.693, which
+      back-projects to 19.71°N 155.08°W — Hilo's actual position. That confirms the
+      lon/lat → normalised-box transform independently of the format's own round trip.
+
+      `population` and `ele` are parsed defensively. Both are free-text tags and
+      notorious for it — thousands separators, units appended, commas for decimal
+      points — and a bad parse would put a summit at NaN metres and carry it into a
+      pack, so anything that does not read cleanly is dropped rather than guessed at.
+
+      The road cache version went to v5. A v4 entry has no places, which is
+      indistinguishable from a box that genuinely has none — open ocean and empty desert
+      being common, correct answers — so there is nothing in the data to tell the two
+      apart. Exactly what the version is for. It cost three refetches.
 - [ ] **5d. Per-dataset elevation licences.** The pack currently attributes elevation
       as "See the dataset terms at the provider", which is honest but weak. The sources
       behind the DEM list differ — some public domain, some CC BY, some with their own

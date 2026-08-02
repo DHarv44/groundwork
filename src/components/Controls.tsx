@@ -1485,6 +1485,7 @@ export default function Controls() {
                     {s.samples.toLocaleString()} elevation samples
                     {s.roads > 0 ? `, ${s.roads.toLocaleString()} roads` : ''}
                     {s.areas > 0 ? `, ${s.areas.toLocaleString()} mapped areas` : ''}
+                    {s.places > 0 ? `, ${s.places.toLocaleString()} named places` : ''}
                     {s.hasWater ? ', derived hydrology' : ''}. Everything already loaded — writing
                     a pack makes no requests, so whatever is switched off in the layer panel is
                     still written if it has been fetched.

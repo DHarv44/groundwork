@@ -8,6 +8,7 @@ import {
   type PackAttribution,
   type PackArea,
   type PackInputLayer,
+  type PackPlace,
   type PackRoad,
   type PackVectors,
 } from '@groundwork/core'
@@ -50,9 +51,18 @@ function vectorsFrom(osm: OsmData, bounds: Bounds): PackVectors {
     outer: a.outer.map((ring) => toBox(bounds, ring)),
     inner: a.inner.map((ring) => toBox(bounds, ring)),
   }))
-  // Named places are not in the query yet — see the roadmap. The slot exists so a pack
-  // written before they are fetched is still shaped like one written after.
-  return { roads, areas, places: [] }
+  const places: PackPlace[] = (osm.places ?? []).map((p) => {
+    const at = lonLatToBox(bounds, p.lon, p.lat)
+    return {
+      kind: p.kind,
+      name: p.name,
+      x: at.x,
+      y: at.y,
+      ...(p.elevation !== undefined ? { elevation: p.elevation } : {}),
+      ...(p.population !== undefined ? { population: p.population } : {}),
+    }
+  })
+  return { roads, areas, places }
 }
 
 /** The RGBA hydrology field, at whatever resolution the routing pass ran at. */
@@ -110,6 +120,7 @@ export interface PackExportSummary {
   samples: number
   roads: number
   areas: number
+  places: number
   hasWater: boolean
 }
 
@@ -118,6 +129,7 @@ export function summarisePack(input: PackExportInput): PackExportSummary {
     samples: input.heightField.width * input.heightField.height,
     roads: input.osm?.roads.length ?? 0,
     areas: input.osm?.areas.length ?? 0,
+    places: input.osm?.places?.length ?? 0,
     hasWater: !!input.waterMask,
   }
 }

@@ -109,10 +109,30 @@ export interface OsmArea {
   inner: Float64Array[]
 }
 
+/**
+ * A named point — a settlement or a summit.
+ *
+ * Carried because a name is the one thing that cannot be recovered from geometry, and
+ * anything built on this anchors its human-readable references to them. They cost
+ * almost nothing to ask for: a node carries one coordinate pair against the hundreds
+ * in a way, so folding them into the existing query adds a rounding error to the
+ * response and no extra request at all.
+ */
+export interface OsmPlace {
+  kind: 'city' | 'town' | 'village' | 'hamlet' | 'peak'
+  name: string
+  lon: number
+  lat: number
+  /** Metres, from the `ele` tag — summits usually have it, settlements rarely do. */
+  elevation?: number
+  population?: number
+}
+
 export interface OsmData {
   bounds: Bounds
   roads: RoadWay[]
   areas: OsmArea[]
+  places: OsmPlace[]
   /** Road centreline length in km — the readout, and how you tell a city from a moor. */
   lengthKm: number
   /** Which road classes were actually requested. See `classesFor`. */
@@ -202,6 +222,12 @@ function buildQuery(b: Bounds, classes: RoadClass[]): string {
   // that wraps a village, is a multipolygon rather than a closed way, and leaving them
   // out would silently drop exactly the largest features in the box. Route relations on
   // roads carry no geometry of their own and are not wanted.
+  //
+  // The two node clauses are settlements and summits. They belong in *this* query
+  // rather than a second one: Overpass charges by the request — an IP gets very few
+  // query slots and acquiring one means queueing — so a separate request for names
+  // would cost as much as everything above it, while adding them here costs a node's
+  // single coordinate pair against the hundreds in a way.
   return (
     `[out:json][timeout:90];(` +
     `way["highway"~"^(${roads})$"](${bbox});` +
@@ -210,6 +236,8 @@ function buildQuery(b: Bounds, classes: RoadClass[]): string {
     `way["waterway"~"^(riverbank|dock)$"](${bbox});` +
     `relation["natural"~"^(water|wood)$"](${bbox});` +
     `relation["landuse"~"^(${landuse})$"](${bbox});` +
+    `node["place"~"^(city|town|village|hamlet)$"](${bbox});` +
+    `node["natural"="peak"]["name"](${bbox});` +
     `);out geom;`
   )
 }
@@ -220,10 +248,49 @@ interface OverpassGeom {
 }
 
 interface OverpassElement {
-  type: 'way' | 'relation' | string
+  type: 'way' | 'relation' | 'node' | string
   tags?: Record<string, string>
   geometry?: OverpassGeom[]
   members?: Array<{ type: string; role?: string; geometry?: OverpassGeom[] }>
+  /** Nodes carry their coordinate on the element itself rather than in `geometry`. */
+  lat?: number
+  lon?: number
+}
+
+const PLACE_KINDS = new Set(['city', 'town', 'village', 'hamlet'])
+
+/**
+ * Read a number out of a tag, or nothing.
+ *
+ * OpenStreetMap tag values are free text and these two are notorious for it —
+ * `population` arrives with thousands separators, `ele` with units appended or a comma
+ * for the decimal point. A bad parse would put a summit at NaN metres and carry it all
+ * the way into a pack, so anything that does not read cleanly is simply dropped.
+ */
+function numericTag(raw: string | undefined): number | undefined {
+  if (!raw) return undefined
+  const n = Number(raw.replace(/[\s,]/g, '').replace(/[a-z]+$/i, ''))
+  return Number.isFinite(n) ? n : undefined
+}
+
+function placeOf(el: OverpassElement): OsmPlace | null {
+  const tags = el.tags
+  if (!tags?.name || el.lat === undefined || el.lon === undefined) return null
+
+  const kind =
+    tags.natural === 'peak' ? 'peak' : PLACE_KINDS.has(tags.place ?? '') ? tags.place : null
+  if (!kind) return null
+
+  const elevation = numericTag(tags.ele)
+  const population = numericTag(tags.population)
+  return {
+    kind: kind as OsmPlace['kind'],
+    name: tags.name,
+    lon: el.lon,
+    lat: el.lat,
+    ...(elevation !== undefined ? { elevation } : {}),
+    ...(population !== undefined ? { population } : {}),
+  }
 }
 
 function toFlat(geom: OverpassGeom[]): Float64Array {
@@ -420,11 +487,18 @@ export async function fetchOsm(
 
       const roads: RoadWay[] = []
       const areas: OsmArea[] = []
+      const places: OsmPlace[] = []
       let metres = 0
 
       for (const el of json.elements ?? []) {
         const tags = el.tags
         if (!tags) continue
+
+        if (el.type === 'node') {
+          const place = placeOf(el)
+          if (place) places.push(place)
+          continue
+        }
 
         const highway = tags.highway
         if (highway) {
@@ -465,6 +539,7 @@ export async function fetchOsm(
         bounds,
         roads,
         areas,
+        places,
         lengthKm: metres / 1000,
         requested,
         filtered,
