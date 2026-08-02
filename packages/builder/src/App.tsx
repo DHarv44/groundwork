@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import MapPicker from './components/MapPicker'
 import Controls from './components/Controls'
 import Viewer from './components/Viewer'
+import LayersPanel from './components/LayersPanel'
 import { useStore } from './store'
 
 export default function App() {
@@ -91,6 +92,15 @@ export default function App() {
           </div>
         )}
       </main>
+
+      {/* The view's layer switchboard, docked opposite the build panel. Only
+          rendered once there is a terrain — its grid column is `auto`, so with
+          no build the column simply is not there. */}
+      {build && (
+        <aside className="layers-panel">
+          <LayersPanel />
+        </aside>
+      )}
     </div>
     </div>
   )
