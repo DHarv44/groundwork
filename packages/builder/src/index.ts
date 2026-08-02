@@ -23,6 +23,22 @@ export { default as Builder } from './App'
 export type { BuilderConfig, BuilderEndpoints } from './config'
 export { builderConfig, configureBuilder, storageKey } from './config'
 
+/**
+ * The imagery intake, exported for hosts that render their own views of the same
+ * ground — a game's aerial camera wants exactly this: mosaics by bounds and zoom,
+ * cost estimates before bulk pulls, and the shared tile cache underneath (namespaced
+ * by configureBuilder's storagePrefix, endpoints overridable the same way).
+ */
+export type { ImageryResult } from './lib/imagery'
+export {
+  MAX_IMAGERY_ZOOM,
+  baseImageryZoom,
+  estimateImageryPrefetch,
+  fetchImagery,
+  prefetchImagery,
+} from './lib/imagery'
+export { tileCacheStats } from './lib/demcache'
+
 export type { PackExportInput, PackExportSummary } from './lib/packexport'
 export {
   buildPackFrom,

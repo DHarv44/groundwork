@@ -273,6 +273,42 @@ export async function tileCacheGet(key: string): Promise<ArrayBuffer | null> {
   }
 }
 
+/**
+ * What the tile store holds, for showing a person.
+ *
+ * This matters because "cache" is invisible by default and the prefetch can write
+ * hundreds of megabytes: the user deserves to see the number that grew, on the
+ * machine it grew on. Walked with a cursor rather than getAll — thousands of
+ * ArrayBuffers materialised at once is exactly the allocation spike a stats call
+ * must not cause.
+ */
+export async function tileCacheStats(): Promise<{ count: number; megabytes: number }> {
+  try {
+    const db = await openDb()
+    const out = await new Promise<{ count: number; megabytes: number }>((resolve, reject) => {
+      const tx = db.transaction(TILE_STORE, 'readonly')
+      const req = tx.objectStore(TILE_STORE).openCursor()
+      let count = 0
+      let bytes = 0
+      req.onsuccess = () => {
+        const cursor = req.result
+        if (!cursor) {
+          resolve({ count, megabytes: bytes / 1048576 })
+          return
+        }
+        count++
+        bytes += (cursor.value as { buf: ArrayBuffer }).buf.byteLength
+        cursor.continue()
+      }
+      req.onerror = () => reject(req.error)
+    })
+    db.close()
+    return out
+  } catch {
+    return { count: 0, megabytes: 0 }
+  }
+}
+
 export async function tileCachePut(key: string, buf: ArrayBuffer): Promise<void> {
   try {
     const db = await openDb()

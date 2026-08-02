@@ -8,7 +8,7 @@ import type { Bounds } from './lib/geo'
 import { DEFAULT_BOUNDS, boundsAreaKm2, climaticSnowLine, climaticTreeLine } from './lib/geo'
 import type { HeightField } from './lib/opentopo'
 import { DEM_SOURCES, fetchHeightField, validateRequest } from './lib/opentopo'
-import { MAX_IMAGERY_ZOOM, fetchImagery } from './lib/imagery'
+import { MAX_IMAGERY_ZOOM, fetchImagery, prefetchImagery } from './lib/imagery'
 import {
   NoRoadDataError,
   DEFAULT_ROAD_CLASSES,
@@ -358,6 +358,8 @@ interface State {
     rect: [number, number, number, number]
     zoom: number
   } | null>
+  /** A bulk imagery prefetch in progress, for the panel to show. Null when idle. */
+  prefetch: { done: number; total: number; toZoom: number } | null
   /** RGBA water mask from the hydrology pass: coverage, lake flag, log drainage. */
   waterMask: THREE.DataTexture | null
   waterStats: {
@@ -477,6 +479,13 @@ interface State {
   loadSatRing: (index: number, sub: Bounds, maxZoom: number) => Promise<void>
   /** Drop every ring — leaving satellite mode, or the box changing under them. */
   clearSatRings: () => void
+  /**
+   * Warm the imagery tile cache for the whole box down to `toZoom`. User-initiated
+   * only — the caller shows the cost first — cancellable, and free to re-run: cached
+   * tiles are skipped, so a cancelled prefetch resumes where it stopped.
+   */
+  startPrefetch: (toZoom: number) => Promise<void>
+  cancelPrefetch: () => void
   /** Fetch (or recall) the road network for the built area. Safe to call repeatedly. */
   loadRoads: () => Promise<void>
 }
@@ -486,6 +495,8 @@ let inflight: AbortController | null = null
 let roadsAbort: AbortController | null = null
 /** The per-ring close-up fetches in flight — the camera moving on aborts them. */
 const satRingAborts: Array<AbortController | null> = [null, null, null, null]
+/** The bulk imagery prefetch in flight. */
+let prefetchAbort: AbortController | null = null
 
 let hydroWorker: Worker | null = null
 
@@ -993,6 +1004,10 @@ export const useStore = create<State>((setState, getState) => {
     // orphan still burns bandwidth and can land its stale result after the fresh one.
     roadsAbort?.abort()
     roadsAbort = null
+    // The bulk prefetch dies with the box too — it was warming tiles for ground the
+    // app is about to leave. What it already cached stays cached.
+    prefetchAbort?.abort()
+    prefetchAbort = null
     getState().roadMask?.dispose()
     getState().areaMask?.dispose()
     // A new box means new data, so the worker's held copy and its projected geometry
@@ -1108,6 +1123,7 @@ export const useStore = create<State>((setState, getState) => {
   imagery: null,
   imageryZoom: 0,
   satRings: [null, null, null, null],
+  prefetch: null,
   imageryLoading: false,
   waterMask: null,
   waterStats: null,
@@ -1508,6 +1524,42 @@ export const useStore = create<State>((setState, getState) => {
     }
     const { satRings } = getState()
     if (satRings.some((r) => r !== null)) setState({ satRings: [null, null, null, null] })
+  },
+
+  startPrefetch: async (toZoom: number): Promise<void> => {
+    const { heightField, prefetch } = getState()
+    if (!heightField || prefetch) return
+
+    prefetchAbort?.abort()
+    const ctrl = new AbortController()
+    prefetchAbort = ctrl
+    const bounds = heightField.bounds
+    setState({ prefetch: { done: 0, total: 0, toZoom } })
+    try {
+      await prefetchImagery(
+        bounds,
+        toZoom,
+        (done, total) => {
+          // Throttled the same way the loaders' messages are, and for the same
+          // reason — thousands of cached tiles resolve as one microtask burst.
+          if (done % 16 === 0 || done === total) setState({ prefetch: { done, total, toZoom } })
+        },
+        ctrl.signal,
+      )
+    } catch (err) {
+      if ((err as Error)?.name !== 'AbortError') console.warn('imagery prefetch failed', err)
+    } finally {
+      if (prefetchAbort === ctrl) prefetchAbort = null
+      // Cleared even on failure or cancel: the panel shows progress only while work
+      // is genuinely happening, and a cancelled prefetch kept everything it landed.
+      if (getState().prefetch?.toZoom === toZoom) setState({ prefetch: null })
+    }
+  },
+
+  cancelPrefetch: (): void => {
+    prefetchAbort?.abort()
+    prefetchAbort = null
+    setState({ prefetch: null })
   },
 
   loadRoads: async (): Promise<void> => {

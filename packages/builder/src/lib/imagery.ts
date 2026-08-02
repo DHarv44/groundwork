@@ -18,26 +18,24 @@ function tileUrl(z: number, x: number, y: number): string {
 }
 
 /**
- * One imagery tile: cache, else network.
+ * One imagery tile as bytes: cache, else network.
  *
- * Fetched as bytes rather than through an Image element, for three things the element
+ * Fetched rather than loaded through an Image element, for three things the element
  * cannot do: abort (the camera moves on, the request should too), caching (the bytes
  * go into the same IndexedDB store the vector tiles use, under an `i/` prefix), and
- * an error that says what happened. Failures resolve null and the mosaic keeps its
- * ground-coloured fill — one missing tile is a blemish, not a failure.
+ * an error that says what happened. Zero-byte cache entries record a tile the server
+ * does not have, so the nothing is remembered instead of refetched.
  */
-async function loadTile(
+async function fetchTileBytes(
   z: number,
   x: number,
   y: number,
   signal?: AbortSignal,
-): Promise<ImageBitmap | null> {
+): Promise<ArrayBuffer | null> {
   const key = `i/${z}/${x}/${y}`
   try {
     const cached = await tileCacheGet(key)
-    if (cached) {
-      return cached.byteLength > 0 ? await createImageBitmap(new Blob([cached])) : null
-    }
+    if (cached) return cached.byteLength > 0 ? cached : null
     const res = await fetch(tileUrl(z, x, y), { signal })
     if (!res.ok) {
       if (res.status === 404) void tileCachePut(key, new ArrayBuffer(0))
@@ -45,9 +43,25 @@ async function loadTile(
     }
     const buf = await res.arrayBuffer()
     void tileCachePut(key, buf)
-    return await createImageBitmap(new Blob([buf]))
+    return buf
   } catch (err) {
     if ((err as Error)?.name === 'AbortError') throw err
+    return null
+  }
+}
+
+/** A tile decoded for drawing. Failures resolve null — one missing tile is a blemish. */
+async function loadTile(
+  z: number,
+  x: number,
+  y: number,
+  signal?: AbortSignal,
+): Promise<ImageBitmap | null> {
+  const buf = await fetchTileBytes(z, x, y, signal)
+  if (!buf) return null
+  try {
+    return await createImageBitmap(new Blob([buf]))
+  } catch {
     return null
   }
 }
@@ -67,6 +81,80 @@ export interface ImageryResult {
   zoom: number
   tilesLoaded: number
   tilesTotal: number
+}
+
+/** Tile count for one zoom level over a box. */
+function tilesAt(b: Bounds, z: number): number {
+  const nx = Math.floor(lonToTileX(b.east, z)) - Math.floor(lonToTileX(b.west, z)) + 1
+  const ny = Math.floor(latToTileY(b.south, z)) - Math.floor(latToTileY(b.north, z)) + 1
+  return nx * ny
+}
+
+/** The zoom the base drape would use for this box — where a prefetch starts counting. */
+export function baseImageryZoom(b: Bounds): number {
+  return chooseZoom(b, MAX_IMAGERY_ZOOM)
+}
+
+/**
+ * What prefetching a box down to `toZoom` would cost, before anyone commits to it.
+ *
+ * The honest bill is the point: tile pyramids quadruple per level, and the difference
+ * between "two minutes" and "an afternoon" is invisible until it is computed. Sizes
+ * use a measured ~25 KB average per imagery tile.
+ */
+export function estimateImageryPrefetch(
+  b: Bounds,
+  toZoom: number,
+): { tiles: number; megabytes: number } {
+  let tiles = 0
+  for (let z = baseImageryZoom(b) + 1; z <= Math.min(toZoom, MAX_IMAGERY_ZOOM); z++) {
+    tiles += tilesAt(b, z)
+  }
+  return { tiles, megabytes: (tiles * 25) / 1024 }
+}
+
+/**
+ * Warm the tile cache for the whole box down to `toZoom`.
+ *
+ * Fetches bytes only — no decode, no mosaic — into the same IndexedDB store every
+ * live fetch reads, so afterwards ring and base loads anywhere in the box run the
+ * warm path. Already-cached tiles are skipped, which makes cancelling free: whatever
+ * landed stays landed, and running the same prefetch again resumes where it stopped.
+ *
+ * Deliberately gentler than the live path (six concurrent, coarse zooms first): this
+ * is a bulk pull from someone else's tile service, initiated by a person who was
+ * shown the bill — the least we owe back is not arriving like a scraper.
+ */
+export async function prefetchImagery(
+  b: Bounds,
+  toZoom: number,
+  onProgress?: (done: number, total: number) => void,
+  signal?: AbortSignal,
+): Promise<{ fetched: number; total: number }> {
+  const wanted: Array<{ z: number; x: number; y: number }> = []
+  for (let z = baseImageryZoom(b) + 1; z <= Math.min(toZoom, MAX_IMAGERY_ZOOM); z++) {
+    const x0 = Math.floor(lonToTileX(b.west, z))
+    const x1 = Math.floor(lonToTileX(b.east, z))
+    const y0 = Math.floor(latToTileY(b.north, z))
+    const y1 = Math.floor(latToTileY(b.south, z))
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) wanted.push({ z, x, y })
+  }
+
+  let done = 0
+  let fetched = 0
+  let next = 0
+  await Promise.all(
+    Array.from({ length: 6 }, async () => {
+      while (next < wanted.length) {
+        if (signal?.aborted) throw new DOMException('aborted', 'AbortError')
+        const t = wanted[next++]!
+        const buf = await fetchTileBytes(t.z, t.x, t.y, signal)
+        if (buf) fetched++
+        onProgress?.(++done, wanted.length)
+      }
+    }),
+  )
+  return { fetched, total: wanted.length }
 }
 
 /**

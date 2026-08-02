@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from 'react'
 import { DEFAULT_SETTINGS, useStore, type BiomeKey, type Settings } from '../store'
 import { KOPPEN_CODES, colorFor } from '../lib/koppen'
 import { FOREST_MAX, GROUND_WARMTH_MAX } from '../lib/biomeMap'
-import { DAILY_QUOTA, cacheClear, cacheStats, quotaUsed } from '../lib/demcache'
+import { DAILY_QUOTA, cacheClear, cacheStats, quotaUsed, tileCacheStats } from '../lib/demcache'
+import { MAX_IMAGERY_ZOOM, baseImageryZoom, estimateImageryPrefetch } from '../lib/imagery'
 import { decodePreset, deletePreset, encodePreset, loadPresets, savePreset } from '../lib/presets'
 import { DEM_SOURCES } from '../lib/opentopo'
 import { AREA_LABEL, ROAD_CLASSES, ROAD_CLASS_NOTE, ROAD_ORDER } from '../lib/overpass'
@@ -193,7 +194,24 @@ export default function Controls() {
     loadRoads,
     roads,
     waterMask,
+    prefetch,
+    startPrefetch,
+    cancelPrefetch,
   } = useStore()
+
+  // The tile cache is invisible by default, and the prefetch below can write hundreds
+  // of megabytes to this machine — so the number is shown, and refreshed whenever a
+  // prefetch finishes.
+  const [tileStats, setTileStats] = useState({ count: 0, megabytes: 0 })
+  useEffect(() => {
+    let live = true
+    void tileCacheStats().then((s) => {
+      if (live) setTileStats(s)
+    })
+    return () => {
+      live = false
+    }
+  }, [prefetch])
 
   // The class the sliders act on: your pick, falling back to the dominant one.
   const editing =
@@ -1480,6 +1498,66 @@ export default function Controls() {
               decimals={0}
               onChange={setSetting('satPatchBoost')}
             />
+            {/* Bulk prefetch: warm the tile cache for the whole box so every close-up
+                anywhere in it runs the instant path. The bill is computed and shown
+                before anything fetches — pyramids quadruple per level, and the gap
+                between two minutes and an afternoon is invisible until priced. */}
+            {heightField &&
+              (() => {
+                if (prefetch) {
+                  const pct = prefetch.total
+                    ? Math.round((prefetch.done / prefetch.total) * 100)
+                    : 0
+                  return (
+                    <div className="grid2">
+                      <span className="note">
+                        Prefetching to z{prefetch.toZoom} — {prefetch.done.toLocaleString()}/
+                        {prefetch.total.toLocaleString()} ({pct}%)
+                      </span>
+                      <button onClick={cancelPrefetch}>Cancel</button>
+                    </div>
+                  )
+                }
+                const base = baseImageryZoom(heightField.bounds)
+                const options: Array<{ z: number; tiles: number; megabytes: number }> = []
+                for (let z = base + 1; z <= MAX_IMAGERY_ZOOM; z++) {
+                  const e = estimateImageryPrefetch(heightField.bounds, z)
+                  // The cap is politeness as much as practicality: past this the
+                  // prefetch stops being "warm my area" and starts being a scrape.
+                  if (e.tiles > 30000) break
+                  options.push({ z, ...e })
+                }
+                if (options.length === 0) {
+                  return (
+                    <p className="note">
+                      This box is too large to prefetch beyond its base imagery — zoom
+                      the close-up live instead, or draw a smaller box.
+                    </p>
+                  )
+                }
+                return (
+                  <>
+                    <div className="grid2">
+                      {options.map((o) => (
+                        <button
+                          key={o.z}
+                          onClick={() => void startPrefetch(o.z)}
+                          title={`${o.tiles.toLocaleString()} tiles · ~${Math.max(1, Math.round(o.megabytes))} MB`}
+                        >
+                          Prefetch z{o.z} · ~{Math.max(1, Math.round(o.megabytes))} MB
+                        </button>
+                      ))}
+                    </div>
+                    <p className="note">
+                      Cached tiles: {tileStats.count.toLocaleString()} ·{' '}
+                      {tileStats.megabytes.toFixed(0)} MB. Stored in this browser&apos;s
+                      IndexedDB on this machine — nothing leaves it or syncs anywhere.
+                      Clear cache removes it, and so does clearing this site&apos;s data
+                      in the browser.
+                    </p>
+                  </>
+                )
+              })()}
             <div className="toggles">
               <Toggle
                 label="Cast shadows"
