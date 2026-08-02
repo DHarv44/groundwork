@@ -625,7 +625,14 @@ legible at any scale precisely because shrinking the box does not make it thinne
 The clipmap was reworked from settle-then-rebuild to streaming (fetch during motion,
 seeded re-centres, per-tile progressive draw into one persistent canvas per ring, one
 persistent GPU texture per ring). Measured during a continuous pan-and-dive: p50 6.9 ms,
-p95 10.4 ms, three frames over 16 ms in 5.5 s. What remains is a single ~100 ms spike
+p95 10.4 ms, three frames over 16 ms in 5.5 s.
+
+Ring sizing was then re-derived from the screen instead of the eye: ring 0 covers the
+frustum's ground footprint (corner rays against the height field — the orbit target's
+height is untrustworthy, walking mode leaves it floating), so a top-down viewport is one
+resolution edge to edge; rings 1-3 double outward at one zoom coarser each, which is
+SSE-exact per doubling of distance, serving as pan margin top-down and as the far field
+when tilted. What remains is a single ~100 ms spike
 when a ring's canvas dimensions change (a zoom step crossing forces a canvas resize,
 which forces a GL storage realloc plus full re-upload). Rare — a handful per deep dive —
 but it is the one hitch left in the gesture. Fix if it proves noticeable: fixed-size

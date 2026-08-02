@@ -1498,6 +1498,18 @@ export default function Controls() {
               decimals={0}
               onChange={setSetting('satPatchBoost')}
             />
+            {/* Wheel dolly rate. OrbitControls moves a fraction of the current eye
+                distance per notch, so this is a multiplier on that fraction, not a
+                speed in metres — 2 is roughly 10% of the distance per notch. */}
+            <Slider
+              label="Zoom speed"
+              value={settings.zoomSpeed}
+              min={0.5}
+              max={4}
+              step={0.1}
+              decimals={1}
+              onChange={setSetting('zoomSpeed')}
+            />
             {/* Bulk prefetch: warm the tile cache for the whole box so every close-up
                 anywhere in it runs the instant path. The bill is computed and shown
                 before anything fetches — pyramids quadruple per level, and the gap

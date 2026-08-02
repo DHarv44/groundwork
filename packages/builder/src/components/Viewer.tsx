@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef } from 'react'
 import * as THREE from 'three'
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { OrbitControls } from '@react-three/drei'
+import { sampleBox } from '@dharv44/groundwork-core'
 import { useStore } from '../store'
 import SkyDome from './SkyDome'
 import HeadingTape from './HeadingTape'
@@ -69,9 +70,14 @@ function SatRingWatcher() {
   const heightField = useStore((s) => s.heightField)
   const textureMode = useStore((s) => s.settings.textureMode)
   const boost = useStore((s) => s.settings.satPatchBoost)
+  const exaggeration = useStore((s) => s.settings.exaggeration)
   const imagery = useStore((s) => s.imagery)
   const loadSatRing = useStore((s) => s.loadSatRing)
   const clearSatRings = useStore((s) => s.clearSatRings)
+
+  /** Frame-loop scratch — allocated once, reused every frame. */
+  const groundPoint = useRef(new THREE.Vector3()).current
+  const cornerRay = useRef(new THREE.Vector3()).current
 
   /** What each ring last fetched: centre and size step. Null = nothing yet. */
   const lastFetch = useRef<Array<{ lon: number; lat: number; step: number } | null>>([
@@ -102,15 +108,17 @@ function SatRingWatcher() {
       cooldown.current[k] = Math.max(0, cooldown.current[k]! - dt)
     }
 
-    // The rings are nested squares centred where the camera looks, each 3x the width
-    // and two zooms coarser than the one inside — four of them, reaching ~32x the
-    // eye distance before the base drape takes over. Frustum coverage falls out of
-    // the nesting: near ground lands in ring 0, the far field steps down through
-    // rings 1-3, the horizon takes the base — a clipmap doing what one
-    // frustum-fitted rectangle never could, because a tilted view needs several
-    // resolutions at once, not one rectangle at one resolution.
+    // Ring 0 is sized to the ground the SCREEN can see, not to the eye distance.
+    // The whole point of the close-up is that a top-down view is one resolution
+    // edge to edge — a viewport with a sharp square in the middle is a bug, not a
+    // level of detail. Two things make the footprint the only trustworthy input:
+    // corner rays measure what is actually in frame regardless of tilt, and the
+    // orbit target cannot be trusted for height — walking mode and low passes
+    // leave it floating near the camera, which is how ring sizing shrank to a
+    // postage stamp while the camera was kilometres up. So the ground plane comes
+    // from the height field under the look point, and the viewing distance is
+    // measured to that ground, never to the target.
     const target = controls?.target ?? camera.position
-    const dist = Math.max(200, camera.position.distanceTo(target))
     const b = heightField.bounds
     const lonSpan = b.east - b.west
     const latSpan = b.north - b.south
@@ -119,9 +127,41 @@ function SatRingWatcher() {
     const cLon = b.west + u * lonSpan
     const cLat = b.north - v * latSpan
 
+    const groundY = sampleBox(heightField, u, v) * exaggeration
+    groundPoint.set(target.x, groundY, target.z)
+    const dist = Math.max(200, camera.position.distanceTo(groundPoint))
+
+    // Where the four screen corners land on the ground plane. A corner looking
+    // at sky (tilted views) is capped rather than infinite: past ~4x the viewing
+    // distance perspective has compressed the ground so hard that the outer
+    // rings and base cover it at the zoom a fetch would return anyway.
+    let footprint = 0
+    for (let i = 0; i < 4; i++) {
+      const ray = cornerRay
+        .set(i & 1 ? 1 : -1, i & 2 ? 1 : -1, 0.5)
+        .unproject(camera)
+        .sub(camera.position)
+      const t = ray.y < -1e-9 ? (groundY - camera.position.y) / ray.y : -1
+      const hit =
+        t > 0
+          ? Math.hypot(
+              camera.position.x + ray.x * t - target.x,
+              camera.position.z + ray.z * t - target.z,
+            )
+          : Infinity
+      footprint = Math.max(footprint, Math.min(hit, dist * 4))
+    }
+    // Every corner missed (camera under the terrain, or some degenerate pose):
+    // fall back to eye distance rather than collapsing the rings.
+    if (footprint === 0) footprint = dist * 1.2
+
     const ceiling = Math.min(11 + 2 * boost, 19)
     for (let k = 0; k < 4; k++) {
-      const half = Math.max(250, dist * 1.2) * Math.pow(3, k)
+      // Classic clipmap geometry outward from the footprint: each ring doubles in
+      // extent and drops exactly one zoom, which is what perspective needs per
+      // doubling of distance. Top-down, rings 1-3 sit entirely off-screen as
+      // pre-loaded pan margin; tilted, they carry the compressed far field.
+      const half = Math.max(250, footprint * 1.1) * Math.pow(2, k)
       const step = Math.round(Math.log2(half))
 
       // Refetch only when the camera demands SHARPER (footprint shrank a step) or
@@ -155,7 +195,7 @@ function SatRingWatcher() {
         east: cLon + dLon,
         south: cLat - dLat,
         north: cLat + dLat,
-      }, ceiling - 2 * k)
+      }, ceiling - k)
     }
   })
 
@@ -325,12 +365,18 @@ export default function Viewer() {
         <SatRingWatcher />
         <FirstPerson />
         <HeadingTape target={tapeRef} />
+        {/* zoomToCursor makes the wheel dive toward the pointer rather than the
+            orbit target — the mapping-app gesture, and the cure for the crawl out
+            of a low hover: pointing at distant ground re-aims the dolly at it, so
+            zoom-out speed recovers instead of staying proportional to the last
+            close-up distance. */}
         <OrbitControls
           makeDefault
           enableDamping
           dampingFactor={0.08}
           rotateSpeed={0.6}
-          zoomSpeed={0.9}
+          zoomSpeed={settings.zoomSpeed}
+          zoomToCursor
           maxPolarAngle={Math.PI * 0.495}
         />
       </Canvas>

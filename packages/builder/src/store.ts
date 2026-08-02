@@ -40,6 +40,10 @@ export interface Settings {
   textureMode: TextureMode
   /** Extra zoom levels the close-up satellite patch may fetch past the base drape. */
   satPatchBoost: number
+  /** Scroll-wheel dolly rate. OrbitControls steps ~4.6% of the eye distance per
+   * notch at 1.0, which reads as barely moving after descending close to the
+   * ground — the step is proportional to a now-tiny distance. */
+  zoomSpeed: number
   sunAzimuth: number
   sunElevation: number
   haze: number
@@ -208,6 +212,7 @@ export const DEFAULT_SETTINGS: Settings = {
   detail: 768,
   textureMode: 'procedural',
   satPatchBoost: 3,
+  zoomSpeed: 2,
   // The default camera sits to the south-east, so a north-east sun rakes across the
   // relief instead of flattening it from behind the viewer.
   sunAzimuth: 70,
@@ -554,6 +559,7 @@ const PERSISTED_SETTINGS = [
   'detail',
   'textureMode',
   'satPatchBoost',
+  'zoomSpeed',
   'sunAzimuth',
   'sunElevation',
   'haze',
