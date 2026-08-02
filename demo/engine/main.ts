@@ -186,7 +186,7 @@ async function load(source: File | string): Promise<void> {
       typeof source === 'string'
         ? await (await fetch(source)).arrayBuffer()
         : await source.arrayBuffer()
-    const files = packFromBytes(bytes)
+    const files = await packFromBytes(bytes)
     const hf = readHeightField(files)
     const m = files.manifest
 

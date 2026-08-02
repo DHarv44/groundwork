@@ -161,7 +161,7 @@ const files = buildPack({
 })
 
 const out = process.argv[2] ?? 'public/sample.gwpack'
-const bytes = packToBytes(files)
+const bytes = await packToBytes(files)
 writeFileSync(out, bytes)
 console.log(
   `wrote ${out} — ${(bytes.length / 1024).toFixed(0)} KB, ` +

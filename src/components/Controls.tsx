@@ -1458,16 +1458,16 @@ export default function Controls() {
             <button
               className="wide"
               disabled={!heightField}
-              onClick={() =>
-                heightField &&
-                exportPack({
+              onClick={() => {
+                if (!heightField) return
+                void exportPack({
                   heightField,
                   osm: roads,
                   waterMask,
                   baseName,
                   createdAt: new Date().toISOString(),
                 })
-              }
+              }}
             >
               Write pack
             </button>

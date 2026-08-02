@@ -122,7 +122,7 @@ export function summarisePack(input: PackExportInput): PackExportSummary {
   }
 }
 
-export function exportPack(input: PackExportInput): void {
+export async function exportPack(input: PackExportInput): Promise<void> {
   const { heightField: hf, osm, waterMask, baseName } = input
 
   const layers: PackInputLayer[] = []
@@ -142,7 +142,7 @@ export function exportPack(input: PackExportInput): void {
     createdAt: input.createdAt,
   })
 
-  const bytes = packToBytes(files)
+  const bytes = await packToBytes(files)
   downloadBlob(
     new Blob([bytes.buffer as ArrayBuffer], { type: 'application/zip' }),
     `${baseName}${PACK_EXTENSION}`,

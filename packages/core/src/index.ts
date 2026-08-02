@@ -43,7 +43,7 @@ export {
 } from './packio'
 
 export type { ZipEntry } from './zip'
-export { unzip, zip } from './zip'
+export { canCompress, unzip, zip } from './zip'
 
 export type { PackAttribution, PackLayer, PackManifest } from './pack'
 export {

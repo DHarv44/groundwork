@@ -138,14 +138,37 @@ Strictly one-directional. Rules that keep it that way:
       4199.5 m, matching the UI's own readouts; 5368 roads, 464 mapped areas of which
       10 carry inner rings, so the island-and-clearing fix survives into the format.
 
-      **Known: it is big.** That box is 46.9 MB, and 30 MB of it is the RGBA hydrology
-      field — which is mostly zeroes and would deflate to a fraction. Store-only was
-      the right first call (no dependency, trivially correct), but adding deflate to
-      `zip.ts` is the obvious next win and does not change the format. Quantising the
-      water field or dropping it to one channel would help as much again.
+- [x] **5b. Deflate** — done. That Hawaii box went from **46.9 MB to 21.3 MB**, with
+      every value identical on the way back out.
 
-- [ ] **5b. Deflate in `zip.ts`** — see above. The container already records a method
-      per entry, so this is additive rather than a format change.
+      Compression comes from the platform: `CompressionStream('deflate-raw')` is in
+      every current browser and in Node 18 and later, and it is a *global* rather than
+      an import — so core stays dependency-free while getting a real deflate instead of
+      a hand-rolled one, which is not somewhere to be inventive. Where it is missing the
+      writer falls back to storing, which still produces a valid archive.
+
+      Core's tsconfig still has no DOM lib. The streams API is declared structurally in
+      `zip.ts` — just the four shapes needed — because pulling the whole DOM in for two
+      constructors would have traded away the guarantee that keeps `document` and
+      `fetch` out by construction.
+
+      Two things worth knowing:
+
+      - `zip`, `unzip`, `packToBytes` and `packFromBytes` are now **async**. Unavoidable
+        with a streams-based codec, and harmless in practice since every caller was
+        already in an async path.
+      - Entries under 4 KB stay stored. Below that the deflate header costs more than
+        the coding saves, and it keeps `pack.json` readable straight out of the archive
+        with any tool.
+
+      Verified by extracting a deflated pack with Windows' `Expand-Archive` — right
+      uncompressed sizes — and by re-rendering it in the demo unchanged.
+
+- [ ] **5b-ii. The water field is now the dominant cost.** At 3495×2167 RGBA it is
+      30 MB raw and the bulk of what is left after deflate. Its alpha channel is
+      constant and its lake flag is a single bit, so three channels — or two — would
+      carry the same information. Worth measuring what the hydrology pass actually
+      needs before cutting, rather than guessing which channels are load-bearing.
 - [ ] **5c. Named places** — `node["place"~"^(city|town|village|hamlet)$"]` folded into
       the **existing** single Overpass union query, so it stays one request. The pack
       already carries the slot and writes it empty. Names are the one thing that cannot

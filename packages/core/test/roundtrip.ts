@@ -16,6 +16,7 @@
 import {
   boxToLonLat,
   buildPack,
+  canCompress,
   lonLatToBox,
   packFromBytes,
   packToBytes,
@@ -148,14 +149,23 @@ const rt2 = lonLatToBox(b, rt.lon, rt.lat)
 check('box → lonlat → box', Math.abs(rt2.x - 0.25) < 1e-9 && Math.abs(rt2.y - 0.75) < 1e-9)
 
 console.log('container')
-const bytes = packToBytes(files)
+const bytes = await packToBytes(files)
 check('starts with a local file header', bytes[0] === 0x50 && bytes[1] === 0x4b)
 // Written twice from the same inputs, it must be byte-identical — that is the whole
 // reason createdAt and the zip timestamp are passed in rather than read from a clock.
-const again = packToBytes(files)
+const again = await packToBytes(files)
 check('two writes are byte-identical', bytes.length === again.length && bytes.every((b, i) => b === again[i]))
+check('deflate is available on this runtime', canCompress)
 
-const reopened = packFromBytes(bytes.slice().buffer)
+// The elevation plane is a smooth ramp, so deflate should beat storing it by a mile.
+// This is the check that would notice compression silently stopping.
+const storedSize = W * H * 2
+check(
+  `elevation actually compressed (archive ${bytes.length} B vs ${storedSize} B stored elevation alone)`,
+  bytes.length < storedSize,
+)
+
+const reopened = await packFromBytes(bytes.slice().buffer)
 check('manifest survives the container', reopened.manifest.id === 'test-box')
 check('layer count survives', reopened.manifest.layers.length === 2)
 check('vectors survive the container', reopened.vectors === files.vectors)
@@ -173,7 +183,7 @@ check('extra layer survives the container', coverZip !== null && coverZip.data[0
 
 let badThrew = ''
 try {
-  packFromBytes(new ArrayBuffer(64))
+  await packFromBytes(new ArrayBuffer(64))
 } catch (e) {
   badThrew = String(e)
 }

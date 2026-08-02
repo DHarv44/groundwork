@@ -250,7 +250,7 @@ export const PACK_EXTENSION = '.gwpack'
  *
  * The manifest goes in first so a reader that streams gets the index before the bulk.
  */
-export function packToBytes(files: PackFiles): Uint8Array {
+export async function packToBytes(files: PackFiles): Promise<Uint8Array> {
   const enc = new TextEncoder()
   const entries: ZipEntry[] = [
     {
@@ -280,8 +280,8 @@ export function packToBytes(files: PackFiles): Uint8Array {
  * the bytes produces terrain that renders as noise rather than an error, and that is
  * a long way to travel from the actual fault.
  */
-export function packFromBytes(buf: ArrayBuffer): PackFiles {
-  const files = unzip(buf)
+export async function packFromBytes(buf: ArrayBuffer): Promise<PackFiles> {
+  const files = await unzip(buf)
 
   const manifestBytes = files.get(PACK_MANIFEST_FILE)
   if (!manifestBytes) throw new Error(`pack has no ${PACK_MANIFEST_FILE}`)

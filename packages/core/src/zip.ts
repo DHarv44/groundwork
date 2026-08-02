@@ -1,16 +1,100 @@
 /**
- * A minimal ZIP reader and writer, store-only (no compression).
+ * A minimal ZIP reader and writer.
  *
  * Written rather than pulled in because core has no dependencies and is not going to
  * start now: it has to run in a browser, in a Node baker, and anywhere else a pack
  * needs opening, and a zero-dependency decoder is the only version of that which
- * cannot rot. Store-only keeps it to about a hundred lines and costs less than it
- * sounds — the bulk of a pack is quantised elevation and vector JSON, and the whole
- * thing is usually served over an already-compressed transport anyway.
+ * cannot rot.
+ *
+ * Compression comes from the platform. `CompressionStream('deflate-raw')` is in every
+ * current browser and in Node 18 and later, and it is a *global* rather than an
+ * import — so this stays dependency-free while getting a real, correct deflate rather
+ * than a hand-rolled one, which is not somewhere to be inventive. Where it is missing
+ * the writer falls back to storing, which still produces a valid archive.
+ *
+ * This matters more than it might sound. A derived field like the hydrology raster is
+ * mostly zeroes, and storing it uncompressed was the difference between a pack of a
+ * few megabytes and one of nearly fifty.
  *
  * The output is an ordinary ZIP. Anything can open it; there is nothing bespoke about
  * the container, only about what is inside.
  */
+
+/**
+ * Just enough of the streams API to use `CompressionStream`, declared structurally.
+ *
+ * Core's tsconfig deliberately has no DOM lib — that is what keeps `document` and
+ * `fetch` out by construction rather than by discipline — and pulling the whole DOM in
+ * for two constructors would trade that guarantee away for nothing. Structural typing
+ * means the real browser and Node objects satisfy these without any relation to them.
+ */
+interface ByteReader {
+  read(): Promise<{ done: boolean; value?: Uint8Array }>
+}
+interface ByteReadable {
+  getReader(): ByteReader
+}
+interface ByteWriter {
+  write(chunk: Uint8Array): Promise<void>
+  close(): Promise<void>
+}
+interface ByteWritable {
+  getWriter(): ByteWriter
+}
+interface ByteTransform {
+  readable: ByteReadable
+  writable: ByteWritable
+}
+type TransformCtor = new (format: string) => ByteTransform
+
+const globals = globalThis as unknown as {
+  CompressionStream?: TransformCtor
+  DecompressionStream?: TransformCtor
+}
+
+/** True when the platform can deflate. Absent only on very old runtimes. */
+export const canCompress = typeof globals.CompressionStream === 'function'
+
+async function pump(stream: ByteTransform, input: Uint8Array): Promise<Uint8Array> {
+  const writer = stream.writable.getWriter()
+  // Deliberately not awaited before reading starts: a large chunk can fill the
+  // transform's internal queue, and the write only settles once the reader has drained
+  // it — awaiting first would deadlock on exactly the payloads that matter here.
+  const written = writer.write(input).then(() => writer.close())
+
+  const reader = stream.readable.getReader()
+  const chunks: Uint8Array[] = []
+  let total = 0
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    if (value) {
+      chunks.push(value)
+      total += value.length
+    }
+  }
+  await written
+
+  const out = new Uint8Array(total)
+  let at = 0
+  for (const c of chunks) {
+    out.set(c, at)
+    at += c.length
+  }
+  return out
+}
+
+async function deflateRaw(bytes: Uint8Array): Promise<Uint8Array> {
+  const Ctor = globals.CompressionStream
+  if (!Ctor) throw new Error('CompressionStream is unavailable')
+  return pump(new Ctor('deflate-raw'), bytes)
+}
+
+async function inflateRaw(bytes: Uint8Array): Promise<Uint8Array> {
+  const Ctor = globals.DecompressionStream
+  if (!Ctor) throw new Error('DecompressionStream is unavailable — cannot read a deflated pack')
+  return pump(new Ctor('deflate-raw'), bytes)
+}
 
 const CRC_TABLE = (() => {
   const t = new Uint32Array(256)
@@ -49,14 +133,38 @@ function dosTime(iso: string): { time: number; date: number } {
   }
 }
 
-export function zip(entries: ZipEntry[], isoTimestamp: string): Uint8Array {
+/**
+ * Smallest entry worth deflating.
+ *
+ * Below roughly this the deflate header costs more than the coding saves, and every
+ * entry that stays stored is one a reader can take without a decompressor. The
+ * manifest sits under it, which is a small convenience worth keeping: `pack.json` is
+ * readable straight out of the archive with any tool.
+ */
+const DEFLATE_MIN_BYTES = 4096
+
+export async function zip(entries: ZipEntry[], isoTimestamp: string): Promise<Uint8Array> {
   const enc = new TextEncoder()
   const { time, date } = dosTime(isoTimestamp)
 
-  const parts = entries.map((e) => {
-    const name = enc.encode(e.name)
-    return { name, data: e.data, crc: crc32(e.data) }
-  })
+  const parts = await Promise.all(
+    entries.map(async (e) => {
+      const name = enc.encode(e.name)
+      const crc = crc32(e.data)
+      let body = e.data
+      let method = 0
+      if (canCompress && e.data.length >= DEFLATE_MIN_BYTES) {
+        const packed = await deflateRaw(e.data)
+        // Incompressible data comes back larger. Store it rather than pay for the
+        // attempt — which is the case for anything already compressed going in.
+        if (packed.length < e.data.length) {
+          body = packed
+          method = 8
+        }
+      }
+      return { name, data: body, size: e.data.length, crc, method }
+    }),
+  )
 
   let localSize = 0
   let centralSize = 0
@@ -75,12 +183,12 @@ export function zip(entries: ZipEntry[], isoTimestamp: string): Uint8Array {
     view.setUint32(off, 0x04034b50, true) // local file header
     view.setUint16(off + 4, 20, true) // version needed
     view.setUint16(off + 6, 0, true) // flags
-    view.setUint16(off + 8, 0, true) // method: store
+    view.setUint16(off + 8, p.method, true) // 0 store, 8 deflate
     view.setUint16(off + 10, time, true)
     view.setUint16(off + 12, date, true)
     view.setUint32(off + 14, p.crc, true)
     view.setUint32(off + 18, p.data.length, true) // compressed size
-    view.setUint32(off + 22, p.data.length, true) // uncompressed size
+    view.setUint32(off + 22, p.size, true) // uncompressed size
     view.setUint16(off + 26, p.name.length, true)
     view.setUint16(off + 28, 0, true) // extra length
     off += 30
@@ -97,12 +205,12 @@ export function zip(entries: ZipEntry[], isoTimestamp: string): Uint8Array {
     view.setUint16(off + 4, 20, true) // version made by
     view.setUint16(off + 6, 20, true) // version needed
     view.setUint16(off + 8, 0, true)
-    view.setUint16(off + 10, 0, true) // method: store
+    view.setUint16(off + 10, p.method, true) // 0 store, 8 deflate
     view.setUint16(off + 12, time, true)
     view.setUint16(off + 14, date, true)
     view.setUint32(off + 16, p.crc, true)
     view.setUint32(off + 20, p.data.length, true)
-    view.setUint32(off + 24, p.data.length, true)
+    view.setUint32(off + 24, p.size, true)
     view.setUint16(off + 28, p.name.length, true)
     view.setUint16(off + 30, 0, true) // extra
     view.setUint16(off + 32, 0, true) // comment
@@ -128,19 +236,18 @@ export function zip(entries: ZipEntry[], isoTimestamp: string): Uint8Array {
 }
 
 /**
- * Read a store-only ZIP.
+ * Read a ZIP, stored or deflated.
  *
  * Walks the central directory rather than scanning for local headers, because the
  * central directory is the archive's own index and a local-header scan will happily
  * mistake file *contents* for a header when the contents happen to be binary — which
  * a pack's contents always are.
  *
- * Throws on a compressed entry rather than returning something plausible. Anything
- * this writes is stored, so a deflated member means the archive came from elsewhere,
- * and silently handing back compressed bytes as if they were heights would surface
- * hundreds of lines away as terrain that looks like noise.
+ * Throws on a method it does not know rather than returning something plausible.
+ * Handing back compressed bytes as if they were heights would surface hundreds of
+ * lines away as terrain that looks like noise, which is a long way from the fault.
  */
-export function unzip(buf: ArrayBuffer): Map<string, Uint8Array> {
+export async function unzip(buf: ArrayBuffer): Promise<Map<string, Uint8Array>> {
   const bytes = new Uint8Array(buf)
   const view = new DataView(buf)
 
@@ -166,6 +273,7 @@ export function unzip(buf: ArrayBuffer): Map<string, Uint8Array> {
       throw new Error(`zip central directory entry ${i} has a bad signature`)
     }
     const method = view.getUint16(off + 10, true)
+    const packedSize = view.getUint32(off + 20, true)
     const size = view.getUint32(off + 24, true)
     const nameLen = view.getUint16(off + 28, true)
     const extraLen = view.getUint16(off + 30, true)
@@ -173,8 +281,8 @@ export function unzip(buf: ArrayBuffer): Map<string, Uint8Array> {
     const localOff = view.getUint32(off + 42, true)
     const name = dec.decode(bytes.subarray(off + 46, off + 46 + nameLen))
 
-    if (method !== 0) {
-      throw new Error(`zip entry "${name}" is compressed (method ${method}); only store is read`)
+    if (method !== 0 && method !== 8) {
+      throw new Error(`zip entry "${name}" uses method ${method}; only store and deflate are read`)
     }
 
     // The local header repeats the name and may carry different extra-field padding,
@@ -182,7 +290,13 @@ export function unzip(buf: ArrayBuffer): Map<string, Uint8Array> {
     const localNameLen = view.getUint16(localOff + 26, true)
     const localExtraLen = view.getUint16(localOff + 28, true)
     const dataAt = localOff + 30 + localNameLen + localExtraLen
-    files.set(name, bytes.subarray(dataAt, dataAt + size))
+    const raw = bytes.subarray(dataAt, dataAt + (method === 8 ? packedSize : size))
+
+    const data = method === 8 ? await inflateRaw(raw) : raw
+    if (data.length !== size) {
+      throw new Error(`zip entry "${name}": ${data.length} bytes after inflating, expected ${size}`)
+    }
+    files.set(name, data)
 
     off += 46 + nameLen + extraLen + commentLen
   }
