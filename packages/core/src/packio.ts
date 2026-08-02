@@ -1,7 +1,7 @@
-import type { Bounds } from './geo'
-import { boundsExtentMetres } from './geo'
-import type { HeightField } from './field'
-import type { PackAttribution, PackLayer, PackManifest } from './pack'
+import type { Bounds } from './geo.js'
+import { boundsExtentMetres } from './geo.js'
+import type { HeightField } from './field.js'
+import type { PackAttribution, PackLayer, PackManifest } from './pack.js'
 import {
   PACK_FORMAT_VERSION,
   PACK_MANIFEST_FILE,
@@ -12,9 +12,9 @@ import {
   quantise,
   serialiseVectors,
   validateManifest,
-} from './pack'
-import type { PackVectors } from './vector'
-import { unzip, zip, type ZipEntry } from './zip'
+} from './pack.js'
+import type { PackVectors } from './vector.js'
+import { unzip, zip, type ZipEntry } from './zip.js'
 
 /**
  * Reading and writing pack bytes.

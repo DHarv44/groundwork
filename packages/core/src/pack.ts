@@ -1,5 +1,5 @@
-import type { Bounds } from './geo'
-import type { PackArea, PackPlace, PackRoad, PackVectors } from './vector'
+import type { Bounds } from './geo.js'
+import type { PackArea, PackPlace, PackRoad, PackVectors } from './vector.js'
 
 /**
  * The pack format — the contract between whatever writes terrain and whatever

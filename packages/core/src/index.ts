@@ -7,7 +7,7 @@
  * a pack without dragging a renderer in behind it.
  */
 
-export type { Bounds, BoxPoint } from './geo'
+export type { Bounds, BoxPoint } from './geo.js'
 export {
   boundsAreaKm2,
   boundsExtentMetres,
@@ -17,10 +17,10 @@ export {
   lonToTileX,
   metresPerDegLat,
   metresPerDegLon,
-} from './geo'
+} from './geo.js'
 
-export type { HeightField } from './field'
-export { sampleBilinear, sampleBox } from './field'
+export type { HeightField } from './field.js'
+export { sampleBilinear, sampleBox } from './field.js'
 
 export type {
   AreaKind,
@@ -29,10 +29,10 @@ export type {
   PackRoad,
   PackVectors,
   RoadClass,
-} from './vector'
-export { ROAD_CLASSES, ROAD_WIDTH_METRES } from './vector'
+} from './vector.js'
+export { ROAD_CLASSES, ROAD_WIDTH_METRES } from './vector.js'
 
-export type { PackFiles, PackInput, PackInputLayer, RasterData } from './packio'
+export type { PackFiles, PackInput, PackInputLayer, RasterData } from './packio.js'
 export {
   PACK_EXTENSION,
   buildPack,
@@ -40,12 +40,12 @@ export {
   packToBytes,
   readHeightField,
   readRaster,
-} from './packio'
+} from './packio.js'
 
-export type { ZipEntry } from './zip'
-export { canCompress, unzip, zip } from './zip'
+export type { ZipEntry } from './zip.js'
+export { canCompress, unzip, zip } from './zip.js'
 
-export type { PackAttribution, PackLayer, PackManifest } from './pack'
+export type { PackAttribution, PackLayer, PackManifest } from './pack.js'
 export {
   PACK_FORMAT_VERSION,
   PACK_MANIFEST_FILE,
@@ -57,4 +57,4 @@ export {
   quantise,
   serialiseVectors,
   validateManifest,
-} from './pack'
+} from './pack.js'

@@ -1,4 +1,4 @@
-import type { Bounds } from './geo'
+import type { Bounds } from './geo.js'
 
 /**
  * A rectangle of elevation samples.
