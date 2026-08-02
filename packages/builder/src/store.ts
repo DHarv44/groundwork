@@ -1521,11 +1521,20 @@ export const useStore = create<State>((setState, getState) => {
     }
     if (s.north <= s.south || s.east <= s.west) return
 
-    // No sharper than the base drape? Then this ring adds nothing but a seam.
-    // Skipping leaves whatever the ring held before — stale-but-sharp beats a
-    // visible pop back to blur, and the geometry is geo-anchored so stale stays true.
+    // No sharper than the base drape? Then this ring adds nothing but a seam —
+    // and a seam is exactly what it would show: Esri's captures differ between
+    // zoom levels, so a leftover patch reads as a mismatched square on the base.
+    // Drop whatever the slot held; at this height the base IS the uniform view.
     const zoom = ringZoomFor(s, Math.min(maxZoom, MAX_IMAGERY_ZOOM))
-    if (zoom <= getState().imageryZoom) return
+    if (zoom <= getState().imageryZoom) {
+      const rings = getState().satRings
+      if (rings[index]) {
+        const next = rings.slice()
+        next[index] = null
+        setState({ satRings: next })
+      }
+      return
+    }
 
     const lonSpan = b.east - b.west
     const latSpan = b.north - b.south

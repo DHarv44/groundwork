@@ -677,30 +677,33 @@ void main() {
     // The clipmap cascade, coarse ring first so finer rings paint over it. Each
     // ring feathers at its own boundary — the resolution steps must not draw their
     // rectangles onto the ground — and multiplies in its fade so a ring that is
-    // still arriving eases in over the one beneath instead of popping.
+    // still arriving eases in over the one beneath instead of popping. The feather
+    // is wide (15% of the ring) because it blends more than resolution: Esri's
+    // captures differ between zoom levels — date, season, colour — and a narrow
+    // feather draws that difference as a rectangle onto the ground.
     {
       vec2 span3 = max(uSatRing3Rect.zw - uSatRing3Rect.xy, vec2(1e-6));
       vec2 rUv3 = (vUv - uSatRing3Rect.xy) / span3;
       vec2 edge3 = min(rUv3, 1.0 - rUv3);
-      float in3 = smoothstep(0.0, 0.06, min(edge3.x, edge3.y)) * uSatRing3Fade;
+      float in3 = smoothstep(0.0, 0.15, min(edge3.x, edge3.y)) * uSatRing3Fade;
       if (in3 > 0.0) sat = mix(sat, srgbToLinear(texture2D(uSatRing3Map, rUv3).rgb), in3);
 
       vec2 span2 = max(uSatRing2Rect.zw - uSatRing2Rect.xy, vec2(1e-6));
       vec2 rUv2 = (vUv - uSatRing2Rect.xy) / span2;
       vec2 edge2 = min(rUv2, 1.0 - rUv2);
-      float in2 = smoothstep(0.0, 0.06, min(edge2.x, edge2.y)) * uSatRing2Fade;
+      float in2 = smoothstep(0.0, 0.15, min(edge2.x, edge2.y)) * uSatRing2Fade;
       if (in2 > 0.0) sat = mix(sat, srgbToLinear(texture2D(uSatRing2Map, rUv2).rgb), in2);
 
       vec2 span1 = max(uSatRing1Rect.zw - uSatRing1Rect.xy, vec2(1e-6));
       vec2 rUv1 = (vUv - uSatRing1Rect.xy) / span1;
       vec2 edge1 = min(rUv1, 1.0 - rUv1);
-      float in1 = smoothstep(0.0, 0.06, min(edge1.x, edge1.y)) * uSatRing1Fade;
+      float in1 = smoothstep(0.0, 0.15, min(edge1.x, edge1.y)) * uSatRing1Fade;
       if (in1 > 0.0) sat = mix(sat, srgbToLinear(texture2D(uSatRing1Map, rUv1).rgb), in1);
 
       vec2 span0 = max(uSatRing0Rect.zw - uSatRing0Rect.xy, vec2(1e-6));
       vec2 rUv0 = (vUv - uSatRing0Rect.xy) / span0;
       vec2 edge0 = min(rUv0, 1.0 - rUv0);
-      float in0 = smoothstep(0.0, 0.06, min(edge0.x, edge0.y)) * uSatRing0Fade;
+      float in0 = smoothstep(0.0, 0.15, min(edge0.x, edge0.y)) * uSatRing0Fade;
       if (in0 > 0.0) sat = mix(sat, srgbToLinear(texture2D(uSatRing0Map, rUv0).rgb), in0);
     }
 

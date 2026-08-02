@@ -164,12 +164,14 @@ function SatRingWatcher() {
       const half = Math.max(250, footprint * 1.1) * Math.pow(2, k)
       const step = Math.round(Math.log2(half))
 
-      // Refetch only when the camera demands SHARPER (footprint shrank a step) or
-      // ELSEWHERE (centre left the fetched ring). Zooming out deliberately fetches
-      // nothing: the ring already loaded stays rendered — geo-anchored imagery
-      // minifies through its mipmaps for free, the outer rings and base already
-      // cover the newly visible surround at the zoom a fetch would return anyway,
-      // and replacing sharp with coarse would cost a download to look worse.
+      // Refetch when the ring's key changes in EITHER direction — sharper, coarser
+      // or elsewhere. Keeping a sharper ring on zoom-out sounds free (geo-anchored
+      // imagery minifies through its mipmaps), but Esri's captures differ between
+      // zoom levels — different dates, different seasons, different colour — so a
+      // retained patch reads as a mismatched square floating in the view. A
+      // uniform viewport at one zoom beats a patchwork of sharper leftovers, and
+      // the refetch is cheap anyway: the coarser tiles were cached on the way
+      // down, and the seed makes the swap invisible.
       // The drift threshold is deliberately small: re-centres are seeded and
       // incremental now, so tracking the camera closely costs a fetch, not a blink.
       const prev = lastFetch.current[k]
@@ -178,7 +180,7 @@ function SatRingWatcher() {
         const dxM = ((cLon - prev.lon) / lonSpan) * build.widthMetres
         const dzM = ((prev.lat - cLat) / latSpan) * build.depthMetres
         const drifted = Math.hypot(dxM, dzM) > prevHalf * 0.18
-        if (step >= prev.step && !drifted) continue
+        if (step === prev.step && !drifted) continue
       }
       // Wanted but cooling down — leave lastFetch untouched so the want survives
       // to a later frame instead of being recorded as satisfied. Outer rings wait

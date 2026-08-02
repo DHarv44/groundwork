@@ -632,7 +632,10 @@ frustum's ground footprint (corner rays against the height field — the orbit t
 height is untrustworthy, walking mode leaves it floating), so a top-down viewport is one
 resolution edge to edge; rings 1-3 double outward at one zoom coarser each, which is
 SSE-exact per doubling of distance, serving as pan margin top-down and as the far field
-when tilted. What remains is a single ~100 ms spike
+when tilted. Zoom-out re-keys rings instead of retaining sharper leftovers — Esri
+captures differ per zoom level, so a retained patch reads as a colour-mismatched square;
+rings that would land no sharper than the base clear themselves; the ring feather is 15%
+because it blends capture differences, not just resolution. What remains is a single ~100 ms spike
 when a ring's canvas dimensions change (a zoom step crossing forces a canvas resize,
 which forces a GL storage realloc plus full re-upload). Rare — a handful per deep dive —
 but it is the one hitch left in the gesture. Fix if it proves noticeable: fixed-size
