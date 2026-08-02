@@ -284,9 +284,13 @@ void main() {
   vec3 V = viewVec / max(dist, 1e-4);
 
   // ---- micro relief -------------------------------------------------------
-  // Fades out with distance so it never aliases into shimmer.
+  // Fades out with distance so it never aliases into shimmer. Fades out with
+  // imagery opacity too: this bump lights BOTH ground modes, and over a solid
+  // satellite drape it read as identical speckle in Terrain and Satellite —
+  // the photograph already carries its own micro-shading, so relighting it
+  // with procedural bumps double-shades. It returns as the drape thins.
   vec2 wp = vWorldPos.xz;
-  float detailFade = uDetail * (1.0 - smoothstep(400.0, 4000.0, dist));
+  float detailFade = uDetail * (1.0 - smoothstep(400.0, 4000.0, dist)) * (1.0 - uUseSat * uSatOpacity);
   float e = 1.2;
   float nA = fbm(wp * 0.35, 4);
   float nX = fbm((wp + vec2(e, 0.0)) * 0.35, 4);
